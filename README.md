@@ -33,15 +33,25 @@ This repository includes a sample file with a rule violation to demonstrate how 
 
 You can use an AI agent to scan this file and see the violation.
 
-1.  **Start the Context Sherpa server**:
-    ```bash
-    ./context-sherpa
+1.  **Configure the MCP server** in your AI editor:
+    Add the following to your `mcp.json` configuration file (assuming you built the binary as `server` or didn't otherwise specify a different output file name when running `go build`):
+    ```json
+    {
+        "mcpServers": {
+            "context-sherpa": {
+                "type": "stdio",
+                "command": "./server"
+            }
+        }
+    }
     ```
 
-2.  **Instruct your AI agent to scan the file**:
+2.  **Start your AI editor** with the MCP server configured.
+
+3.  **Instruct your AI agent to scan the file**:
     > "Scan the code in the `test-violation.go` file."
 
-3.  **The agent will use the `scan_code` tool and report the violation**:
+4.  **The agent will use the `scan_code` tool and report the violation**:
     The agent will read the file and call the `scan_code` tool with the content of `test-violation.go`. The server will then return the violation found, and the agent will report it back to you.
 
 ## Tools
