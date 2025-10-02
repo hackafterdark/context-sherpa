@@ -12,6 +12,8 @@ As a developer using an AI coding agent, you want to:
 - Be able to easily remove rules that are no longer needed.
 - Ensure this system is self-contained in a single executable that you can easily run without managing servers, dependencies, or security risks.
 
+![Example scan output](./AGENT_DOCS/example-scan-output.png)
+
 ## Installation
 
 1.  Navigate to the [releases page](https://github.com/hackafterdark/context-sherpa/releases/latest) of the GitHub repository.
