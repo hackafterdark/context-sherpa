@@ -2,7 +2,7 @@ module github.com/hackafterdark/context-sherpa
 
 go 1.24.3
 
-require gopkg.in/yaml.v3 v3.0.1 // indirect
+require gopkg.in/yaml.v3 v3.0.1
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
