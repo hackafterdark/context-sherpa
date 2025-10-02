@@ -3,7 +3,7 @@ package main
 import (
 	_ "embed"
 
-	"ast-grep-linter-mcp-server/internal/mcp"
+	"github.com/hackafterdark/context-sherpa/internal/mcp"
 )
 
 //go:embed bin/sg

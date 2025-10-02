@@ -1,4 +1,4 @@
-module context-sherpa
+module github.com/hackafterdark/context-sherpa
 
 go 1.24.3
 
