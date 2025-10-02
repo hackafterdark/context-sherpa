@@ -1,0 +1,10 @@
+id: unchecked-error
+language: go
+rule:
+  pattern: $A($$$)
+  inside:
+    kind: expression_statement
+  has:
+    pattern: $VAR, err := $A($$$)
+message: "The error returned by this function call is not checked."
+severity: "error"

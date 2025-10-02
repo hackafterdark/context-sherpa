@@ -1,0 +1,8 @@
+id: no-fmt-println
+language: go
+rule:
+  pattern:
+    context: 'func t() { fmt.Println($$$) }'
+    selector: call_expression
+message: Do not use fmt.Println
+severity: warning
