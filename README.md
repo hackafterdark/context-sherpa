@@ -27,6 +27,23 @@ You can also build from source, see below and note that `ast-grep` is an extnern
 - **Easy Integration**: Designed to work seamlessly with AI coding agents through the MCP server.
 - **Extensible**: Future-proofed with a plan to integrate semantic analysis for more powerful and accurate linting.
 
+## Example Usage
+
+This repository includes a sample file with a rule violation to demonstrate how the MCP server works. The `test-violation.go` file contains a call to `fmt.Println`, which is disallowed by a rule in the `rules` directory.
+
+You can use an AI agent to scan this file and see the violation.
+
+1.  **Start the Context Sherpa server**:
+    ```bash
+    ./context-sherpa
+    ```
+
+2.  **Instruct your AI agent to scan the file**:
+    > "Scan the code in the `test-violation.go` file."
+
+3.  **The agent will use the `scan_code` tool and report the violation**:
+    The agent will read the file and call the `scan_code` tool with the content of `test-violation.go`. The server will then return the violation found, and the agent will report it back to you.
+
 ## Tools
 
 The MCP server exposes the following tools to the AI agent:
