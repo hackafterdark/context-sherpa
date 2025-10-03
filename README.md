@@ -121,6 +121,7 @@ If you prefer to build from source, you will need to have Go installed on your s
     -   Execute the newly created binary:
         ```bash
         ./context-sherpa
+        
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

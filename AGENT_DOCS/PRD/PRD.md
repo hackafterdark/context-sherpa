@@ -1,6 +1,6 @@
 # PRD & Technical Plan: context-sherpa - AI-Powered Code Analysis Server
 
-**Version: 1.2**
+**Version: 1.3**
 **Date: 2025-10-01**
 Author: Gemini
 
@@ -22,7 +22,7 @@ As a developer using an AI coding agent, I want to:
 
 ## 3. Key Features & Tool Definitions for the AI Agent
 
-The MCP server will expose the following **four** tools to the AI agent. The agent will use the tool descriptions to decide which tool to call based on the user's request.
+The MCP server will expose the following **seven** tools to the AI agent. The agent will use the tool descriptions to decide which tool to call based on the user's request.
 
 ### Tool 1: `initialize_ast_grep`
 
@@ -63,6 +63,35 @@ The MCP server will expose the following **four** tools to the AI agent. The age
 -   **Output Schema**:
     -   `success` (boolean): `true` if the rule was found and removed successfully.
     -   `message` (string): A confirmation message (e.g., "Rule 'no-console-log' was removed successfully.").
+
+### Tool 5: `search_community_rules`
+
+-   **Description**: "Search the community rule repository for ast-grep rules. Use this to discover new rules for common problems like security vulnerabilities or style issues."
+-   **Input Schema**:
+    -   `query` (string, required): A natural language query (e.g., "sql injection", "check for todos").
+    -   `language` (string, optional): Filter by language (e.g., "go", "python").
+    -   `tags` (string, optional): Comma-separated list of tags to filter by (e.g., "security,database").
+-   **Output Schema**:
+    -   `success` (boolean): `true` if the search was successful.
+    -   `results` (string): A formatted string listing the matching rules, including their ID, description, and tags.
+
+### Tool 6: `get_community_rule_details`
+
+-   **Description**: "Get the full YAML content and explanation for a specific community rule. Use this to let the user inspect a rule before importing it."
+-   **Input Schema**:
+    -   `rule_id` (string, required): The unique ID of the rule from the search results.
+-   **Output Schema**:
+    -   `success` (boolean): `true` if the rule was found.
+    -   `details` (string): A formatted string containing the rule's full metadata and YAML content.
+
+### Tool 7: `import_community_rule`
+
+-   **Description**: "Download a community rule and add it to the local project's rule directory. Use this after the user has confirmed they want to add a specific rule."
+-   **Input Schema**:
+    -   `rule_id` (string, required): The unique ID of the rule to import.
+-   **Output Schema**:
+    -   `success` (boolean): `true` if the rule was imported successfully.
+    -   `message` (string): A confirmation message (e.g., "Rule 'ast-grep-go-sql-injection' was imported successfully.").
 
 ## 4. Technical Implementation Plan
 
@@ -134,3 +163,17 @@ This scenario illustrates the updated interaction between a developer, the AI ag
     -   **AI Agent**: Calls the `remove_rule` tool with `rule_id: "no-console-log"`.
     -   **MCP Server**: Removes the rule from `sgconfig.yml`.
     -   **AI Agent**: "Done. The `no-console-log` rule has been removed."
+
+4.  **Developer discovers and imports a community rule:**
+    -   **Developer**: "Are there any good community rules for finding unchecked errors in Go?"
+    -   **AI Agent**: Calls `search_community_rules(query="unchecked error", language="go")`.
+    -   **MCP Server**: Fetches the community `index.json`, finds a matching rule, and returns its details.
+    -   **AI Agent**: "I found a rule: `ast-grep-go-unchecked-error`. It finds function calls that return an error that is not assigned or checked. Would you like to see the details?"
+    -   **Developer**: "Yes, show me."
+    -   **AI Agent**: Calls `get_community_rule_details(rule_id="ast-grep-go-unchecked-error")`.
+    -   **MCP Server**: Fetches the rule's YAML and returns it.
+    -   **AI Agent**: Displays the full rule details and YAML to the developer.
+    -   **Developer**: "Looks great, let's add it to our project."
+    -   **AI Agent**: Calls `import_community_rule(rule_id="ast-grep-go-unchecked-error")`.
+    -   **MCP Server**: Downloads the rule YAML and saves it to the local `rules/` directory.
+    -   **AI Agent**: "The rule has been imported and is now active."
