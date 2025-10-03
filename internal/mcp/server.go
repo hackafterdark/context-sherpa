@@ -2,12 +2,15 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -19,6 +22,37 @@ var sgBinaryData []byte
 // SgConfig represents the structure of sgconfig.yml
 type SgConfig struct {
 	RuleDirs []string `yaml:"ruleDirs"`
+}
+
+// CommunityRule represents a rule in the community repository
+type CommunityRule struct {
+	ID          string   `json:"id"`
+	Tool        string   `json:"tool"`
+	Path        string   `json:"path"`
+	Language    string   `json:"language"`
+	Author      string   `json:"author"`
+	Tags        []string `json:"tags"`
+	Description string   `json:"description"`
+}
+
+// CommunityRuleIndex represents the index.json file from the community repository
+type CommunityRuleIndex struct {
+	Version int             `json:"version"`
+	Rules   []CommunityRule `json:"rules"`
+}
+
+// Cache for the community rule index
+var (
+	communityRuleCache *CommunityRuleIndex
+	cacheTimestamp     time.Time
+	cacheTTL           = 5 * time.Minute // Cache for 5 minutes
+)
+
+var communityRulesRepo = "https://raw.githubusercontent.com/hackafterdark/context-sherpa-community-rules/main/index.json"
+
+// getCommunityRulesRepoURL returns the community rules repository URL (can be overridden in tests)
+func getCommunityRulesRepoURL() string {
+	return communityRulesRepo
 }
 
 // Start initializes and starts the MCP server.
@@ -34,17 +68,17 @@ func Start(sgBinary []byte) {
 
 	// Add scan_code tool
 	scanCodeTool := mcp.NewTool("scan_code",
-		mcp.WithDescription("Scan code for linting violations using ast-grep"),
+		mcp.WithDescription("Scan a given string of source code for violations against the currently configured ast-grep rules."),
 		mcp.WithString("code",
 			mcp.Required(),
-			mcp.Description("Source code to scan"),
+			mcp.Description("The raw source code to be scanned."),
 		),
 		mcp.WithString("language",
 			mcp.Required(),
-			mcp.Description("Programming language of the code"),
+			mcp.Description("The programming language of the code (e.g., 'go', 'python')."),
 		),
 		mcp.WithString("sgconfig",
-			mcp.Description("Path to sgconfig file (default: sgconfig.yml)"),
+			mcp.Description("Path to a specific sgconfig.yml file to use for the scan. If omitted, it defaults to the root sgconfig.yml."),
 		),
 	)
 
@@ -87,16 +121,59 @@ severity: error`),
 
 	// Add remove_rule tool
 	removeRuleTool := mcp.NewTool("remove_rule",
-		mcp.WithDescription("Remove an ast-grep rule"),
+		mcp.WithDescription("Remove a specific ast-grep rule file from the local project's rule directory."),
 		mcp.WithString("rule_id",
 			mcp.Required(),
-			mcp.Description("Unique identifier of the rule to remove"),
+			mcp.Description("The unique ID of the rule to be removed (e.g., 'no-sql-injection'). This should match the filename without the .yml extension."),
 		),
 	)
 
 	// Add initialize_ast_grep tool
 	initializeAstGrepTool := mcp.NewTool("initialize_ast_grep",
-		mcp.WithDescription("Initialize an ast-grep project by creating sgconfig.yml and rules directory"),
+		mcp.WithDescription("Sets up the current project for ast-grep by creating a default `sgconfig.yml` file and a `rules/` directory. This is a required first step before adding or importing local rules."),
+	)
+
+	// Add search_community_rules tool
+	searchCommunityRulesTool := mcp.NewTool("search_community_rules",
+		mcp.WithDescription(`Search the community rule repository for ast-grep rules.
+ast-grep uses abstract syntax trees to find specific code patterns, making it more accurate than text-based tools.
+
+Use this when you want to:
+- Detect specific code patterns or anti-patterns
+- Enforce coding standards and best practices
+- Find security vulnerabilities (SQL injection, etc.)
+- Catch maintenance issues or code smells
+- Analyze code quality and consistency
+
+Example: "Create a rule to catch SQL injection" → generates ast-grep YAML rules`),
+		mcp.WithString("query",
+			mcp.Required(),
+			mcp.Description("Natural language query (e.g., 'sql injection', 'check for todos')"),
+		),
+		mcp.WithString("language",
+			mcp.Description("Programming language (e.g., 'go', 'python')"),
+		),
+		mcp.WithString("tags",
+			mcp.Description("Comma-separated list of tags to filter by (e.g., 'security,database')"),
+		),
+	)
+
+	// Add get_community_rule_details tool
+	getCommunityRuleDetailsTool := mcp.NewTool("get_community_rule_details",
+		mcp.WithDescription("Get the full YAML content and explanation for a community rule"),
+		mcp.WithString("rule_id",
+			mcp.Required(),
+			mcp.Description("Unique identifier of the rule (e.g., 'ast-grep-go-sql-injection')"),
+		),
+	)
+
+	// Add import_community_rule tool
+	importCommunityRuleTool := mcp.NewTool("import_community_rule",
+		mcp.WithDescription("Download a community rule and add it to the local project"),
+		mcp.WithString("rule_id",
+			mcp.Required(),
+			mcp.Description("Unique identifier of the rule to import"),
+		),
 	)
 
 	// Add tool handlers
@@ -104,6 +181,9 @@ severity: error`),
 	s.AddTool(addOrUpdateRuleTool, addOrUpdateRuleHandler)
 	s.AddTool(removeRuleTool, removeRuleHandler)
 	s.AddTool(initializeAstGrepTool, initializeAstGrepHandler)
+	s.AddTool(searchCommunityRulesTool, searchCommunityRulesHandler)
+	s.AddTool(getCommunityRuleDetailsTool, getCommunityRuleDetailsHandler)
+	s.AddTool(importCommunityRuleTool, importCommunityRuleHandler)
 
 	log.Println("Starting MCP server...")
 
@@ -339,4 +419,308 @@ func initializeAstGrepHandler(ctx context.Context, req mcp.CallToolRequest) (*mc
 	}
 
 	return mcp.NewToolResultText("ast-grep project initialized successfully. Created sgconfig.yml and rules/ directory."), nil
+}
+
+// fetchCommunityRuleIndex fetches and caches the community rule index
+func fetchCommunityRuleIndex() (*CommunityRuleIndex, error) {
+	// Check if we have a valid cached index
+	if communityRuleCache != nil && time.Since(cacheTimestamp) < cacheTTL {
+		log.Println("Using cached community rule index")
+		return communityRuleCache, nil
+	}
+
+	log.Println("Fetching community rule index from repository")
+
+	// Fetch the index.json file
+	resp, err := http.Get(getCommunityRulesRepoURL())
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch community rule index: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to fetch community rule index: HTTP %d", resp.StatusCode)
+	}
+
+	var index CommunityRuleIndex
+	if err := json.NewDecoder(resp.Body).Decode(&index); err != nil {
+		return nil, fmt.Errorf("failed to parse community rule index: %v", err)
+	}
+
+	// Update cache
+	communityRuleCache = &index
+	cacheTimestamp = time.Now()
+
+	log.Printf("Successfully loaded %d community rules", len(index.Rules))
+	return &index, nil
+}
+
+// searchCommunityRulesHandler handles the search_community_rules tool
+func searchCommunityRulesHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	query, err := req.RequireString("query")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// Get optional parameters
+	var language string
+	if langVal, ok := req.Params.Arguments.(map[string]interface{})["language"]; ok {
+		if langStr, ok := langVal.(string); ok {
+			language = strings.ToLower(langStr)
+		}
+	}
+
+	var tags []string
+	if tagsVal, ok := req.Params.Arguments.(map[string]interface{})["tags"]; ok {
+		if tagsStr, ok := tagsVal.(string); ok && tagsStr != "" {
+			tags = strings.Split(tagsStr, ",")
+			for i, tag := range tags {
+				tags[i] = strings.ToLower(strings.TrimSpace(tag))
+			}
+		}
+	}
+
+	// Fetch the community rule index
+	index, err := fetchCommunityRuleIndex()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch community rules: %v", err)), nil
+	}
+
+	// Filter rules based on criteria
+	var matchingRules []CommunityRule
+	for _, rule := range index.Rules {
+		// Filter by language if specified
+		if language != "" && strings.ToLower(rule.Language) != language {
+			continue
+		}
+
+		// Filter by tags if specified (rule must have ALL specified tags)
+		if len(tags) > 0 {
+			hasAllTags := true
+			for _, requiredTag := range tags {
+				found := false
+				for _, ruleTag := range rule.Tags {
+					if strings.ToLower(ruleTag) == requiredTag {
+						found = true
+						break
+					}
+				}
+				if !found {
+					hasAllTags = false
+					break
+				}
+			}
+			if !hasAllTags {
+				continue
+			}
+		}
+
+		// If we get here, the rule matches our filters
+		matchingRules = append(matchingRules, rule)
+	}
+
+	// Apply query search to the filtered results
+	if query != "" {
+		queryLower := strings.ToLower(query)
+		var queryMatches []CommunityRule
+
+		for _, rule := range matchingRules {
+			// Search in ID, description, and tags
+			if strings.Contains(strings.ToLower(rule.ID), queryLower) ||
+				strings.Contains(strings.ToLower(rule.Description), queryLower) {
+				queryMatches = append(queryMatches, rule)
+				continue
+			}
+
+			// Search in tags
+			for _, tag := range rule.Tags {
+				if strings.Contains(strings.ToLower(tag), queryLower) {
+					queryMatches = append(queryMatches, rule)
+					break
+				}
+			}
+		}
+
+		matchingRules = queryMatches
+	}
+
+	// Format results
+	if len(matchingRules) == 0 {
+		return mcp.NewToolResultText("No community rules found matching your criteria."), nil
+	}
+
+	result := fmt.Sprintf("Found %d community rule(s) matching your criteria:\n\n", len(matchingRules))
+	for i, rule := range matchingRules {
+		result += fmt.Sprintf("%d. **%s** (%s)\n", i+1, rule.ID, rule.Language)
+		result += fmt.Sprintf("   Author: %s\n", rule.Author)
+		result += fmt.Sprintf("   Description: %s\n", rule.Description)
+		if len(rule.Tags) > 0 {
+			result += fmt.Sprintf("   Tags: %s\n", strings.Join(rule.Tags, ", "))
+		}
+		result += "\n"
+	}
+
+	return mcp.NewToolResultText(result), nil
+}
+
+// getCommunityRuleDetailsHandler handles the get_community_rule_details tool
+func getCommunityRuleDetailsHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	ruleID, err := req.RequireString("rule_id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// Fetch the community rule index
+	index, err := fetchCommunityRuleIndex()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch community rules: %v", err)), nil
+	}
+
+	// Find the rule
+	var foundRule *CommunityRule
+	for _, rule := range index.Rules {
+		if rule.ID == ruleID {
+			foundRule = &rule
+			break
+		}
+	}
+
+	if foundRule == nil {
+		return mcp.NewToolResultText(fmt.Sprintf("Rule '%s' not found in community repository.", ruleID)), nil
+	}
+
+	// Fetch the actual rule YAML content
+	ruleURL := fmt.Sprintf("https://raw.githubusercontent.com/hackafterdark/context-sherpa-community-rules/main/%s", foundRule.Path)
+	resp, err := http.Get(ruleURL)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch rule content: %v", err)), nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch rule content: HTTP %d", resp.StatusCode)), nil
+	}
+
+	// Read the YAML content
+	var buf []byte
+	if resp.ContentLength > 0 {
+		buf = make([]byte, resp.ContentLength)
+	} else {
+		// Read in chunks if ContentLength is unknown
+		chunkSize := 1024
+		buffer := make([]byte, chunkSize)
+		for {
+			n, err := resp.Body.Read(buffer)
+			if n > 0 {
+				buf = append(buf, buffer[:n]...)
+			}
+			if err != nil {
+				if err.Error() == "EOF" {
+					break
+				}
+				return mcp.NewToolResultError(fmt.Sprintf("Failed to read rule content: %v", err)), nil
+			}
+		}
+	}
+
+	yamlContent := string(buf)
+
+	// Format the response
+	result := fmt.Sprintf("Rule Details for '%s':\n\n", foundRule.ID)
+	result += fmt.Sprintf("**ID:** %s\n", foundRule.ID)
+	result += fmt.Sprintf("**Tool:** %s\n", foundRule.Tool)
+	result += fmt.Sprintf("**Language:** %s\n", foundRule.Language)
+	result += fmt.Sprintf("**Author:** %s\n", foundRule.Author)
+	result += fmt.Sprintf("**Description:** %s\n", foundRule.Description)
+	if len(foundRule.Tags) > 0 {
+		result += fmt.Sprintf("**Tags:** %s\n", strings.Join(foundRule.Tags, ", "))
+	}
+	result += "\n**YAML Content:**\n```yaml\n"
+	result += yamlContent
+	result += "\n```\n"
+
+	return mcp.NewToolResultText(result), nil
+}
+
+// importCommunityRuleHandler handles the import_community_rule tool
+func importCommunityRuleHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	ruleID, err := req.RequireString("rule_id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// Fetch the community rule index
+	index, err := fetchCommunityRuleIndex()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch community rules: %v", err)), nil
+	}
+
+	// Find the rule
+	var foundRule *CommunityRule
+	for _, rule := range index.Rules {
+		if rule.ID == ruleID {
+			foundRule = &rule
+			break
+		}
+	}
+
+	if foundRule == nil {
+		return mcp.NewToolResultText(fmt.Sprintf("Rule '%s' not found in community repository.", ruleID)), nil
+	}
+
+	// Fetch the actual rule YAML content
+	ruleURL := fmt.Sprintf("https://raw.githubusercontent.com/hackafterdark/context-sherpa-community-rules/main/%s", foundRule.Path)
+	resp, err := http.Get(ruleURL)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch rule content: %v", err)), nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch rule content: HTTP %d", resp.StatusCode)), nil
+	}
+
+	// Read the YAML content
+	var buf []byte
+	if resp.ContentLength > 0 {
+		buf = make([]byte, resp.ContentLength)
+	} else {
+		// Read in chunks if ContentLength is unknown
+		chunkSize := 1024
+		buffer := make([]byte, chunkSize)
+		for {
+			n, err := resp.Body.Read(buffer)
+			if n > 0 {
+				buf = append(buf, buffer[:n]...)
+			}
+			if err != nil {
+				if err.Error() == "EOF" {
+					break
+				}
+				return mcp.NewToolResultError(fmt.Sprintf("Failed to read rule content: %v", err)), nil
+			}
+		}
+	}
+
+	yamlContent := string(buf)
+
+	// Get the rule directory and save the file
+	ruleDir, err := getRuleDir()
+	if err != nil {
+		if strings.Contains(err.Error(), "sgconfig.yml not found") {
+			return mcp.NewToolResultText(fmt.Sprintf("Error: %s. Please run the 'initialize_ast_grep' tool first to set up the project.", err.Error())), nil
+		}
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// Extract just the filename from the path
+	pathParts := strings.Split(foundRule.Path, "/")
+	filename := pathParts[len(pathParts)-1]
+	ruleFile := filepath.Join(ruleDir, filename)
+
+	if err := os.WriteFile(ruleFile, []byte(yamlContent), 0644); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error writing rule file: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Rule '%s' was imported successfully from the community repository.", ruleID)), nil
 }

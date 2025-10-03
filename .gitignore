@@ -1,4 +1,6 @@
 cmd/server/bin/sg
+cmd/server/server
+coverage.out
 ./server
 
 # Binaries for programs and plugins

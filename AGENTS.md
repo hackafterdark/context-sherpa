@@ -12,8 +12,10 @@ The development process is managed by standard Go tooling.
     ```
 -   **Building for Production**: To create a production-ready executable, run the following command from the **project root directory**:
     ```bash
-    go build -o myapp
+    go build -o server ./cmd/server
     ```
+-   **Restarting the MCP Server**: After building a new `server` executable, the running MCP server **must be restarted** for the changes to take effect. Ask the user to restart the server and wait for their confirmation before attempting to use any updated MCP tools.
+
 -   **Running Tests**: To run all tests, execute the following command from the **project root directory**:
     ```bash
     go test ./...
