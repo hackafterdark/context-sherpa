@@ -1,0 +1,4 @@
+id: main-config
+language: go
+ruleDirs:
+  - rules

@@ -1,0 +1,4 @@
+id: python-examples  
+language: python
+ruleDirs:
+  - rules

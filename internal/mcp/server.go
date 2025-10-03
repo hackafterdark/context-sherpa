@@ -50,14 +50,38 @@ func Start(sgBinary []byte) {
 
 	// Add add_or_update_rule tool
 	addOrUpdateRuleTool := mcp.NewTool("add_or_update_rule",
-		mcp.WithDescription("Add or update an ast-grep rule"),
+		mcp.WithDescription(`Create or update an ast-grep rule for pattern-based code analysis.
+ast-grep uses abstract syntax trees to find specific code patterns, making it more accurate than text-based tools.
+
+Use this when you want to:
+- Detect specific code patterns or anti-patterns
+- Enforce coding standards and best practices
+- Find security vulnerabilities (SQL injection, etc.)
+- Catch maintenance issues or code smells
+- Analyze code quality and consistency
+
+Example: "Create a rule to catch SQL injection" → generates ast-grep YAML rules`),
 		mcp.WithString("rule_id",
 			mcp.Required(),
-			mcp.Description("Unique identifier for the rule"),
+			mcp.Description("Unique identifier for the rule (e.g., 'no-sql-injection', 'require-tests', 'no-todo-comments')"),
 		),
 		mcp.WithString("rule_yaml",
 			mcp.Required(),
-			mcp.Description("YAML content of the rule"),
+			mcp.Description(`Complete YAML rule definition. Use this format:
+id: your-rule-name
+language: go
+rule:
+	 pattern: your-pattern-here
+message: "Clear description of the issue"
+severity: error|warning
+
+Example for catching fmt.Sprintf in database calls:
+id: no-sprintf-db
+language: go
+rule:
+	 pattern: $DB.Exec(ctx, fmt.Sprintf($$$))
+message: "Use parameterized queries"
+severity: error`),
 		),
 	)
 

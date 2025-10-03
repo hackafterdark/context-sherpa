@@ -1,0 +1,11 @@
+id: go-no-sprintf-in-db-call
+language: go
+severity: error
+message: "Database query uses fmt.Sprintf, which is a SQL injection vulnerability. Use parameterized queries with placeholders ($1, $2, etc.) instead."
+rule:
+  any:
+    - pattern: $DB.Exec(ctx, fmt.Sprintf($$$))
+    - pattern: $DB.ExecContext(ctx, fmt.Sprintf($$$))
+    - pattern: $DB.Query(ctx, fmt.Sprintf($$$))
+    - pattern: $DB.QueryRow(ctx, fmt.Sprintf($$$))
+    - pattern: $DB.QueryRowContext(ctx, fmt.Sprintf($$$))
