@@ -84,7 +84,9 @@ jobs:
 
       - name: Download ast-grep binary
         run: |
+          echo "Matrix values: OS=${{ matrix.os }}, GOOS=${{ matrix.goos }}, GOARCH=${{ matrix.goarch }}, Asset=${{ matrix.ast_grep_asset }}"
           AST_GREP_URL="https://github.com/ast-grep/ast-grep/releases/download/0.39.5/${{ matrix.ast_grep_asset }}"
+          echo "Download URL: $AST_GREP_URL"
           ${{ matrix.os == 'windows-latest' && '
             curl.exe -L -o ast-grep.zip "$AST_GREP_URL"
             7z x ast-grep.zip -ocmd/server/bin/
@@ -112,14 +114,17 @@ jobs:
       - name: Build binary
         env:
           VERSION: ${{ github.ref_name }}
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
         run: |
-          ${{ matrix.goos == 'windows' && 'go build -ldflags "-X main.version=$env:VERSION -s -w" -o context-sherpa-${{ matrix.goos }}-${{ matrix.goarch }}.exe ./cmd/server' || 'go build -ldflags "-X main.version=$VERSION -s -w" -o context-sherpa-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/server' }}
+          echo "Building for OS: $GOOS, ARCH: $GOARCH, Version: $VERSION"
+          ${{ matrix.goos == 'windows' && 'go build -ldflags "-X main.version=$env:VERSION -s -w" -o context-sherpa-$env:GOOS-$env:GOARCH.exe ./cmd/server' || 'go build -ldflags "-X main.version=$VERSION -s -w" -o context-sherpa-$GOOS-$GOARCH ./cmd/server' }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: binaries-${{ matrix.os }}-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: ${{ matrix.goos == 'windows' && 'context-sherpa-*.exe' || 'context-sherpa-*' }}
+          path: ${{ matrix.goos == 'windows' && 'context-sherpa-windows-*.exe' || 'context-sherpa-*' }}
 
   create-release:
     name: Create Release
