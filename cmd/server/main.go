@@ -6,9 +6,9 @@ import (
 	"github.com/hackafterdark/context-sherpa/internal/mcp"
 )
 
-//go:embed bin/sg
-var sgBinary []byte
+//go:embed bin/ast-grep
+var astGrepBinary []byte
 
 func main() {
-	mcp.Start(sgBinary)
+	mcp.Start(astGrepBinary)
 }

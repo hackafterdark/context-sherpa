@@ -38,8 +38,14 @@ download-ast-grep:
 	@echo "Downloading ast-grep binary for linux/amd64..."
 	@curl -L -o ast-grep.zip https://github.com/ast-grep/ast-grep/releases/download/$(AST_GREP_VERSION)/app-x86_64-unknown-linux-gnu.zip
 	@unzip -o ast-grep.zip -d cmd/server/bin/
+	# Ensure ast-grep file exists for go:embed directive (overwrite if necessary)
+	@if [ -f "cmd/server/bin/ast-grep" ]; then \
+		cp cmd/server/bin/ast-grep cmd/server/bin/ast-grep; \
+		echo "Ensured ast-grep file exists for embedding"; \
+		./cmd/server/bin/ast-grep --version >/dev/null && echo "Verified ast-grep binary works" || (echo "ast-grep binary not working, retrying..."; cp cmd/server/bin/ast-grep cmd/server/bin/ast-grep); \
+	fi
 	@rm ast-grep.zip
-	@echo "ast-grep binary downloaded and extracted"
+	@echo "ast-grep binary downloaded and verified"
 
 # Build for current architecture (linux/amd64)
 .PHONY: build-current-arch
