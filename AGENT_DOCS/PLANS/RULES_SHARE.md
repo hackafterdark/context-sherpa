@@ -123,7 +123,18 @@ A suite of new tools will be added to the `context-sherpa` server to create an i
         -   `rule_id` (string, required): The ID of the rule to import.
     -   **Logic**: Fetches the rule's YAML content and uses the existing `add_or_update_rule` logic to save it to the user's local `rules` directory.
 
-## 4. Server-Side Implementation & Caching
+## 4. Security & Validation
+
+To protect users from potentially malicious or malformed rule files, the MCP server implements robust security measures:
+
+- **Server-Side YAML Validation**: Before writing any community rule to disk, the server validates that the downloaded content is well-formed YAML and contains the required `ast-grep` rule structure (`id`, `language`, and `rule` fields).
+- **Required Field Enforcement**: The validation ensures all essential rule components are present, preventing incomplete or corrupted rules from being saved.
+- **Enhanced User Feedback**: Import operations now provide the full file path where the rule was saved, giving users transparency about where files are being written.
+- **Fail-Fast Error Handling**: Invalid rules are rejected immediately with detailed error messages, preventing any potentially problematic content from being persisted.
+
+This validation layer provides an important security boundary while maintaining the smooth user experience of the community rule import process.
+
+## 5. Server-Side Implementation & Caching
 
 To ensure the system is performant and does not overload the language model's context window, the MCP server will handle all data processing.
 
