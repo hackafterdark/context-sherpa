@@ -40,6 +40,24 @@ The build system will target the following architectures:
 
 ## Implementation Plan
 
+### Key Technical Challenges and Solutions
+
+#### Cross-Platform Binary Embedding
+
+**Challenge**: The `go:embed` directive requires files to exist at compile time with exact path matches. On Windows, the ast-grep binary is downloaded as `ast-grep.exe`, but the embed directive looks for `bin/ast-grep`.
+
+**Solution**: Platform-specific handling in the GitHub Actions workflow:
+- **Linux/macOS**: Extract binary directly to `cmd/server/bin/ast-grep`
+- **Windows**: Extract to temporary directory, then copy `ast-grep.exe` to `cmd/server/bin/ast-grep` (removing .exe extension)
+
+This ensures the embedded binary works across all platforms while maintaining a consistent internal file structure.
+
+#### PowerShell Archive Extraction Issues
+
+**Challenge**: Initial attempts using `7z` for Windows extraction failed due to PowerShell parameter parsing conflicts.
+
+**Solution**: Switched to PowerShell's built-in `Expand-Archive` cmdlet, which is more reliable in the GitHub Actions PowerShell environment and handles parameter parsing correctly.
+
 ### Phase 1: Local Build Infrastructure
 
 #### 1.1 Makefile Creation
@@ -248,10 +266,37 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Download ast-grep binary
+      - name: Download ast-grep binary (Linux/macOS)
+        if: matrix.os != 'windows-latest'
         run: |
-          curl -L -o ast-grep.zip https://github.com/ast-grep/ast-grep/releases/latest/download/${{ matrix.ast_grep_asset }}
-          # Extract and place in cmd/server/bin/
+          curl -L -o ast-grep.zip https://github.com/ast-grep/ast-grep/releases/download/0.39.5/${{ matrix.ast_grep_asset }}
+          unzip -o ast-grep.zip -d cmd/server/bin/
+          if [ -f "cmd/server/bin/ast-grep" ]; then
+            echo "ast-grep binary ready"
+          else
+            echo "Error: No ast-grep binary found after extraction"
+            exit 1
+          fi
+          rm ast-grep.zip
+
+      - name: Download ast-grep binary (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          $AST_GREP_URL = "https://github.com/ast-grep/ast-grep/releases/download/0.39.5/${{ matrix.ast_grep_asset }}"
+          curl.exe -L -o ast-grep.zip $AST_GREP_URL
+          # Extract to temp directory and copy .exe file to expected location
+          Expand-Archive -Path ast-grep.zip -DestinationPath ./temp_extract -Force
+          $exeFile = Get-ChildItem -Path ./temp_extract -Recurse -Filter *.exe | Select-Object -First 1
+          if ($exeFile) {
+              Copy-Item -Path $exeFile.FullName -Destination "cmd/server/bin/ast-grep" -Force
+              Write-Host "Copied $($exeFile.Name) to cmd/server/bin/ast-grep"
+          } else {
+              Write-Host "Error: ast-grep.exe not found in the extracted archive."
+              Get-ChildItem -Path ./temp_extract -Recurse | ForEach-Object { Write-Host "  $($_.FullName)" }
+              exit 1
+          }
+          Remove-Item -Recurse -Force ./temp_extract
+          Remove-Item ast-grep.zip
 
       - name: Build binary
         run: |
