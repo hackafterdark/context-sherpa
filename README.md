@@ -16,17 +16,27 @@ As a developer using an AI coding agent, you want to:
 
 ## Installation
 
-1.  Navigate to the [releases page](https://github.com/hackafterdark/context-sherpa/releases/latest) of the GitHub repository.
-2.  Download the binary that matches your operating system and architecture.
-3.  Run the binary from your terminal.
+Context Sherpa is delivered as a single, self-contained binary for easy integration with AI coding agents. The binary contains both the MCP server and the ast-grep tool, requiring no external dependencies.
 
-You can also build from source, see below and note that `ast-grep` is an extnernal dependency.
+### Option 1: Download from Releases
+
+1.  Navigate to the [releases page](https://github.com/hackafterdark/context-sherpa/releases/latest) of the GitHub repository.
+2.  Download the binary that matches your operating system and architecture:
+    - `context-sherpa-linux-amd64` (Linux)
+    - `context-sherpa-darwin-amd64` or `context-sherpa-darwin-arm64` (macOS)
+    - `context-sherpa-windows-amd64.exe` or `context-sherpa-windows-arm64.exe` (Windows)
+3.  Configure your AI coding tool (Roo Code, Cline, Cursor, etc.) to use Context Sherpa as an MCP server.
+
+### Option 2: Build from Source
+
+You can also build from source, though you'll need to ensure the `ast-grep` binary is available (see Contributing section below).
 
 ## Features
 
 - **Dynamic Rule Management**: Create, update, and remove linting rules on the fly based on natural language feedback.
 - **Portable and Self-Contained**: A single, cross-platform binary with no external runtime dependencies.
 - **Easy Integration**: Designed to work seamlessly with AI coding agents through the MCP server.
+- **Community Rules**: Access to a growing collection of pre-built rules from the [Context Sherpa Community Rules](https://github.com/hackafterdark/context-sherpa-community-rules) repository.
 - **Extensible**: Future-proofed with a plan to integrate semantic analysis for more powerful and accurate linting.
 
 ## Example Usage
@@ -35,20 +45,25 @@ This repository includes a sample file with a rule violation to demonstrate how 
 
 You can use an AI agent to scan this file and see the violation.
 
-1.  **Configure the MCP server** in your AI editor:
-    Add the following to your `mcp.json` configuration file (assuming you built the binary as `server` or didn't otherwise specify a different output file name when running `go build`):
+1.  **Configure the MCP server** in your AI coding tool:
+
+    Add the Context Sherpa server to your tool's MCP configuration. The exact configuration method varies by tool:
+
+    **For binaries downloaded from releases**: Use `context-sherpa` as the command name
+    **For binaries built from source**: Use the output filename you specified (default: `context-sherpa` if you followed the build instructions)
+
     ```json
     {
         "mcpServers": {
             "context-sherpa": {
                 "type": "stdio",
-                "command": "./server"
+                "command": "./context-sherpa"
             }
         }
     }
     ```
 
-2.  **Start your AI editor** with the MCP server configured.
+2.  **Start your AI coding tool** with the MCP server configured.
 
 3.  **Instruct your AI agent to scan the file**:
     > "Scan the code in the `test-violation.go` file."
@@ -97,13 +112,56 @@ The MCP server exposes the following tools to the AI agent:
     - `success` (boolean): `true` if the rule was found and removed successfully.
     - `message` (string): A confirmation message.
 
+### `search_community_rules`
+
+- **Description**: Search the [Context Sherpa Community Rules](https://github.com/hackafterdark/context-sherpa-community-rules) repository for pre-built ast-grep rules that you can import and use in your project.
+- **Input Schema**:
+    - `query` (string, required): Natural language search query (e.g., 'sql injection', 'check for todos')
+    - `language` (string, optional): Programming language filter (e.g., 'go', 'python')
+    - `tags` (string, optional): Comma-separated list of tags to filter by (e.g., 'security,database')
+- **Output Schema**:
+    - `success` (boolean): `true` if the search completed successfully.
+    - `message` (string): List of matching rules with descriptions, authors, and tags.
+
+### `get_community_rule_details`
+
+- **Description**: Get the complete details and YAML content for a specific community rule, allowing you to review it before importing.
+- **Input Schema**:
+    - `rule_id` (string, required): Unique identifier of the rule (e.g., 'ast-grep-go-sql-injection')
+- **Output Schema**:
+    - `success` (boolean): `true` if the rule was found and retrieved successfully.
+    - `message` (string): Complete rule details including YAML content, description, author, and tags.
+
+### `import_community_rule`
+
+- **Description**: Download and import a community rule directly into your local project from the [Context Sherpa Community Rules](https://github.com/hackafterdark/context-sherpa-community-rules) repository.
+- **Input Schema**:
+    - `rule_id` (string, required): Unique identifier of the rule to import
+- **Output Schema**:
+    - `success` (boolean): `true` if the rule was imported successfully.
+    - `message` (string): Confirmation message with the path where the rule was saved.
+
 ## Future Development
 
 Context Sherpa is designed to be an extensible platform for AI-powered code analysis. The next major milestone is the integration of semantic analysis, which will enable the tool to understand the meaning and context of code, not just its structure. This will allow for more powerful and accurate linting rules, as well as a deeper understanding of the developer's intent.
 
 ## Contributing
 
-If you prefer to build from source, you will need to have Go installed on your system.
+We welcome contributions from the community! Whether you're reporting bugs, suggesting features, or submitting code changes, your input helps make Context Sherpa better for everyone.
+
+### Quick Start
+
+**For code contributions**: See our comprehensive [Contributing Guide](CONTRIBUTING.md) for detailed instructions on:
+- Setting up your development environment
+- Building and testing the project
+- Following our coding standards and conventions
+- Submitting pull requests
+
+**For rule contributions**: Help grow the [Context Sherpa Community Rules](https://github.com/hackafterdark/context-sherpa-community-rules) repository by contributing linting rules for common patterns and best practices.
+
+### Building from Source
+
+If you prefer to build from source, you'll need Go installed on your system:
 
 1.  **Download the `ast-grep` binary**:
     -   Go to the [`ast-grep` releases page](https://github.com/ast-grep/ast-grep/releases/latest).
@@ -111,17 +169,23 @@ If you prefer to build from source, you will need to have Go installed on your s
     -   Place the binary in the `cmd/server/bin/` directory with the name `ast-grep` (on Windows, rename `ast-grep.exe` to `ast-grep`).
 
 2.  **Build the server**:
-    -   Open your terminal in the project root directory.
-    -   Run the following command to build the server:
-        ```bash
-        go build -o context-sherpa ./cmd/server
-        ```
+    ```bash
+    go build -o context-sherpa ./cmd/server
+    ```
 
 3.  **Run the server**:
-    -   Execute the newly created binary:
-        ```bash
-        ./context-sherpa
-        
+    ```bash
+    ./context-sherpa
+    ```
+
+## Acknowledgments
+
+Context Sherpa leverages [ast-grep](https://ast-grep.github.io/) for its powerful pattern matching and code analysis capabilities. ast-grep is an amazing tool that makes it possible to create sophisticated linting rules using YAML configuration. We extend our thanks to the ast-grep team for creating such a robust and developer-friendly tool.
+
+## Community Contributions
+
+Context Sherpa benefits from community-contributed rules available in the [Context Sherpa Community Rules](https://github.com/hackafterdark/context-sherpa-community-rules) repository. Users can import these pre-built rules to quickly adopt best practices and coding standards used across the developer community.
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

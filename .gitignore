@@ -2,7 +2,10 @@ cmd/server/bin/sg
 cmd/server/bin/ast-grep
 cmd/server/server
 coverage.out
-./server
+server
+bin
+rules
+.roo
 
 # Binaries for programs and plugins
 *.exe
