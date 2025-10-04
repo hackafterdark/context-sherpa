@@ -82,36 +82,37 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Download ast-grep binary
+      - name: Download ast-grep binary (Linux/macOS)
+        if: matrix.os != 'windows-latest'
         run: |
           echo "Matrix values: OS=${{ matrix.os }}, GOOS=${{ matrix.goos }}, GOARCH=${{ matrix.goarch }}, Asset=${{ matrix.ast_grep_asset }}"
-          ${{ matrix.os == 'windows-latest' && '
-            $AST_GREP_URL = "https://github.com/ast-grep/ast-grep/releases/download/0.39.5/${{ matrix.ast_grep_asset }}"
-            Write-Host "Download URL: $AST_GREP_URL"
-            curl.exe -L -o ast-grep.zip $AST_GREP_URL
-            7z x ast-grep.zip -ocmd/server/bin/
-            if (Test-Path "cmd/server/bin/ast-grep.exe") {
-              Write-Host "ast-grep.exe binary ready"
-            } else {
-              Write-Host "Error: No ast-grep binary found after extraction"
-              exit 1
-            }
-            Remove-Item ast-grep.zip
-          ' || '
-            AST_GREP_URL="https://github.com/ast-grep/ast-grep/releases/download/0.39.5/${{ matrix.ast_grep_asset }}"
-            echo "Download URL: $AST_GREP_URL"
-            curl -L -o ast-grep.zip "$AST_GREP_URL"
-            unzip -o ast-grep.zip -d cmd/server/bin/
-            if [ -f "cmd/server/bin/ast-grep" ]; then
-              echo "ast-grep binary ready"
-            elif [ -f "cmd/server/bin/ast-grep.exe" ]; then
-              echo "ast-grep.exe binary ready"
-            else
-              echo "Error: No ast-grep binary found after extraction"
-              exit 1
-            fi
-            rm ast-grep.zip
-          ' }}
+          AST_GREP_URL="https://github.com/ast-grep/ast-grep/releases/download/0.39.5/${{ matrix.ast_grep_asset }}"
+          echo "Download URL: $AST_GREP_URL"
+          curl -L -o ast-grep.zip "$AST_GREP_URL"
+          unzip -o ast-grep.zip -d cmd/server/bin/
+          if [ -f "cmd/server/bin/ast-grep" ]; then
+            echo "ast-grep binary ready"
+          else
+            echo "Error: No ast-grep binary found after extraction"
+            exit 1
+          fi
+          rm ast-grep.zip
+
+      - name: Download ast-grep binary (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          echo "Matrix values: OS=${{ matrix.os }}, GOOS=${{ matrix.goos }}, GOARCH=${{ matrix.goarch }}, Asset=${{ matrix.ast_grep_asset }}"
+          $AST_GREP_URL = "https://github.com/ast-grep/ast-grep/releases/download/0.39.5/${{ matrix.ast_grep_asset }}"
+          Write-Host "Download URL: $AST_GREP_URL"
+          curl.exe -L -o ast-grep.zip $AST_GREP_URL
+          7z x ast-grep.zip -ocmd/server/bin/
+          if (Test-Path "cmd/server/bin/ast-grep.exe") {
+            Write-Host "ast-grep.exe binary ready"
+          } else {
+            Write-Host "Error: No ast-grep binary found after extraction"
+            exit 1
+          }
+          Remove-Item ast-grep.zip
 
       - name: Build binary
         env:
