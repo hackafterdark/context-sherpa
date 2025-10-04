@@ -108,6 +108,8 @@ jobs:
           7z x ast-grep.zip -ocmd/server/bin/ -aoa
           if (Test-Path "cmd/server/bin/ast-grep.exe") {
             Write-Host "ast-grep.exe binary found in cmd/server/bin/"
+            Rename-Item -Path "cmd/server/bin/ast-grep.exe" -NewName "ast-grep"
+            Write-Host "Renamed ast-grep.exe to ast-grep"
           } else {
             Write-Host "Error: ast-grep.exe not found in cmd/server/bin/ after extraction."
             exit 1
