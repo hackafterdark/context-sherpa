@@ -108,7 +108,7 @@ If you prefer to build from source, you will need to have Go installed on your s
 1.  **Download the `ast-grep` binary**:
     -   Go to the [`ast-grep` releases page](https://github.com/ast-grep/ast-grep/releases/latest).
     -   Download the binary appropriate for your target platform and architecture.
-    -   Place the binary in the `cmd/server/bin/` directory and rename it to `sg`.
+    -   Place the binary in the `cmd/server/bin/` directory with the name `ast-grep` (on Windows, rename `ast-grep.exe` to `ast-grep`).
 
 2.  **Build the server**:
     -   Open your terminal in the project root directory.
