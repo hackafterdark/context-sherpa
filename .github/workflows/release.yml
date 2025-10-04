@@ -85,10 +85,10 @@ jobs:
       - name: Download ast-grep binary
         run: |
           echo "Matrix values: OS=${{ matrix.os }}, GOOS=${{ matrix.goos }}, GOARCH=${{ matrix.goarch }}, Asset=${{ matrix.ast_grep_asset }}"
-          AST_GREP_URL="https://github.com/ast-grep/ast-grep/releases/download/0.39.5/${{ matrix.ast_grep_asset }}"
-          echo "Download URL: $AST_GREP_URL"
           ${{ matrix.os == 'windows-latest' && '
-            curl.exe -L -o ast-grep.zip "$AST_GREP_URL"
+            $AST_GREP_URL = "https://github.com/ast-grep/ast-grep/releases/download/0.39.5/${{ matrix.ast_grep_asset }}"
+            Write-Host "Download URL: $AST_GREP_URL"
+            curl.exe -L -o ast-grep.zip $AST_GREP_URL
             7z x ast-grep.zip -ocmd/server/bin/
             if (Test-Path "cmd/server/bin/ast-grep.exe") {
               Write-Host "ast-grep.exe binary ready"
@@ -98,6 +98,8 @@ jobs:
             }
             Remove-Item ast-grep.zip
           ' || '
+            AST_GREP_URL="https://github.com/ast-grep/ast-grep/releases/download/0.39.5/${{ matrix.ast_grep_asset }}"
+            echo "Download URL: $AST_GREP_URL"
             curl -L -o ast-grep.zip "$AST_GREP_URL"
             unzip -o ast-grep.zip -d cmd/server/bin/
             if [ -f "cmd/server/bin/ast-grep" ]; then
