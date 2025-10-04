@@ -106,7 +106,7 @@ jobs:
           Write-Host "Download URL: $AST_GREP_URL"
           curl.exe -L -o ast-grep.zip $AST_GREP_URL
           New-Item -ItemType Directory -Force -Path ./temp_extract
-          7z x ast-grep.zip -o./temp_extract -aoa
+          7z x ast-grep.zip -- -otemp_extract -aoa
           $exeFile = Get-ChildItem -Path ./temp_extract -Recurse -Filter *.exe | Select-Object -First 1
           if ($exeFile) {
               # Copy the .exe file to cmd/server/bin/ast-grep (without .exe extension)
