@@ -1,0 +1,117 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: test-results
+          path: test-results/
+
+  build:
+    name: Build for ${{ matrix.os }}-${{ matrix.arch }}
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            ast_grep_asset: app-x86_64-unknown-linux-gnu.zip
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            ast_grep_asset: app-aarch64-unknown-linux-gnu.zip
+          - os: macos-latest
+            goos: darwin
+            goarch: amd64
+            ast_grep_asset: app-x86_64-apple-darwin.zip
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            ast_grep_asset: app-aarch64-apple-darwin.zip
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            ast_grep_asset: app-x86_64-pc-windows-msvc.zip
+          - os: windows-latest
+            goos: windows
+            goarch: arm64
+            ast_grep_asset: app-aarch64-pc-windows-msvc.zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version-file: go.mod
+
+      - name: Download ast-grep binary
+        run: |
+          curl -L -o ast-grep.zip https://github.com/ast-grep/ast-grep/releases/download/0.39.5/${{ matrix.ast_grep_asset }}
+          unzip -o ast-grep.zip -d cmd/server/bin/
+          rm ast-grep.zip
+
+      - name: Build binary
+        run: |
+          go build -ldflags "-X main.version=${{ github.ref_name }} -s -w" -o context-sherpa-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/server
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: binaries
+          path: context-sherpa-*
+
+  create-release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: binaries
+          path: binaries/
+
+      - name: Generate checksums
+        run: |
+          cd binaries
+          sha256sum context-sherpa-* > checksums.txt
+
+      - name: Create release archive
+        run: |
+          tar -czf context-sherpa-${{ github.ref_name }}.tar.gz binaries/
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            binaries/context-sherpa-*
+            binaries/checksums.txt
+            context-sherpa-${{ github.ref_name }}.tar.gz
+          generate_release_notes: true
