@@ -110,8 +110,10 @@ jobs:
           ' }}
 
       - name: Build binary
+        env:
+          VERSION: ${{ github.ref_name }}
         run: |
-          ${{ matrix.goos == 'windows' && 'go build -ldflags "-X main.version=${{ github.ref_name }} -s -w" -o context-sherpa-${{ matrix.goos }}-${{ matrix.goarch }}.exe ./cmd/server' || 'go build -ldflags "-X main.version=${{ github.ref_name }} -s -w" -o context-sherpa-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/server' }}
+          ${{ matrix.goos == 'windows' && 'go build -ldflags "-X main.version=$env:VERSION -s -w" -o context-sherpa-${{ matrix.goos }}-${{ matrix.goarch }}.exe ./cmd/server' || 'go build -ldflags "-X main.version=$VERSION -s -w" -o context-sherpa-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/server' }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
