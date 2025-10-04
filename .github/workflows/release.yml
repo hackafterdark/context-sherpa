@@ -71,6 +71,9 @@ jobs:
             goarch: arm64
             ast_grep_asset: app-aarch64-pc-windows-msvc.zip
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.os == 'windows-latest' && 'powershell' || 'bash' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -80,9 +83,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Download ast-grep binary
-        shell: ${{ matrix.os == 'windows-latest' && 'powershell' || 'bash' }}
         run: |
-          ${{ matrix.os == 'windows-latest' && 'powershell' || 'bash' }} -c '
           ${{ matrix.os == 'windows-latest' && '
             curl.exe -L -o ast-grep.zip https://github.com/ast-grep/ast-grep/releases/download/0.39.5/${{ matrix.ast_grep_asset }}
             7z x ast-grep.zip -ocmd/server/bin/
