@@ -105,15 +105,19 @@ jobs:
           $AST_GREP_URL = "https://github.com/ast-grep/ast-grep/releases/download/0.39.5/${{ matrix.ast_grep_asset }}"
           Write-Host "Download URL: $AST_GREP_URL"
           curl.exe -L -o ast-grep.zip $AST_GREP_URL
-          7z x ast-grep.zip -ocmd/server/bin/ -aoa
-          if (Test-Path "cmd/server/bin/ast-grep.exe") {
-            Write-Host "ast-grep.exe binary found in cmd/server/bin/"
-            Rename-Item -Path "cmd/server/bin/ast-grep.exe" -NewName "ast-grep"
-            Write-Host "Renamed ast-grep.exe to ast-grep"
+          New-Item -ItemType Directory -Force -Path ./temp_extract
+          7z x ast-grep.zip -o./temp_extract -aoa
+          $exeFile = Get-ChildItem -Path ./temp_extract -Recurse -Filter *.exe | Select-Object -First 1
+          if ($exeFile) {
+              # Copy the .exe file to cmd/server/bin/ast-grep (without .exe extension)
+              # This matches what the go:embed directive expects
+              Copy-Item -Path $exeFile.FullName -Destination "cmd/server/bin/ast-grep" -Force
+              Write-Host "Copied ast-grep.exe to cmd/server/bin/ast-grep"
           } else {
-            Write-Host "Error: ast-grep.exe not found in cmd/server/bin/ after extraction."
-            exit 1
+              Write-Host "Error: ast-grep.exe not found in the extracted archive."
+              exit 1
           }
+          Remove-Item -Recurse -Force ./temp_extract
           Remove-Item ast-grep.zip
 
       - name: Build binary
