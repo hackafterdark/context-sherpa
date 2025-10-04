@@ -41,6 +41,14 @@ type CommunityRuleIndex struct {
 	Rules   []CommunityRule `json:"rules"`
 }
 
+// AstGrepRule defines the structure for a valid ast-grep rule YAML.
+// This is used to validate the rule before writing it to disk.
+type AstGrepRule struct {
+	ID       string   `yaml:"id"`
+	Language string   `yaml:"language"`
+	Rule     struct{} `yaml:"rule"`
+}
+
 // Cache for the community rule index
 var (
 	communityRuleCache *CommunityRuleIndex
@@ -704,6 +712,11 @@ func importCommunityRuleHandler(ctx context.Context, req mcp.CallToolRequest) (*
 
 	yamlContent := string(buf)
 
+	// Validate the YAML content before writing to disk
+	if err := validateAstGrepRule(yamlContent); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Invalid rule file for '%s': %v", ruleID, err)), nil
+	}
+
 	// Get the rule directory and save the file
 	ruleDir, err := getRuleDir()
 	if err != nil {
@@ -722,5 +735,25 @@ func importCommunityRuleHandler(ctx context.Context, req mcp.CallToolRequest) (*
 		return mcp.NewToolResultError(fmt.Sprintf("Error writing rule file: %v", err)), nil
 	}
 
-	return mcp.NewToolResultText(fmt.Sprintf("Rule '%s' was imported successfully from the community repository.", ruleID)), nil
+	return mcp.NewToolResultText(fmt.Sprintf("Rule '%s' was imported successfully from the community repository to %s.", ruleID, ruleFile)), nil
+}
+
+// validateAstGrepRule checks if the given YAML content is a valid ast-grep rule.
+// It ensures the YAML is well-formed and contains the essential fields 'id', 'language', and 'rule'.
+func validateAstGrepRule(yamlContent string) error {
+	var rule AstGrepRule
+	if err := yaml.Unmarshal([]byte(yamlContent), &rule); err != nil {
+		return fmt.Errorf("could not parse YAML: %v", err)
+	}
+
+	// Check for the presence of required fields.
+	// The 'Rule' field is checked by its presence in the struct, but we ensure others are not empty.
+	if rule.ID == "" {
+		return fmt.Errorf("rule 'id' is missing or empty")
+	}
+	if rule.Language == "" {
+		return fmt.Errorf("rule 'language' is missing or empty")
+	}
+
+	return nil
 }

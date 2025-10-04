@@ -1,4 +1,5 @@
 cmd/server/bin/sg
+cmd/server/bin/ast-grep
 cmd/server/server
 coverage.out
 ./server

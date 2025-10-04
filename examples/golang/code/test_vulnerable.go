@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 )
@@ -13,8 +12,6 @@ type Pet struct {
 }
 
 func vulnerableCode(db *sql.DB, petID int, pet Pet, categoryIDStr, userName, email string) error {
-	ctx := context.Background()
-
 	// This should be caught by our rule
 	_, err := db.Exec(fmt.Sprintf(
 		"INSERT INTO pets (id, name, category_id, status) VALUES (%d, '%s', %s, '%s')",
@@ -32,7 +29,7 @@ func vulnerableCode(db *sql.DB, petID int, pet Pet, categoryIDStr, userName, ema
 	defer rows.Close()
 
 	// This should also be caught
-	row := db.QueryRow(fmt.Sprintf("SELECT id FROM users WHERE email = '%s'", email))
+	_ = db.QueryRow(fmt.Sprintf("SELECT id FROM users WHERE email = '%s'", email))
 
 	// This should NOT be caught (safe parameterized query)
 	_, err = db.Exec("INSERT INTO pets (id, name) VALUES ($1, $2)", petID, pet.Name)
