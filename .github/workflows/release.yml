@@ -22,7 +22,7 @@ jobs:
 
       - name: Download ast-grep binary for tests
         run: |
-          curl -L -o ast-grep.zip https://github.com/ast-grep/ast-grep/releases/download/0.39.5/app-x86_64-unknown-linux-gnu.zip
+          curl -L -o ast-grep.zip https://github.com/ast-grep/ast-grep/releases/latest/download/app-x86_64-unknown-linux-gnu.zip
           unzip -o ast-grep.zip -d cmd/server/bin/
           # Verify ast-grep binary works
           if [ -f "cmd/server/bin/ast-grep" ]; then
@@ -86,7 +86,7 @@ jobs:
         if: matrix.os != 'windows-latest'
         run: |
           echo "Matrix values: OS=${{ matrix.os }}, GOOS=${{ matrix.goos }}, GOARCH=${{ matrix.goarch }}, Asset=${{ matrix.ast_grep_asset }}"
-          AST_GREP_URL="https://github.com/ast-grep/ast-grep/releases/download/0.39.5/${{ matrix.ast_grep_asset }}"
+          AST_GREP_URL="https://github.com/ast-grep/ast-grep/releases/latest/download/${{ matrix.ast_grep_asset }}"
           echo "Download URL: $AST_GREP_URL"
           curl -L -o ast-grep.zip "$AST_GREP_URL"
           unzip -o ast-grep.zip -d cmd/server/bin/
@@ -102,7 +102,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           echo "Matrix values: OS=${{ matrix.os }}, GOOS=${{ matrix.goos }}, GOARCH=${{ matrix.goarch }}, Asset=${{ matrix.ast_grep_asset }}"
-          $AST_GREP_URL = "https://github.com/ast-grep/ast-grep/releases/download/0.39.5/${{ matrix.ast_grep_asset }}"
+          $AST_GREP_URL = "https://github.com/ast-grep/ast-grep/releases/latest/download/${{ matrix.ast_grep_asset }}"
           Write-Host "Download URL: $AST_GREP_URL"
           curl.exe -L -o ast-grep.zip $AST_GREP_URL
           # Use PowerShell's built-in extraction instead of 7z

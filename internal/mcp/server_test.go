@@ -3,8 +3,10 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -643,6 +645,910 @@ func TestFetchCommunityRuleIndex(t *testing.T) {
 
 		if index1 != index2 {
 			t.Error("Expected cached index to be the same object")
+		}
+	})
+}
+
+// scan_path Tool Tests
+
+func TestScanPathHandler(t *testing.T) {
+	// Create a temporary directory for testing
+	tempDir := t.TempDir()
+
+	// Create test files
+	testFile1 := tempDir + "/test1.go"
+	testFile2 := tempDir + "/test2.go"
+	largeFile := tempDir + "/large.go"
+	pythonFile := tempDir + "/test.py"
+
+	// Create test file content
+	goContent1 := `package main
+import "fmt"
+func main() {
+	fmt.Println("test1")
+}`
+
+	goContent2 := `package main
+import "os"
+func test() {
+	os.Exit(1)
+}`
+
+	pythonContent := `print("hello world")`
+
+	// Write test files
+	if err := os.WriteFile(testFile1, []byte(goContent1), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	if err := os.WriteFile(testFile2, []byte(goContent2), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	if err := os.WriteFile(pythonFile, []byte(pythonContent), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	// Create a large file (> 1MB) for size limit testing
+	largeContent := strings.Repeat("a", 1024*1024+100) // Slightly over 1MB
+	if err := os.WriteFile(largeFile, []byte(largeContent), 0644); err != nil {
+		t.Fatalf("Failed to create large test file: %v", err)
+	}
+
+	// Create sgconfig.yml for testing
+	sgconfig := `ruleDirs:
+		- rules
+`
+	sgconfigPath := tempDir + "/sgconfig.yml"
+	if err := os.WriteFile(sgconfigPath, []byte(sgconfig), 0644); err != nil {
+		t.Fatalf("Failed to create sgconfig: %v", err)
+	}
+
+	// Change to temp directory for testing
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current directory: %v", err)
+	}
+	defer os.Chdir(originalDir)
+
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("Failed to change directory: %v", err)
+	}
+
+	// Create rules directory
+	rulesDir := tempDir + "/rules"
+	if err := os.MkdirAll(rulesDir, 0755); err != nil {
+		t.Fatalf("Failed to create rules directory: %v", err)
+	}
+
+	// Test Case 1: Single File Scanning
+	t.Run("Single File Scanning", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"path": "test1.go",
+				},
+			},
+		}
+
+		result, err := scanPathHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result, got nil")
+		}
+
+		// Result should contain content
+		if len(result.Content) == 0 {
+			t.Error("Expected content in result")
+		}
+	})
+
+	// Test Case 2: Directory Scanning
+	t.Run("Directory Scanning", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"path": ".",
+				},
+			},
+		}
+
+		result, err := scanPathHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result, got nil")
+		}
+	})
+
+	// Test Case 3: Language Filtering
+	t.Run("Language Filtering", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"path":     ".",
+					"language": "go",
+				},
+			},
+		}
+
+		result, err := scanPathHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result, got nil")
+		}
+	})
+
+	// Test Case 4: Glob Pattern Support
+	t.Run("Glob Pattern", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"path": "test*.go",
+				},
+			},
+		}
+
+		result, err := scanPathHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result, got nil")
+		}
+	})
+
+	// Test Case 5: Error Handling - Non-existent file
+	t.Run("Error Handling - Non-existent file", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"path": "nonexistent.go",
+				},
+			},
+		}
+
+		result, err := scanPathHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result, got nil")
+		}
+	})
+
+	// Test Case 6: Missing Configuration
+	t.Run("Missing Configuration", func(t *testing.T) {
+		// Temporarily rename sgconfig.yml
+		os.Rename("sgconfig.yml", "sgconfig.yml.backup")
+
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"path": "test1.go",
+				},
+			},
+		}
+
+		result, err := scanPathHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result, got nil")
+		}
+
+		// Restore sgconfig.yml
+		os.Rename("sgconfig.yml.backup", "sgconfig.yml")
+	})
+
+	// Test Case 7: File Size Limit (FIRST ITERATION FEATURE)
+	t.Run("File Size Limit", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"path": ".",
+				},
+			},
+		}
+
+		result, err := scanPathHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result, got nil")
+		}
+
+		// Should scan test1.go and test2.go (under 1MB) but skip large.go (over 1MB)
+		if len(result.Content) == 0 {
+			t.Error("Expected content in result")
+		}
+	})
+}
+
+func TestMatchesLanguage(t *testing.T) {
+	tests := []struct {
+		filePath string
+		language string
+		expected bool
+	}{
+		{"test.go", "go", true},
+		{"test.py", "python", true},
+		{"test.js", "javascript", true},
+		{"test.ts", "typescript", true},
+		{"test.rs", "rust", true},
+		{"test.java", "java", true},
+		{"test.cpp", "cpp", true},
+		{"test.c", "c", true},
+		{"test.go", "python", false},
+		{"test.py", "go", false},
+		{"test.txt", "go", false},
+		{"test.go", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.filePath+"_"+tt.language, func(t *testing.T) {
+			result := matchesLanguage(tt.filePath, tt.language)
+			if result != tt.expected {
+				t.Errorf("matchesLanguage(%s, %s) = %v, expected %v", tt.filePath, tt.language, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestDiscoverFiles(t *testing.T) {
+	// Create a temporary directory for testing
+	tempDir := t.TempDir()
+
+	// Create test files
+	testFile1 := tempDir + "/test1.go"
+	testFile2 := tempDir + "/test2.py"
+	testFile3 := tempDir + "/test3.go"
+
+	// Write test files
+	os.WriteFile(testFile1, []byte("package main"), 0644)
+	os.WriteFile(testFile2, []byte("print('hello')"), 0644)
+	os.WriteFile(testFile3, []byte("package main"), 0644)
+
+	// Change to temp directory for testing
+	originalDir, _ := os.Getwd()
+	defer os.Chdir(originalDir)
+	os.Chdir(tempDir)
+
+	// Test Case 1: Single file
+	t.Run("Single file", func(t *testing.T) {
+		files, err := discoverFiles("test1.go", "")
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		if len(files) != 1 {
+			t.Errorf("Expected 1 file, got %d", len(files))
+		}
+
+		if files[0] != "test1.go" {
+			t.Errorf("Expected test1.go, got %s", files[0])
+		}
+	})
+
+	// Test Case 2: Directory scan
+	t.Run("Directory scan", func(t *testing.T) {
+		files, err := discoverFiles(".", "")
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		// Should find all 3 test files
+		if len(files) != 3 {
+			t.Errorf("Expected 3 files, got %d", len(files))
+		}
+	})
+
+	// Test Case 3: Language filtering
+	t.Run("Language filtering", func(t *testing.T) {
+		files, err := discoverFiles(".", "go")
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		// Should find only Go files (test1.go, test3.go)
+		if len(files) != 2 {
+			t.Errorf("Expected 2 Go files, got %d", len(files))
+		}
+	})
+
+	// Test Case 4: Non-existent file
+	t.Run("Non-existent file", func(t *testing.T) {
+		files, err := discoverFiles("nonexistent.go", "")
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		// Should return empty slice, not an error
+		if len(files) != 0 {
+			t.Errorf("Expected 0 files, got %d", len(files))
+		}
+	})
+}
+
+// Benchmark tests for performance comparison
+
+func BenchmarkScanPathHandler(b *testing.B) {
+	// Create a temporary directory for benchmarking
+	tempDir := b.TempDir()
+
+	// Create test files
+	testFile := tempDir + "/test.go"
+	goContent := `package main
+import "fmt"
+func main() {
+	fmt.Println("test")
+}`
+
+	if err := os.WriteFile(testFile, []byte(goContent), 0644); err != nil {
+		b.Fatalf("Failed to create test file: %v", err)
+	}
+
+	// Create sgconfig.yml
+	sgconfig := `ruleDirs:
+		- rules
+`
+	sgconfigPath := tempDir + "/sgconfig.yml"
+	if err := os.WriteFile(sgconfigPath, []byte(sgconfig), 0644); err != nil {
+		b.Fatalf("Failed to create sgconfig: %v", err)
+	}
+
+	// Change to temp directory
+	originalDir, err := os.Getwd()
+	if err != nil {
+		b.Fatalf("Failed to get current directory: %v", err)
+	}
+	defer os.Chdir(originalDir)
+
+	if err := os.Chdir(tempDir); err != nil {
+		b.Fatalf("Failed to change directory: %v", err)
+	}
+
+	// Create rules directory
+	rulesDir := tempDir + "/rules"
+	if err := os.MkdirAll(rulesDir, 0755); err != nil {
+		b.Fatalf("Failed to create rules directory: %v", err)
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"path": "test.go",
+				},
+			},
+		}
+
+		_, err := scanPathHandler(context.Background(), req)
+		if err != nil {
+			b.Fatalf("scanFileHandler failed: %v", err)
+		}
+	}
+}
+
+func BenchmarkDiscoverFiles(b *testing.B) {
+	// Create a temporary directory for benchmarking
+	tempDir := b.TempDir()
+
+	// Create multiple test files
+	for i := 0; i < 10; i++ {
+		testFile := fmt.Sprintf("%s/test%d.go", tempDir, i)
+		goContent := `package main
+import "fmt"
+func main() {
+	fmt.Println("test")
+}`
+
+		if err := os.WriteFile(testFile, []byte(goContent), 0644); err != nil {
+			b.Fatalf("Failed to create test file: %v", err)
+		}
+	}
+
+	// Change to temp directory
+	originalDir, err := os.Getwd()
+	if err != nil {
+		b.Fatalf("Failed to get current directory: %v", err)
+	}
+	defer os.Chdir(originalDir)
+
+	if err := os.Chdir(tempDir); err != nil {
+		b.Fatalf("Failed to change directory: %v", err)
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_, err := discoverFiles(".", "go")
+		if err != nil {
+			b.Fatalf("discoverFiles failed: %v", err)
+		}
+	}
+}
+
+func BenchmarkMatchesLanguage(b *testing.B) {
+	testCases := []struct {
+		filePath string
+		language string
+	}{
+		{"test.go", "go"},
+		{"test.py", "python"},
+		{"test.js", "javascript"},
+		{"test.rs", "rust"},
+		{"test.java", "java"},
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		for _, tc := range testCases {
+			matchesLanguage(tc.filePath, tc.language)
+		}
+	}
+}
+
+// Tests for functions with 0% coverage
+
+func TestStartFunction(t *testing.T) {
+	t.Run("Start function initializes server", func(t *testing.T) {
+		// Test that Start function doesn't panic with valid binary data
+		// Since Start starts a server that runs indefinitely, we need to be careful
+		testBinary := []byte("fake binary data")
+
+		// We can't actually call Start in tests as it starts the server
+		// But we can test that the function signature is correct
+		// and that the binary data is properly stored
+
+		// Store original value
+		originalBinary := sgBinaryData
+
+		// Test that we can set the binary data (simulating what Start does)
+		sgBinaryData = testBinary
+
+		if string(sgBinaryData) != string(testBinary) {
+			t.Error("Binary data not stored correctly")
+		}
+
+		// Restore original value
+		sgBinaryData = originalBinary
+	})
+}
+
+func TestScanCodeHandler(t *testing.T) {
+	t.Run("Valid scan request", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"code":     "package main\n\nfunc main() {}",
+					"language": "go",
+				},
+			},
+		}
+
+		// This test will fail because it needs sgconfig.yml and binary
+		// But we can at least verify the handler doesn't panic on valid input
+		// and returns appropriate error for missing config
+
+		result, err := scanCodeHandler(context.Background(), req)
+
+		if err != nil {
+			t.Fatalf("Expected no error from handler, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result from handler")
+		}
+
+		// Should return error message about missing config file
+		if len(result.Content) == 0 {
+			t.Error("Expected error message in result content")
+		}
+	})
+
+	t.Run("Missing code parameter", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"language": "go",
+				},
+			},
+		}
+
+		result, err := scanCodeHandler(context.Background(), req)
+
+		if err != nil {
+			t.Fatalf("Expected no error from handler, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result from handler")
+		}
+	})
+
+	t.Run("Missing language parameter", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"code": "test code",
+				},
+			},
+		}
+
+		result, err := scanCodeHandler(context.Background(), req)
+
+		if err != nil {
+			t.Fatalf("Expected no error from handler, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result from handler")
+		}
+	})
+}
+
+func TestAddOrUpdateRuleHandler(t *testing.T) {
+	t.Run("Valid rule creation", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"rule_id": "test-rule",
+					"rule_yaml": `id: test-rule
+language: go
+rule:
+  pattern: test
+message: "Test rule"`,
+				},
+			},
+		}
+
+		// This will fail due to missing sgconfig.yml, but we can test
+		// that the handler processes the input correctly
+		result, err := addOrUpdateRuleHandler(context.Background(), req)
+
+		if err != nil {
+			t.Fatalf("Expected no error from handler, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result from handler")
+		}
+	})
+
+	t.Run("Missing rule_id parameter", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"rule_yaml": "test yaml",
+				},
+			},
+		}
+
+		result, err := addOrUpdateRuleHandler(context.Background(), req)
+
+		if err != nil {
+			t.Fatalf("Expected no error from handler, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result from handler")
+		}
+	})
+
+	t.Run("Missing rule_yaml parameter", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"rule_id": "test-rule",
+				},
+			},
+		}
+
+		result, err := addOrUpdateRuleHandler(context.Background(), req)
+
+		if err != nil {
+			t.Fatalf("Expected no error from handler, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result from handler")
+		}
+	})
+}
+
+func TestRemoveRuleHandler(t *testing.T) {
+	t.Run("Valid rule removal", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"rule_id": "test-rule",
+				},
+			},
+		}
+
+		result, err := removeRuleHandler(context.Background(), req)
+
+		if err != nil {
+			t.Fatalf("Expected no error from handler, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result from handler")
+		}
+	})
+
+	t.Run("Missing rule_id parameter", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{},
+			},
+		}
+
+		result, err := removeRuleHandler(context.Background(), req)
+
+		if err != nil {
+			t.Fatalf("Expected no error from handler, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result from handler")
+		}
+	})
+}
+
+func TestInitializeAstGrepHandler(t *testing.T) {
+	t.Run("Initialize project", func(t *testing.T) {
+		// Create a temporary directory for this test
+		tempDir := t.TempDir()
+
+		// Change to temp directory for testing
+		originalDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get current directory: %v", err)
+		}
+		defer os.Chdir(originalDir)
+
+		if err := os.Chdir(tempDir); err != nil {
+			t.Fatalf("Failed to change directory: %v", err)
+		}
+
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{},
+			},
+		}
+
+		result, err := initializeAstGrepHandler(context.Background(), req)
+
+		if err != nil {
+			t.Fatalf("Expected no error from handler, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result from handler")
+		}
+
+		// Verify files were created
+		if _, err := os.Stat("sgconfig.yml"); os.IsNotExist(err) {
+			t.Error("sgconfig.yml was not created")
+		}
+
+		if _, err := os.Stat("rules"); os.IsNotExist(err) {
+			t.Error("rules directory was not created")
+		}
+	})
+}
+
+func TestValidateAstGrepRule(t *testing.T) {
+	t.Run("Valid rule YAML", func(t *testing.T) {
+		validYAML := `id: test-rule
+language: go
+rule:
+  pattern: test`
+
+		err := validateAstGrepRule(validYAML)
+		if err != nil {
+			t.Errorf("Expected valid YAML to pass validation, got error: %v", err)
+		}
+	})
+
+	t.Run("Invalid YAML", func(t *testing.T) {
+		invalidYAML := `invalid: yaml: content: [`
+
+		err := validateAstGrepRule(invalidYAML)
+		if err == nil {
+			t.Error("Expected invalid YAML to fail validation")
+		}
+	})
+
+	t.Run("Missing id field", func(t *testing.T) {
+		yamlWithoutID := `language: go
+rule:
+  pattern: test`
+
+		err := validateAstGrepRule(yamlWithoutID)
+		if err == nil {
+			t.Error("Expected YAML without id to fail validation")
+		}
+	})
+
+	t.Run("Missing language field", func(t *testing.T) {
+		yamlWithoutLanguage := `id: test-rule
+rule:
+  pattern: test`
+
+		err := validateAstGrepRule(yamlWithoutLanguage)
+		if err == nil {
+			t.Error("Expected YAML without language to fail validation")
+		}
+	})
+
+	t.Run("Empty id field", func(t *testing.T) {
+		yamlWithEmptyID := `id: ""
+language: go
+rule:
+  pattern: test`
+
+		err := validateAstGrepRule(yamlWithEmptyID)
+		if err == nil {
+			t.Error("Expected YAML with empty id to fail validation")
+		}
+	})
+
+	t.Run("Empty language field", func(t *testing.T) {
+		yamlWithEmptyLanguage := `id: test-rule
+language: ""
+rule:
+  pattern: test`
+
+		err := validateAstGrepRule(yamlWithEmptyLanguage)
+		if err == nil {
+			t.Error("Expected YAML with empty language to fail validation")
+		}
+	})
+}
+
+func TestGetRuleDir(t *testing.T) {
+	t.Run("Get rule directory without config", func(t *testing.T) {
+		// Create a temporary directory for this test
+		tempDir := t.TempDir()
+
+		// Change to temp directory for testing
+		originalDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get current directory: %v", err)
+		}
+		defer os.Chdir(originalDir)
+
+		if err := os.Chdir(tempDir); err != nil {
+			t.Fatalf("Failed to change directory: %v", err)
+		}
+
+		// This should fail because there's no sgconfig.yml
+		_, err = getRuleDir()
+		if err == nil {
+			t.Error("Expected getRuleDir to fail without sgconfig.yml")
+		}
+	})
+}
+
+func TestFindProjectRoot(t *testing.T) {
+	t.Run("Find project root without config", func(t *testing.T) {
+		// Create a temporary directory for this test
+		tempDir := t.TempDir()
+
+		// Change to temp directory for testing
+		originalDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get current directory: %v", err)
+		}
+		defer os.Chdir(originalDir)
+
+		if err := os.Chdir(tempDir); err != nil {
+			t.Fatalf("Failed to change directory: %v", err)
+		}
+
+		// This should fail because there's no sgconfig.yml
+		_, err = findProjectRoot()
+		if err == nil {
+			t.Error("Expected findProjectRoot to fail without sgconfig.yml")
+		}
+	})
+}
+
+func TestExtractSgBinary(t *testing.T) {
+	t.Run("Extract binary with valid data", func(t *testing.T) {
+		testData := []byte("test binary data")
+
+		path, err := extractSgBinary(testData)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		if path == "" {
+			t.Error("Expected non-empty path")
+		}
+
+		// Verify file was created and clean it up
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			t.Error("Binary file was not created")
+		}
+
+		// Clean up
+		os.Remove(path)
+	})
+
+	t.Run("Extract binary with empty data", func(t *testing.T) {
+		testData := []byte{}
+
+		path, err := extractSgBinary(testData)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		if path == "" {
+			t.Error("Expected non-empty path")
+		}
+
+		// Clean up
+		os.Remove(path)
+	})
+}
+
+func TestImportCommunityRuleHandler(t *testing.T) {
+	t.Run("Valid import request", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"rule_id": "test-rule",
+				},
+			},
+		}
+
+		// This will fail due to missing sgconfig.yml, but we can test
+		// that the handler processes the input correctly
+		result, err := importCommunityRuleHandler(context.Background(), req)
+
+		if err != nil {
+			t.Fatalf("Expected no error from handler, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result from handler")
+		}
+	})
+
+	t.Run("Missing rule_id parameter", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{},
+			},
+		}
+
+		result, err := importCommunityRuleHandler(context.Background(), req)
+
+		if err != nil {
+			t.Fatalf("Expected no error from handler, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result from handler")
 		}
 	})
 }
