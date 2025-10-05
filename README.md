@@ -89,9 +89,20 @@ The MCP server exposes the following tools to the AI agent:
 - **Input Schema**:
     - `code` (string, required): The raw source code to scan.
     - `language` (string, required): The programming language of the code.
+    - `sgconfig` (string, optional): Path to a specific sgconfig.yml file to use for the scan. If omitted, it defaults to the root sgconfig.yml.
 - **Output Schema**:
     - `success` (boolean): `true` if no issues were found, `false` otherwise.
     - `issues` (array of objects): A list of violations found.
+
+### `scan_path`
+
+- **Description**: Scan code for rule violations by providing a file path, directory path, or glob pattern. The path can resolve to a single file, multiple files, or an entire directory tree. Returns JSON array of violations found with file location, line numbers, and rule details.
+- **Input Schema**:
+    - `path` (string, required): File path, directory path, or glob pattern to scan. Examples: 'src/main.go' (single file), 'src/' (directory), '**/*.go' (all Go files), 'internal/**/*.js' (pattern).
+    - `language` (string, optional): Programming language filter for directory scans. Supported: 'go', 'python', 'javascript', 'typescript', 'rust', 'java', 'cpp', 'c'. If specified, only files with matching extensions are scanned.
+    - `sgconfig` (string, optional): Path to specific sgconfig.yml configuration file. If omitted, uses 'sgconfig.yml' in project root. Example: 'custom/sgconfig.yml'.
+- **Output Schema**:
+    - Returns a JSON array of violation objects found across all scanned files.
 
 ### `add_or_update_rule`
 
