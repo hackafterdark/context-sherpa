@@ -24,6 +24,28 @@ As a developer using an AI coding agent, I want to:
 
 The MCP server will expose the following **seven** tools to the AI agent. The agent will use the tool descriptions to decide which tool to call based on the user's request.
 
+### Deployment Configuration
+
+**Custom Project Root Support**: The server supports a `--projectRoot` command-line argument that allows users to specify where project files (sgconfig.yml, rules/, etc.) should be created, regardless of where the binary is located. This solves cross-platform deployment issues where the binary may be installed in a system location separate from project directories.
+
+**Usage**:
+```bash
+# Command line
+context-sherpa --projectRoot="/path/to/project"
+
+# MCP configuration
+{
+  "mcpServers": {
+    "context-sherpa": {
+      "command": "context-sherpa",
+      "args": ["--projectRoot", "/path/to/project"]
+    }
+  }
+}
+```
+
+This ensures consistent file locations across different installation scenarios and platforms.
+
 ### Tool 1: `initialize_ast_grep`
 
 -   **Description**: "Initializes an ast-grep project if one is not already present. It creates the `sgconfig.yml` file and a `rules` directory. This tool should be suggested if another tool fails due to a missing configuration file."

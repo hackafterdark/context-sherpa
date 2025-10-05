@@ -22,14 +22,43 @@ Context Sherpa is delivered as a single, self-contained binary for easy integrat
 
 1.  Navigate to the [releases page](https://github.com/hackafterdark/context-sherpa/releases/latest) of the GitHub repository.
 2.  Download the binary that matches your operating system and architecture:
-    - `context-sherpa-linux-amd64` (Linux)
-    - `context-sherpa-darwin-amd64` or `context-sherpa-darwin-arm64` (macOS)
-    - `context-sherpa-windows-amd64.exe` or `context-sherpa-windows-arm64.exe` (Windows)
+     - `context-sherpa-linux-amd64` (Linux)
+     - `context-sherpa-darwin-amd64` or `context-sherpa-darwin-arm64` (macOS)
+     - `context-sherpa-windows-amd64.exe` or `context-sherpa-windows-arm64.exe` (Windows)
 3.  Configure your AI coding tool (Roo Code, Cline, Cursor, etc.) to use Context Sherpa as an MCP server.
 
 ### Option 2: Build from Source
 
 You can also build from source, though you'll need to ensure the `ast-grep` binary is available (see Contributing section below).
+
+```bash
+go build -o context-sherpa ./cmd/server
+```
+
+## Configuration
+
+### Custom Project Root (Optional)
+
+If your MCP server binary is installed in a different location than your project directory, you can specify a custom project root:
+
+**Command Line:**
+```bash
+context-sherpa --projectRoot="/path/to/your/project"
+```
+
+**MCP Configuration:**
+```json
+{
+  "mcpServers": {
+    "context-sherpa": {
+      "command": "context-sherpa",
+      "args": ["--projectRoot", "/path/to/your/project"]
+    }
+  }
+}
+```
+
+This ensures that `sgconfig.yml`, `rules/`, and other project files are created in your actual project directory rather than where the binary is located.
 
 ## Features
 

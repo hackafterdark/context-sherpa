@@ -58,13 +58,19 @@ var (
 
 var communityRulesRepo = "https://raw.githubusercontent.com/hackafterdark/context-sherpa-community-rules/main/index.json"
 
+// projectRootOverride stores the custom project root directory when specified via command-line argument
+var projectRootOverride string
+
 // getCommunityRulesRepoURL returns the community rules repository URL (can be overridden in tests)
 func getCommunityRulesRepoURL() string {
 	return communityRulesRepo
 }
 
 // Start initializes and starts the MCP server.
-func Start(sgBinary []byte) {
+func Start(sgBinary []byte, projectRoot string) {
+	if projectRoot != "" {
+		projectRootOverride = projectRoot
+	}
 	sgBinaryData = sgBinary
 
 	// Create a new MCP server
@@ -551,13 +557,22 @@ func addOrUpdateRuleHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 // findProjectRoot finds the project root by searching for sgconfig.yml
 // in the current and parent directories.
 func findProjectRoot() (string, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("could not get current directory: %v", err)
+	var dir string
+	var err error
+
+	if projectRootOverride != "" {
+		// Use the specified project root as starting point
+		dir = projectRootOverride
+	} else {
+		// Fall back to current behavior
+		dir, err = os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("could not get current directory: %v", err)
+		}
 	}
 
 	for {
-		configPath := dir + "/sgconfig.yml"
+		configPath := filepath.Join(dir, "sgconfig.yml")
 		if _, err := os.Stat(configPath); err == nil {
 			return dir, nil
 		}
@@ -594,13 +609,22 @@ func extractSgBinary(sgBinary []byte) (string, error) {
 // getRuleDir determines the directory where rules should be stored by searching
 // for sgconfig.yml in the current and parent directories.
 func getRuleDir() (string, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("could not get current directory: %v", err)
+	var dir string
+	var err error
+
+	if projectRootOverride != "" {
+		// Use the specified project root as starting point
+		dir = projectRootOverride
+	} else {
+		// Fall back to current behavior
+		dir, err = os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("could not get current directory: %v", err)
+		}
 	}
 
 	for {
-		configPath := dir + "/sgconfig.yml"
+		configPath := filepath.Join(dir, "sgconfig.yml")
 		if _, err := os.Stat(configPath); err == nil {
 			// Read and parse sgconfig.yml
 			data, err := os.ReadFile(configPath)
@@ -617,7 +641,7 @@ func getRuleDir() (string, error) {
 				return "", fmt.Errorf("ruleDirs not specified in sgconfig.yml")
 			}
 			// Return the first rule directory, relative to the config file's location
-			return dir + "/" + strings.TrimSpace(config.RuleDirs[0]), nil
+			return filepath.Join(dir, strings.TrimSpace(config.RuleDirs[0])), nil
 		}
 
 		// Move to parent directory
@@ -659,10 +683,17 @@ func removeRuleHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallT
 }
 
 func initializeAstGrepHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// Get the current working directory as the project root
-	projectRoot, err := os.Getwd()
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error getting current directory: %v", err)), nil
+	// Determine the project root to use
+	var projectRoot string
+	var err error
+
+	if projectRootOverride != "" {
+		projectRoot = projectRootOverride
+	} else {
+		projectRoot, err = os.Getwd()
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Error getting current directory: %v", err)), nil
+		}
 	}
 
 	// Create the rules directory if it doesn't exist
@@ -675,7 +706,7 @@ func initializeAstGrepHandler(ctx context.Context, req mcp.CallToolRequest) (*mc
 	sgconfigPath := filepath.Join(projectRoot, "sgconfig.yml")
 	sgconfigContent := `ruleDirs:
   - rules
-`
+ `
 	if err := os.WriteFile(sgconfigPath, []byte(sgconfigContent), 0644); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Error creating sgconfig.yml: %v", err)), nil
 	}
