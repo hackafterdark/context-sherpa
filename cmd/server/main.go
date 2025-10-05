@@ -12,3 +12,8 @@ var astGrepBinary []byte
 func main() {
 	mcp.Start(astGrepBinary)
 }
+
+// GetAstGrepBinary returns the embedded ast-grep binary for testing
+func GetAstGrepBinary() []byte {
+	return astGrepBinary
+}
