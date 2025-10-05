@@ -4,7 +4,10 @@ rule:
   pattern: $A($$$)
   inside:
     kind: expression_statement
-  has:
-    pattern: $VAR, err := $A($$$)
+  not:
+    any:
+      - pattern: $VAR, $ERR := $A($$$)
+      - pattern: $ERR := $A($$$)
+      - pattern: $VAR := $A($$$)
 message: "The error returned by this function call is not checked."
 severity: "error"

@@ -4,8 +4,8 @@ severity: error
 message: "Database query uses fmt.Sprintf, which is a SQL injection vulnerability. Use parameterized queries with placeholders ($1, $2, etc.) instead."
 rule:
   any:
-    - pattern: $DB.Exec(ctx, fmt.Sprintf($$$))
-    - pattern: $DB.ExecContext(ctx, fmt.Sprintf($$$))
-    - pattern: $DB.Query(ctx, fmt.Sprintf($$$))
-    - pattern: $DB.QueryRow(ctx, fmt.Sprintf($$$))
-    - pattern: $DB.QueryRowContext(ctx, fmt.Sprintf($$$))
+    - pattern: $DB.Exec($$$, fmt.Sprintf($$$))
+    - pattern: $DB.ExecContext($$$, fmt.Sprintf($$$))
+    - pattern: $DB.Query($$$, fmt.Sprintf($$$))
+    - pattern: $DB.QueryRow($$$, fmt.Sprintf($$$))
+    - pattern: $DB.QueryRowContext($$$, fmt.Sprintf($$$))

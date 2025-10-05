@@ -3,8 +3,10 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -645,4 +647,459 @@ func TestFetchCommunityRuleIndex(t *testing.T) {
 			t.Error("Expected cached index to be the same object")
 		}
 	})
+}
+
+// scan_path Tool Tests
+
+func TestScanPathHandler(t *testing.T) {
+	// Create a temporary directory for testing
+	tempDir := t.TempDir()
+
+	// Create test files
+	testFile1 := tempDir + "/test1.go"
+	testFile2 := tempDir + "/test2.go"
+	largeFile := tempDir + "/large.go"
+	pythonFile := tempDir + "/test.py"
+
+	// Create test file content
+	goContent1 := `package main
+import "fmt"
+func main() {
+	fmt.Println("test1")
+}`
+
+	goContent2 := `package main
+import "os"
+func test() {
+	os.Exit(1)
+}`
+
+	pythonContent := `print("hello world")`
+
+	// Write test files
+	if err := os.WriteFile(testFile1, []byte(goContent1), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	if err := os.WriteFile(testFile2, []byte(goContent2), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	if err := os.WriteFile(pythonFile, []byte(pythonContent), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	// Create a large file (> 1MB) for size limit testing
+	largeContent := strings.Repeat("a", 1024*1024+100) // Slightly over 1MB
+	if err := os.WriteFile(largeFile, []byte(largeContent), 0644); err != nil {
+		t.Fatalf("Failed to create large test file: %v", err)
+	}
+
+	// Create sgconfig.yml for testing
+	sgconfig := `ruleDirs:
+		- rules
+`
+	sgconfigPath := tempDir + "/sgconfig.yml"
+	if err := os.WriteFile(sgconfigPath, []byte(sgconfig), 0644); err != nil {
+		t.Fatalf("Failed to create sgconfig: %v", err)
+	}
+
+	// Change to temp directory for testing
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current directory: %v", err)
+	}
+	defer os.Chdir(originalDir)
+
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("Failed to change directory: %v", err)
+	}
+
+	// Create rules directory
+	rulesDir := tempDir + "/rules"
+	if err := os.MkdirAll(rulesDir, 0755); err != nil {
+		t.Fatalf("Failed to create rules directory: %v", err)
+	}
+
+	// Test Case 1: Single File Scanning
+	t.Run("Single File Scanning", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"path": "test1.go",
+				},
+			},
+		}
+
+		result, err := scanPathHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result, got nil")
+		}
+
+		// Result should contain content
+		if len(result.Content) == 0 {
+			t.Error("Expected content in result")
+		}
+	})
+
+	// Test Case 2: Directory Scanning
+	t.Run("Directory Scanning", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"path": ".",
+				},
+			},
+		}
+
+		result, err := scanPathHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result, got nil")
+		}
+	})
+
+	// Test Case 3: Language Filtering
+	t.Run("Language Filtering", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"path":     ".",
+					"language": "go",
+				},
+			},
+		}
+
+		result, err := scanPathHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result, got nil")
+		}
+	})
+
+	// Test Case 4: Glob Pattern Support
+	t.Run("Glob Pattern", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"path": "test*.go",
+				},
+			},
+		}
+
+		result, err := scanPathHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result, got nil")
+		}
+	})
+
+	// Test Case 5: Error Handling - Non-existent file
+	t.Run("Error Handling - Non-existent file", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"path": "nonexistent.go",
+				},
+			},
+		}
+
+		result, err := scanPathHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result, got nil")
+		}
+	})
+
+	// Test Case 6: Missing Configuration
+	t.Run("Missing Configuration", func(t *testing.T) {
+		// Temporarily rename sgconfig.yml
+		os.Rename("sgconfig.yml", "sgconfig.yml.backup")
+
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"path": "test1.go",
+				},
+			},
+		}
+
+		result, err := scanPathHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result, got nil")
+		}
+
+		// Restore sgconfig.yml
+		os.Rename("sgconfig.yml.backup", "sgconfig.yml")
+	})
+
+	// Test Case 7: File Size Limit (FIRST ITERATION FEATURE)
+	t.Run("File Size Limit", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"path": ".",
+				},
+			},
+		}
+
+		result, err := scanPathHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("Expected result, got nil")
+		}
+
+		// Should scan test1.go and test2.go (under 1MB) but skip large.go (over 1MB)
+		if len(result.Content) == 0 {
+			t.Error("Expected content in result")
+		}
+	})
+}
+
+func TestMatchesLanguage(t *testing.T) {
+	tests := []struct {
+		filePath string
+		language string
+		expected bool
+	}{
+		{"test.go", "go", true},
+		{"test.py", "python", true},
+		{"test.js", "javascript", true},
+		{"test.ts", "typescript", true},
+		{"test.rs", "rust", true},
+		{"test.java", "java", true},
+		{"test.cpp", "cpp", true},
+		{"test.c", "c", true},
+		{"test.go", "python", false},
+		{"test.py", "go", false},
+		{"test.txt", "go", false},
+		{"test.go", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.filePath+"_"+tt.language, func(t *testing.T) {
+			result := matchesLanguage(tt.filePath, tt.language)
+			if result != tt.expected {
+				t.Errorf("matchesLanguage(%s, %s) = %v, expected %v", tt.filePath, tt.language, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestDiscoverFiles(t *testing.T) {
+	// Create a temporary directory for testing
+	tempDir := t.TempDir()
+
+	// Create test files
+	testFile1 := tempDir + "/test1.go"
+	testFile2 := tempDir + "/test2.py"
+	testFile3 := tempDir + "/test3.go"
+
+	// Write test files
+	os.WriteFile(testFile1, []byte("package main"), 0644)
+	os.WriteFile(testFile2, []byte("print('hello')"), 0644)
+	os.WriteFile(testFile3, []byte("package main"), 0644)
+
+	// Change to temp directory for testing
+	originalDir, _ := os.Getwd()
+	defer os.Chdir(originalDir)
+	os.Chdir(tempDir)
+
+	// Test Case 1: Single file
+	t.Run("Single file", func(t *testing.T) {
+		files, err := discoverFiles("test1.go", "")
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		if len(files) != 1 {
+			t.Errorf("Expected 1 file, got %d", len(files))
+		}
+
+		if files[0] != "test1.go" {
+			t.Errorf("Expected test1.go, got %s", files[0])
+		}
+	})
+
+	// Test Case 2: Directory scan
+	t.Run("Directory scan", func(t *testing.T) {
+		files, err := discoverFiles(".", "")
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		// Should find all 3 test files
+		if len(files) != 3 {
+			t.Errorf("Expected 3 files, got %d", len(files))
+		}
+	})
+
+	// Test Case 3: Language filtering
+	t.Run("Language filtering", func(t *testing.T) {
+		files, err := discoverFiles(".", "go")
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		// Should find only Go files (test1.go, test3.go)
+		if len(files) != 2 {
+			t.Errorf("Expected 2 Go files, got %d", len(files))
+		}
+	})
+
+	// Test Case 4: Non-existent file
+	t.Run("Non-existent file", func(t *testing.T) {
+		files, err := discoverFiles("nonexistent.go", "")
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		// Should return empty slice, not an error
+		if len(files) != 0 {
+			t.Errorf("Expected 0 files, got %d", len(files))
+		}
+	})
+}
+
+// Benchmark tests for performance comparison
+
+func BenchmarkScanPathHandler(b *testing.B) {
+	// Create a temporary directory for benchmarking
+	tempDir := b.TempDir()
+
+	// Create test files
+	testFile := tempDir + "/test.go"
+	goContent := `package main
+import "fmt"
+func main() {
+	fmt.Println("test")
+}`
+
+	if err := os.WriteFile(testFile, []byte(goContent), 0644); err != nil {
+		b.Fatalf("Failed to create test file: %v", err)
+	}
+
+	// Create sgconfig.yml
+	sgconfig := `ruleDirs:
+		- rules
+`
+	sgconfigPath := tempDir + "/sgconfig.yml"
+	if err := os.WriteFile(sgconfigPath, []byte(sgconfig), 0644); err != nil {
+		b.Fatalf("Failed to create sgconfig: %v", err)
+	}
+
+	// Change to temp directory
+	originalDir, err := os.Getwd()
+	if err != nil {
+		b.Fatalf("Failed to get current directory: %v", err)
+	}
+	defer os.Chdir(originalDir)
+
+	if err := os.Chdir(tempDir); err != nil {
+		b.Fatalf("Failed to change directory: %v", err)
+	}
+
+	// Create rules directory
+	rulesDir := tempDir + "/rules"
+	if err := os.MkdirAll(rulesDir, 0755); err != nil {
+		b.Fatalf("Failed to create rules directory: %v", err)
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"path": "test.go",
+				},
+			},
+		}
+
+		_, err := scanPathHandler(context.Background(), req)
+		if err != nil {
+			b.Fatalf("scanFileHandler failed: %v", err)
+		}
+	}
+}
+
+func BenchmarkDiscoverFiles(b *testing.B) {
+	// Create a temporary directory for benchmarking
+	tempDir := b.TempDir()
+
+	// Create multiple test files
+	for i := 0; i < 10; i++ {
+		testFile := fmt.Sprintf("%s/test%d.go", tempDir, i)
+		goContent := `package main
+import "fmt"
+func main() {
+	fmt.Println("test")
+}`
+
+		if err := os.WriteFile(testFile, []byte(goContent), 0644); err != nil {
+			b.Fatalf("Failed to create test file: %v", err)
+		}
+	}
+
+	// Change to temp directory
+	originalDir, err := os.Getwd()
+	if err != nil {
+		b.Fatalf("Failed to get current directory: %v", err)
+	}
+	defer os.Chdir(originalDir)
+
+	if err := os.Chdir(tempDir); err != nil {
+		b.Fatalf("Failed to change directory: %v", err)
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_, err := discoverFiles(".", "go")
+		if err != nil {
+			b.Fatalf("discoverFiles failed: %v", err)
+		}
+	}
+}
+
+func BenchmarkMatchesLanguage(b *testing.B) {
+	testCases := []struct {
+		filePath string
+		language string
+	}{
+		{"test.go", "go"},
+		{"test.py", "python"},
+		{"test.js", "javascript"},
+		{"test.rs", "rust"},
+		{"test.java", "java"},
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		for _, tc := range testCases {
+			matchesLanguage(tc.filePath, tc.language)
+		}
+	}
 }

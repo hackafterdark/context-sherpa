@@ -90,6 +90,21 @@ func Start(sgBinary []byte) {
 		),
 	)
 
+	// Add scan_path tool
+	scanPathTool := mcp.NewTool("scan_path",
+		mcp.WithDescription("Scan code for rule violations by providing a file path, directory path, or glob pattern. The path can resolve to a single file, multiple files, or an entire directory tree. Returns JSON array of violations found with file location, line numbers, and rule details."),
+		mcp.WithString("path",
+			mcp.Required(),
+			mcp.Description("File path, directory path, or glob pattern to scan. Examples: 'src/main.go' (single file), 'src/' (directory), '**/*.go' (all Go files), 'internal/**/*.js' (pattern)."),
+		),
+		mcp.WithString("sgconfig",
+			mcp.Description("Path to specific sgconfig.yml configuration file. If omitted, uses 'sgconfig.yml' in project root. Example: 'custom/sgconfig.yml'."),
+		),
+		mcp.WithString("language",
+			mcp.Description("Programming language filter for directory scans. Supported: 'go', 'python', 'javascript', 'typescript', 'rust', 'java', 'cpp', 'c'. If specified, only files with matching extensions are scanned."),
+		),
+	)
+
 	// Add add_or_update_rule tool
 	addOrUpdateRuleTool := mcp.NewTool("add_or_update_rule",
 		mcp.WithDescription(`Create or update an ast-grep rule for pattern-based code analysis.
@@ -186,6 +201,7 @@ Example: "Create a rule to catch SQL injection" → generates ast-grep YAML rule
 
 	// Add tool handlers
 	s.AddTool(scanCodeTool, scanCodeHandler)
+	s.AddTool(scanPathTool, scanPathHandler)
 	s.AddTool(addOrUpdateRuleTool, addOrUpdateRuleHandler)
 	s.AddTool(removeRuleTool, removeRuleHandler)
 	s.AddTool(initializeAstGrepTool, initializeAstGrepHandler)
@@ -263,6 +279,244 @@ func scanCodeHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	}
 
 	return mcp.NewToolResultText(string(output)), nil
+}
+
+// scanPathHandler handles the scan_path tool
+func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	path, err := req.RequireString("path")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	sgconfigStr := "sgconfig.yml" // Default value
+	if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
+		if sgconfig, ok := args["sgconfig"].(string); ok && sgconfig != "" {
+			sgconfigStr = sgconfig
+		}
+	}
+
+	// Get optional language filter
+	var languageFilter string
+	if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
+		if lang, ok := args["language"].(string); ok && lang != "" {
+			languageFilter = strings.ToLower(lang)
+		}
+	}
+
+	// --- DEBUG LOGGING ---
+	log.Printf("scan_file: Using sgconfig file: %s", sgconfigStr)
+	log.Printf("scan_file: Scanning path: %s", path)
+	if languageFilter != "" {
+		log.Printf("scan_file: Language filter: %s", languageFilter)
+	}
+	// --- END DEBUG LOGGING ---
+
+	// Check if the configuration file exists
+	if _, err := os.Stat(sgconfigStr); os.IsNotExist(err) {
+		return mcp.NewToolResultText(fmt.Sprintf("Error: Configuration file '%s' not found. Please run the 'initialize_ast_grep' tool first to set up the project.", sgconfigStr)), nil
+	}
+
+	sgPath, err := extractSgBinary(sgBinaryData)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error extracting sg binary: %v", err)), nil
+	}
+	defer os.Remove(sgPath)
+
+	// Find the project root where sgconfig.yml is located
+	projectRoot, err := findProjectRoot()
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// Discover files to scan
+	files, err := discoverFiles(path, languageFilter)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error discovering files: %v", err)), nil
+	}
+
+	if len(files) == 0 {
+		return mcp.NewToolResultText("[]"), nil // Return empty JSON array for no files
+	}
+
+	// --- DEBUG LOGGING ---
+	log.Printf("scan_file: Found %d files to scan", len(files))
+	// --- END DEBUG LOGGING ---
+
+	// Filter files by size (1MB limit) - FIRST ITERATION FEATURE
+	var validFiles []string
+	var skippedFiles []string
+	for _, file := range files {
+		fileInfo, err := os.Stat(file)
+		if err != nil {
+			log.Printf("scan_file: Warning - could not stat file %s: %v", file, err)
+			continue
+		}
+
+		if fileInfo.Size() > 1024*1024 { // 1MB limit
+			skippedFiles = append(skippedFiles, file)
+			log.Printf("scan_file: Skipping file %s (size: %d bytes > 1MB limit)", file, fileInfo.Size())
+			continue
+		}
+
+		validFiles = append(validFiles, file)
+	}
+
+	// --- DEBUG LOGGING ---
+	log.Printf("scan_file: %d files valid for scanning, %d files skipped (over 1MB)", len(validFiles), len(skippedFiles))
+	// --- END DEBUG LOGGING ---
+
+	if len(validFiles) == 0 {
+		return mcp.NewToolResultText("[]"), nil // Return empty JSON array for no valid files
+	}
+
+	// Scan files in batches
+	allOutput, err := scanFileBatch(validFiles, sgconfigStr, projectRoot, sgPath)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error scanning files: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(allOutput), nil
+}
+
+// discoverFiles discovers files to scan based on the path pattern
+func discoverFiles(path, languageFilter string) ([]string, error) {
+	var files []string
+
+	// Check if path is a direct file
+	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		// Apply language filter if specified
+		if languageFilter != "" && !matchesLanguage(path, languageFilter) {
+			return files, nil // Return empty slice if file doesn't match language filter
+		}
+		return []string{path}, nil
+	}
+
+	// Handle directory scanning (when path is "." or a directory)
+	if path == "." {
+		err := filepath.Walk(".", func(currentPath string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+
+			// Skip directories
+			if info.IsDir() {
+				return nil
+			}
+
+			// Apply language filter if specified
+			if languageFilter != "" && !matchesLanguage(currentPath, languageFilter) {
+				return nil
+			}
+
+			files = append(files, currentPath)
+			return nil
+		})
+
+		return files, err
+	}
+
+	// Check if it's a directory path
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		err := filepath.Walk(path, func(currentPath string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+
+			// Skip directories
+			if info.IsDir() {
+				return nil
+			}
+
+			// Apply language filter if specified
+			if languageFilter != "" && !matchesLanguage(currentPath, languageFilter) {
+				return nil
+			}
+
+			files = append(files, currentPath)
+			return nil
+		})
+
+		return files, err
+	}
+
+	// Handle glob patterns - walk current directory and match patterns
+	err := filepath.Walk(".", func(currentPath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip directories
+		if info.IsDir() {
+			return nil
+		}
+
+		// Check if path matches the pattern
+		matched, err := filepath.Match(path, currentPath)
+		if err != nil {
+			return err
+		}
+
+		if matched {
+			// Apply language filter if specified
+			if languageFilter != "" && !matchesLanguage(currentPath, languageFilter) {
+				return nil
+			}
+			files = append(files, currentPath)
+		}
+
+		return nil
+	})
+
+	return files, err
+}
+
+// matchesLanguage checks if a file path matches the specified language
+func matchesLanguage(filePath, language string) bool {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	switch language {
+	case "go":
+		return ext == ".go"
+	case "python":
+		return ext == ".py"
+	case "javascript":
+		return ext == ".js"
+	case "typescript":
+		return ext == ".ts"
+	case "rust":
+		return ext == ".rs"
+	case "java":
+		return ext == ".java"
+	case "cpp", "c++":
+		return ext == ".cpp" || ext == ".cc" || ext == ".cxx"
+	case "c":
+		return ext == ".c" || ext == ".h"
+	default:
+		return false
+	}
+}
+
+// scanFileBatch scans a batch of files and returns combined results
+func scanFileBatch(files []string, sgconfigStr, projectRoot, sgPath string) (string, error) {
+	if len(files) == 0 {
+		return "[]", nil
+	}
+
+	// For now, scan all files in a single batch
+	// TODO: Implement batching for very large file lists
+	args := []string{"scan", "--config", sgconfigStr}
+	args = append(args, files...)
+	args = append(args, "--json")
+
+	cmd := exec.Command(sgPath, args...)
+	cmd.Dir = projectRoot
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// ast-grep exits with non-zero status code if issues are found.
+		// We still want to parse the output.
+		log.Printf("scan_file: ast-grep command exited with error: %v", err)
+	}
+
+	return string(output), nil
 }
 
 func addOrUpdateRuleHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
