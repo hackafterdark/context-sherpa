@@ -11,14 +11,32 @@ jobs:
         go-version: '1.24.3'
     - name: Check out code
       uses: actions/checkout@v4
+
+    - name: Download ast-grep binary for tests
+      run: |
+        curl -L -o ast-grep.zip https://github.com/ast-grep/ast-grep/releases/latest/download/app-x86_64-unknown-linux-gnu.zip
+        unzip -o ast-grep.zip -d cmd/server/bin/
+        # Verify ast-grep binary works
+        if [ -f "cmd/server/bin/ast-grep" ]; then
+          ./cmd/server/bin/ast-grep --version || (echo "ast-grep binary not working"; exit 1)
+        fi
+        rm ast-grep.zip
+
     - name: Install dependencies
       run: |
         go mod download
+
+    - name: Verify build works
+      run: |
+        go build ./...
+
     - name: Run Unit tests
       run: |
         go test -race -covermode atomic -coverprofile=coverage.out -v ./...
+
     - name: Install goveralls
       run: go install github.com/mattn/goveralls@latest
+
     - name: Send coverage
       env:
         COVERALLS_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
