@@ -534,6 +534,9 @@ func scanFileBatch(files []string, sgconfigStr, projectRoot, sgPath string) (str
 		verboseLog("scan_file: ast-grep command exited with error: %v", err)
 	}
 
+	// Log the actual ast-grep command output when verbose logging is enabled
+	verboseLog("scan_file: ast-grep command output: %s", string(output))
+
 	return string(output), nil
 }
 
