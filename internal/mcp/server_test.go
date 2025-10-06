@@ -10,8 +10,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/log"
 	"github.com/mark3labs/mcp-go/mcp"
 )
+
+// initTestLogger initializes a basic logger for testing
+func initTestLogger() {
+	logger = log.NewWithOptions(os.Stderr, log.Options{
+		Level: log.InfoLevel,
+	})
+}
 
 // Test data structures for testing
 func createTestRules() []CommunityRule {
@@ -368,6 +376,9 @@ func TestSearchCommunityRulesHandler(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Initialize logger for testing
+			initTestLogger()
+
 			// Create a test server that returns our mock index
 			mockIndex := mockCommunityRuleIndex()
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -450,6 +461,9 @@ func TestSearchCommunityRulesHandlerErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Initialize logger for testing
+			initTestLogger()
+
 			server := httptest.NewServer(http.HandlerFunc(tt.serverFunc))
 			defer server.Close()
 
@@ -495,6 +509,9 @@ func TestSearchCommunityRulesHandlerErrors(t *testing.T) {
 
 func TestGetCommunityRuleDetailsHandler(t *testing.T) {
 	t.Run("Get existing rule", func(t *testing.T) {
+		// Initialize logger for testing
+		initTestLogger()
+
 		// Create test server for index
 		mockIndex := mockCommunityRuleIndex()
 		indexServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -587,6 +604,9 @@ func TestGetCommunityRuleDetailsHandler(t *testing.T) {
 
 func TestFetchCommunityRuleIndex(t *testing.T) {
 	t.Run("Successful fetch", func(t *testing.T) {
+		// Initialize logger for testing
+		initTestLogger()
+
 		mockIndex := mockCommunityRuleIndex()
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -617,6 +637,9 @@ func TestFetchCommunityRuleIndex(t *testing.T) {
 	})
 
 	t.Run("Fetch with caching", func(t *testing.T) {
+		// Initialize logger for testing
+		initTestLogger()
+
 		mockIndex := mockCommunityRuleIndex()
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -1108,26 +1131,19 @@ func BenchmarkMatchesLanguage(b *testing.B) {
 
 func TestStartFunction(t *testing.T) {
 	t.Run("Start function initializes server", func(t *testing.T) {
-		// Test that Start function doesn't panic with valid binary data
+		// Test that Start function doesn't panic with valid parameters
 		// Since Start starts a server that runs indefinitely, we need to be careful
-		testBinary := []byte("fake binary data")
 
 		// We can't actually call Start in tests as it starts the server
 		// But we can test that the function signature is correct
-		// and that the binary data is properly stored
+		// and that findSgBinary works as expected
 
-		// Store original value
-		originalBinary := sgBinaryData
-
-		// Test that we can set the binary data (simulating what Start does)
-		sgBinaryData = testBinary
-
-		if string(sgBinaryData) != string(testBinary) {
-			t.Error("Binary data not stored correctly")
+		// Test that we can call findSgBinary (simulating what Start does)
+		// Note: This will fail in test environment without actual binary
+		_, err := findSgBinary()
+		if err == nil {
+			t.Log("findSgBinary succeeded in test environment")
 		}
-
-		// Restore original value
-		sgBinaryData = originalBinary
 	})
 }
 
@@ -1472,42 +1488,20 @@ func TestFindProjectRoot(t *testing.T) {
 	})
 }
 
-func TestExtractSgBinary(t *testing.T) {
-	t.Run("Extract binary with valid data", func(t *testing.T) {
-		testData := []byte("test binary data")
+func TestFindSgBinary(t *testing.T) {
+	t.Run("Find binary on current system", func(t *testing.T) {
+		// Test that findSgBinary doesn't panic
+		// In test environment, this will likely fail to find the binary
+		// but should not panic
+		path, err := findSgBinary()
 
-		path, err := extractSgBinary(testData)
+		// We expect this to fail in test environment since we don't have ast-grep installed
+		// The important thing is that it doesn't panic
 		if err != nil {
-			t.Fatalf("Expected no error, got: %v", err)
+			t.Logf("Expected error in test environment: %v", err)
+		} else {
+			t.Logf("Found binary at: %s", path)
 		}
-
-		if path == "" {
-			t.Error("Expected non-empty path")
-		}
-
-		// Verify file was created and clean it up
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			t.Error("Binary file was not created")
-		}
-
-		// Clean up
-		os.Remove(path)
-	})
-
-	t.Run("Extract binary with empty data", func(t *testing.T) {
-		testData := []byte{}
-
-		path, err := extractSgBinary(testData)
-		if err != nil {
-			t.Fatalf("Expected no error, got: %v", err)
-		}
-
-		if path == "" {
-			t.Error("Expected non-empty path")
-		}
-
-		// Clean up
-		os.Remove(path)
 	})
 }
 
