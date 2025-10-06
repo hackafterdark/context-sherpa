@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -62,17 +63,27 @@ var communityRulesRepo = "https://raw.githubusercontent.com/hackafterdark/contex
 // projectRootOverride stores the custom project root directory when specified via command-line argument
 var projectRootOverride string
 
+// Logging configuration
+var (
+	verboseLogging bool
+	logFile        *os.File
+	customLogger   *log.Logger
+)
+
 // getCommunityRulesRepoURL returns the community rules repository URL (can be overridden in tests)
 func getCommunityRulesRepoURL() string {
 	return communityRulesRepo
 }
 
 // Start initializes and starts the MCP server.
-func Start(sgBinary []byte, projectRoot string) {
+func Start(sgBinary []byte, projectRoot string, verbose bool, logFilePath string) {
 	if projectRoot != "" {
 		projectRootOverride = projectRoot
 	}
 	sgBinaryData = sgBinary
+
+	// Initialize logging system
+	initLogging(verbose, logFilePath)
 
 	// Create a new MCP server
 	s := server.NewMCPServer(
@@ -216,11 +227,11 @@ Example: "Create a rule to catch SQL injection" → generates ast-grep YAML rule
 	s.AddTool(getCommunityRuleDetailsTool, getCommunityRuleDetailsHandler)
 	s.AddTool(importCommunityRuleTool, importCommunityRuleHandler)
 
-	log.Println("Starting MCP server...")
+	customLogger.Println("Starting MCP server...")
 
 	// Start the stdio server
 	if err := server.ServeStdio(s); err != nil {
-		log.Printf("Server error: %v\n", err)
+		customLogger.Printf("Server error: %v\n", err)
 	}
 }
 
@@ -243,7 +254,7 @@ func scanCodeHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	}
 
 	// --- DEBUG LOGGING ---
-	log.Printf("Using sgconfig file: %s", sgconfigStr)
+	verboseLog("Using sgconfig file: %s", sgconfigStr)
 	// --- END DEBUG LOGGING ---
 
 	// Check if the configuration file exists
@@ -311,10 +322,10 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	}
 
 	// --- DEBUG LOGGING ---
-	log.Printf("scan_file: Using sgconfig file: %s", sgconfigStr)
-	log.Printf("scan_file: Scanning path: %s", path)
+	verboseLog("scan_file: Using sgconfig file: %s", sgconfigStr)
+	verboseLog("scan_file: Scanning path: %s", path)
 	if languageFilter != "" {
-		log.Printf("scan_file: Language filter: %s", languageFilter)
+		verboseLog("scan_file: Language filter: %s", languageFilter)
 	}
 	// --- END DEBUG LOGGING ---
 
@@ -346,7 +357,7 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	}
 
 	// --- DEBUG LOGGING ---
-	log.Printf("scan_file: Found %d files to scan", len(files))
+	verboseLog("scan_file: Found %d files to scan", len(files))
 	// --- END DEBUG LOGGING ---
 
 	// Filter files by size (1MB limit) - FIRST ITERATION FEATURE
@@ -355,13 +366,13 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	for _, file := range files {
 		fileInfo, err := os.Stat(file)
 		if err != nil {
-			log.Printf("scan_file: Warning - could not stat file %s: %v", file, err)
+			verboseLog("scan_file: Warning - could not stat file %s: %v", file, err)
 			continue
 		}
 
 		if fileInfo.Size() > 1024*1024 { // 1MB limit
 			skippedFiles = append(skippedFiles, file)
-			log.Printf("scan_file: Skipping file %s (size: %d bytes > 1MB limit)", file, fileInfo.Size())
+			verboseLog("scan_file: Skipping file %s (size: %d bytes > 1MB limit)", file, fileInfo.Size())
 			continue
 		}
 
@@ -369,7 +380,7 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	}
 
 	// --- DEBUG LOGGING ---
-	log.Printf("scan_file: %d files valid for scanning, %d files skipped (over 1MB)", len(validFiles), len(skippedFiles))
+	verboseLog("scan_file: %d files valid for scanning, %d files skipped (over 1MB)", len(validFiles), len(skippedFiles))
 	// --- END DEBUG LOGGING ---
 
 	if len(validFiles) == 0 {
@@ -520,7 +531,7 @@ func scanFileBatch(files []string, sgconfigStr, projectRoot, sgPath string) (str
 	if err != nil {
 		// ast-grep exits with non-zero status code if issues are found.
 		// We still want to parse the output.
-		log.Printf("scan_file: ast-grep command exited with error: %v", err)
+		verboseLog("scan_file: ast-grep command exited with error: %v", err)
 	}
 
 	return string(output), nil
@@ -605,7 +616,7 @@ func extractSgBinary(sgBinary []byte) (string, error) {
 			return "", fmt.Errorf("ast-grep.exe not found in %s. Please download ast-grep.exe from https://github.com/ast-grep/ast-grep/releases and place it in the same directory as context-sherpa.exe", execDir)
 		}
 
-		log.Printf("Found ast-grep.exe at: %s", sgPath)
+		verboseLog("Found ast-grep.exe at: %s", sgPath)
 		return sgPath, nil
 	}
 
@@ -739,11 +750,11 @@ func initializeAstGrepHandler(ctx context.Context, req mcp.CallToolRequest) (*mc
 func fetchCommunityRuleIndex() (*CommunityRuleIndex, error) {
 	// Check if we have a valid cached index
 	if communityRuleCache != nil && time.Since(cacheTimestamp) < cacheTTL {
-		log.Println("Using cached community rule index")
+		verboseLog("Using cached community rule index")
 		return communityRuleCache, nil
 	}
 
-	log.Println("Fetching community rule index from repository")
+	verboseLog("Fetching community rule index from repository")
 
 	// Fetch the index.json file
 	resp, err := http.Get(getCommunityRulesRepoURL())
@@ -765,8 +776,50 @@ func fetchCommunityRuleIndex() (*CommunityRuleIndex, error) {
 	communityRuleCache = &index
 	cacheTimestamp = time.Now()
 
-	log.Printf("Successfully loaded %d community rules", len(index.Rules))
+	verboseLog("Successfully loaded %d community rules", len(index.Rules))
 	return &index, nil
+}
+
+// initLogging initializes the logging system with support for verbose logging and log files
+func initLogging(verbose bool, logFilePath string) {
+	verboseLogging = verbose
+
+	var writers []io.Writer
+
+	// Always write to stdout/stderr
+	writers = append(writers, os.Stdout, os.Stderr)
+
+	// If log file is specified, append to it
+	if logFilePath != "" {
+		var err error
+		logFile, err = os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		if err != nil {
+			log.Printf("Warning: Failed to open log file %s: %v", logFilePath, err)
+		} else {
+			writers = append(writers, logFile)
+		}
+	}
+
+	// Create multi-writer for logging
+	if len(writers) > 2 { // stdout + stderr + file
+		customLogger = log.New(io.MultiWriter(writers...), "", log.LstdFlags)
+	} else {
+		customLogger = log.New(io.MultiWriter(writers...), "", log.LstdFlags)
+	}
+
+	if verbose {
+		customLogger.Println("Verbose logging enabled")
+		if logFilePath != "" {
+			customLogger.Printf("Logging to file: %s", logFilePath)
+		}
+	}
+}
+
+// verboseLog logs a message only if verbose logging is enabled
+func verboseLog(format string, v ...interface{}) {
+	if verboseLogging && customLogger != nil {
+		customLogger.Printf(format, v...)
+	}
 }
 
 // searchCommunityRulesHandler handles the search_community_rules tool
