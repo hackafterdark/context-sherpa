@@ -577,6 +577,7 @@ func findProjectRoot() (string, error) {
 
 	if projectRootOverride != "" {
 		// Use the specified project root as starting point
+		verboseLog("Using custom project root override: %s", projectRootOverride)
 		dir = projectRootOverride
 	} else {
 		// Fall back to current behavior
@@ -649,6 +650,7 @@ func getRuleDir() (string, error) {
 
 	if projectRootOverride != "" {
 		// Use the specified project root as starting point
+		verboseLog("Using custom project root override: %s", projectRootOverride)
 		dir = projectRootOverride
 	} else {
 		// Fall back to current behavior
