@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -12,13 +13,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/log"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"gopkg.in/yaml.v3"
 )
 
-// Removed sgBinaryData - now using system ast-grep executable
+var sgBinaryData []byte
 
 // SgConfig represents the structure of sgconfig.yml
 type SgConfig struct {
@@ -62,56 +62,17 @@ var communityRulesRepo = "https://raw.githubusercontent.com/hackafterdark/contex
 // projectRootOverride stores the custom project root directory when specified via command-line argument
 var projectRootOverride string
 
-// Global logger instance
-var logger *log.Logger
-
-// setupLogger configures the global logger based on verbose and logFile settings
-func setupLogger(verbose bool, logFile string) {
-	var writer *os.File
-	var err error
-
-	// Set up log file if specified
-	if logFile != "" {
-		writer, err = os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-		if err != nil {
-			// Fallback to stderr if file opening fails
-			writer = os.Stderr
-			fmt.Fprintf(os.Stderr, "Warning: Could not open log file %s: %v\n", logFile, err)
-		}
-	} else {
-		writer = os.Stderr
-	}
-
-	// Create logger with appropriate level
-	if verbose {
-		logger = log.NewWithOptions(writer, log.Options{
-			Level:           log.DebugLevel,
-			ReportTimestamp: true,
-			ReportCaller:    true,
-		})
-	} else {
-		logger = log.NewWithOptions(writer, log.Options{
-			Level:           log.InfoLevel,
-			ReportTimestamp: true,
-		})
-	}
-
-	logger.Info("Logger initialized", "verbose", verbose, "logFile", logFile)
-}
-
 // getCommunityRulesRepoURL returns the community rules repository URL (can be overridden in tests)
 func getCommunityRulesRepoURL() string {
 	return communityRulesRepo
 }
 
 // Start initializes and starts the MCP server.
-func Start(projectRoot string, verbose bool, logFile string) {
+func Start(sgBinary []byte, projectRoot string) {
 	if projectRoot != "" {
 		projectRootOverride = projectRoot
 	}
-
-	// Set up logger configuration
-	setupLogger(verbose, logFile)
+	sgBinaryData = sgBinary
 
 	// Create a new MCP server
 	s := server.NewMCPServer(
@@ -255,11 +216,11 @@ Example: "Create a rule to catch SQL injection" → generates ast-grep YAML rule
 	s.AddTool(getCommunityRuleDetailsTool, getCommunityRuleDetailsHandler)
 	s.AddTool(importCommunityRuleTool, importCommunityRuleHandler)
 
-	logger.Info("Starting MCP server")
+	log.Println("Starting MCP server...")
 
 	// Start the stdio server
 	if err := server.ServeStdio(s); err != nil {
-		logger.Error("Server error", "error", err)
+		log.Printf("Server error: %v\n", err)
 	}
 }
 
@@ -282,7 +243,7 @@ func scanCodeHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	}
 
 	// --- DEBUG LOGGING ---
-	logger.Debug("Using sgconfig file", "file", sgconfigStr)
+	log.Printf("Using sgconfig file: %s", sgconfigStr)
 	// --- END DEBUG LOGGING ---
 
 	// Check if the configuration file exists
@@ -304,10 +265,11 @@ func scanCodeHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 		return mcp.NewToolResultError(fmt.Sprintf("Error closing temporary file: %v", err)), nil
 	}
 
-	sgPath, err := findSgBinary()
+	sgPath, err := extractSgBinary(sgBinaryData)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error finding sg binary: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("Error extracting sg binary: %v", err)), nil
 	}
+	defer os.Remove(sgPath)
 
 	// Find the project root where sgconfig.yml is located
 	projectRoot, err := findProjectRoot()
@@ -317,30 +279,10 @@ func scanCodeHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 
 	cmd := exec.Command(sgPath, "scan", "--config", sgconfigStr, tmpfile.Name(), "--json")
 	cmd.Dir = projectRoot // Run ast-grep from the project root
-
-	// Log the command being executed in verbose mode
-	logger.Debug("Executing ast-grep scan command",
-		"command", strings.Join(cmd.Args, " "),
-		"workingDir", cmd.Dir,
-		"inputFile", tmpfile.Name())
-
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// ast-grep exits with non-zero status code if issues are found.
 		// We still want to parse the output.
-		logger.Debug("scan_file: ast-grep command exited with error", "error", err)
-	}
-
-	// Log output in verbose mode (truncate if too long)
-	if logger.GetLevel() <= log.DebugLevel {
-		outputStr := string(output)
-		if len(outputStr) > 1000 {
-			logger.Debug("ast-grep scan output (truncated)",
-				"outputLength", len(outputStr),
-				"outputPreview", outputStr[:1000]+"...")
-		} else {
-			logger.Debug("ast-grep scan output", "output", outputStr)
-		}
 	}
 
 	return mcp.NewToolResultText(string(output)), nil
@@ -369,10 +311,10 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	}
 
 	// --- DEBUG LOGGING ---
-	logger.Debug("scan_file: Using sgconfig file", "file", sgconfigStr)
-	logger.Debug("scan_file: Scanning path", "path", path)
+	log.Printf("scan_file: Using sgconfig file: %s", sgconfigStr)
+	log.Printf("scan_file: Scanning path: %s", path)
 	if languageFilter != "" {
-		logger.Debug("scan_file: Language filter", "filter", languageFilter)
+		log.Printf("scan_file: Language filter: %s", languageFilter)
 	}
 	// --- END DEBUG LOGGING ---
 
@@ -381,10 +323,11 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 		return mcp.NewToolResultText(fmt.Sprintf("Error: Configuration file '%s' not found. Please run the 'initialize_ast_grep' tool first to set up the project.", sgconfigStr)), nil
 	}
 
-	sgPath, err := findSgBinary()
+	sgPath, err := extractSgBinary(sgBinaryData)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error finding sg binary: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("Error extracting sg binary: %v", err)), nil
 	}
+	defer os.Remove(sgPath)
 
 	// Find the project root where sgconfig.yml is located
 	projectRoot, err := findProjectRoot()
@@ -403,7 +346,7 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	}
 
 	// --- DEBUG LOGGING ---
-	logger.Debug("scan_file: Found files to scan", "count", len(files))
+	log.Printf("scan_file: Found %d files to scan", len(files))
 	// --- END DEBUG LOGGING ---
 
 	// Filter files by size (1MB limit) - FIRST ITERATION FEATURE
@@ -412,13 +355,13 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	for _, file := range files {
 		fileInfo, err := os.Stat(file)
 		if err != nil {
-			logger.Warn("scan_file: Could not stat file", "file", file, "error", err)
+			log.Printf("scan_file: Warning - could not stat file %s: %v", file, err)
 			continue
 		}
 
 		if fileInfo.Size() > 1024*1024 { // 1MB limit
 			skippedFiles = append(skippedFiles, file)
-			logger.Warn("scan_file: Skipping file due to size limit", "file", file, "size", fileInfo.Size())
+			log.Printf("scan_file: Skipping file %s (size: %d bytes > 1MB limit)", file, fileInfo.Size())
 			continue
 		}
 
@@ -426,7 +369,7 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	}
 
 	// --- DEBUG LOGGING ---
-	logger.Debug("scan_file: Files processed", "valid", len(validFiles), "skipped", len(skippedFiles))
+	log.Printf("scan_file: %d files valid for scanning, %d files skipped (over 1MB)", len(validFiles), len(skippedFiles))
 	// --- END DEBUG LOGGING ---
 
 	if len(validFiles) == 0 {
@@ -573,30 +516,11 @@ func scanFileBatch(files []string, sgconfigStr, projectRoot, sgPath string) (str
 
 	cmd := exec.Command(sgPath, args...)
 	cmd.Dir = projectRoot
-
-	// Log the command being executed in verbose mode
-	logger.Debug("Executing ast-grep batch scan command",
-		"command", strings.Join(cmd.Args, " "),
-		"workingDir", cmd.Dir,
-		"fileCount", len(files))
-
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// ast-grep exits with non-zero status code if issues are found.
 		// We still want to parse the output.
-		logger.Debug("scan_file: ast-grep batch command exited with error", "error", err)
-	}
-
-	// Log output in verbose mode (truncate if too long)
-	if logger.GetLevel() <= log.DebugLevel {
-		outputStr := string(output)
-		if len(outputStr) > 1000 {
-			logger.Debug("ast-grep batch scan output (truncated)",
-				"outputLength", len(outputStr),
-				"outputPreview", outputStr[:1000]+"...")
-		} else {
-			logger.Debug("ast-grep batch scan output", "output", outputStr)
-		}
+		log.Printf("scan_file: ast-grep command exited with error: %v", err)
 	}
 
 	return string(output), nil
@@ -665,9 +589,8 @@ func findProjectRoot() (string, error) {
 	return "", fmt.Errorf("sgconfig.yml not found. Please run 'ast-grep new' to initialize an ast-grep project first")
 }
 
-// findSgBinary locates the ast-grep binary for the current platform
-func findSgBinary() (string, error) {
-	// Check if we're on Windows
+func extractSgBinary(sgBinary []byte) (string, error) {
+	// Windows-specific logic: use system ast-grep.exe instead of embedded binary
 	if runtime.GOOS == "windows" {
 		// On Windows, look for ast-grep.exe in the same directory as the running executable
 		execPath, err := os.Executable()
@@ -682,23 +605,26 @@ func findSgBinary() (string, error) {
 			return "", fmt.Errorf("ast-grep.exe not found in %s. Please download ast-grep.exe from https://github.com/ast-grep/ast-grep/releases and place it in the same directory as context-sherpa.exe", execDir)
 		}
 
-		logger.Debug("Found ast-grep.exe", "path", sgPath)
+		log.Printf("Found ast-grep.exe at: %s", sgPath)
 		return sgPath, nil
 	}
 
-	// For non-Windows systems, try to use system ast-grep
-	sgPath, err := exec.LookPath("ast-grep")
+	// For non-Windows systems, use the embedded binary (original behavior)
+	tmpfile, err := os.CreateTemp("", "sg")
 	if err != nil {
-		// Try common alternative names
-		if sgPath, err := exec.LookPath("sg"); err == nil {
-			logger.Debug("Found system sg binary", "path", sgPath)
-			return sgPath, nil
-		}
-		return "", fmt.Errorf("ast-grep not found in PATH. Please install ast-grep: https://github.com/ast-grep/ast-grep")
+		return "", err
+	}
+	defer tmpfile.Close()
+
+	if _, err := tmpfile.Write(sgBinary); err != nil {
+		return "", err
 	}
 
-	logger.Debug("Found system ast-grep binary", "path", sgPath)
-	return sgPath, nil
+	if err := tmpfile.Chmod(0755); err != nil {
+		return "", err
+	}
+
+	return tmpfile.Name(), nil
 }
 
 // getRuleDir determines the directory where rules should be stored by searching
@@ -813,11 +739,11 @@ func initializeAstGrepHandler(ctx context.Context, req mcp.CallToolRequest) (*mc
 func fetchCommunityRuleIndex() (*CommunityRuleIndex, error) {
 	// Check if we have a valid cached index
 	if communityRuleCache != nil && time.Since(cacheTimestamp) < cacheTTL {
-		logger.Debug("Using cached community rule index")
+		log.Println("Using cached community rule index")
 		return communityRuleCache, nil
 	}
 
-	logger.Debug("Fetching community rule index from repository")
+	log.Println("Fetching community rule index from repository")
 
 	// Fetch the index.json file
 	resp, err := http.Get(getCommunityRulesRepoURL())
@@ -839,7 +765,7 @@ func fetchCommunityRuleIndex() (*CommunityRuleIndex, error) {
 	communityRuleCache = &index
 	cacheTimestamp = time.Now()
 
-	logger.Info("Successfully loaded community rules", "count", len(index.Rules))
+	log.Printf("Successfully loaded %d community rules", len(index.Rules))
 	return &index, nil
 }
 

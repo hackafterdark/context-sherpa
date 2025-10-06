@@ -10,16 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/log"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// initTestLogger initializes a basic logger for testing
-func initTestLogger() {
-	logger = log.NewWithOptions(os.Stderr, log.Options{
-		Level: log.InfoLevel,
-	})
-}
+// Test logger functionality is not needed in the original implementation
 
 // Test data structures for testing
 func createTestRules() []CommunityRule {
@@ -376,9 +370,6 @@ func TestSearchCommunityRulesHandler(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Initialize logger for testing
-			initTestLogger()
-
 			// Create a test server that returns our mock index
 			mockIndex := mockCommunityRuleIndex()
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -461,9 +452,6 @@ func TestSearchCommunityRulesHandlerErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Initialize logger for testing
-			initTestLogger()
-
 			server := httptest.NewServer(http.HandlerFunc(tt.serverFunc))
 			defer server.Close()
 
@@ -509,9 +497,6 @@ func TestSearchCommunityRulesHandlerErrors(t *testing.T) {
 
 func TestGetCommunityRuleDetailsHandler(t *testing.T) {
 	t.Run("Get existing rule", func(t *testing.T) {
-		// Initialize logger for testing
-		initTestLogger()
-
 		// Create test server for index
 		mockIndex := mockCommunityRuleIndex()
 		indexServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -604,9 +589,6 @@ func TestGetCommunityRuleDetailsHandler(t *testing.T) {
 
 func TestFetchCommunityRuleIndex(t *testing.T) {
 	t.Run("Successful fetch", func(t *testing.T) {
-		// Initialize logger for testing
-		initTestLogger()
-
 		mockIndex := mockCommunityRuleIndex()
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -637,9 +619,6 @@ func TestFetchCommunityRuleIndex(t *testing.T) {
 	})
 
 	t.Run("Fetch with caching", func(t *testing.T) {
-		// Initialize logger for testing
-		initTestLogger()
-
 		mockIndex := mockCommunityRuleIndex()
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -1138,11 +1117,11 @@ func TestStartFunction(t *testing.T) {
 		// But we can test that the function signature is correct
 		// and that findSgBinary works as expected
 
-		// Test that we can call findSgBinary (simulating what Start does)
+		// Test that we can call extractSgBinary (simulating what Start does)
 		// Note: This will fail in test environment without actual binary
-		_, err := findSgBinary()
+		_, err := extractSgBinary([]byte{})
 		if err == nil {
-			t.Log("findSgBinary succeeded in test environment")
+			t.Log("extractSgBinary succeeded in test environment")
 		}
 	})
 }
@@ -1490,10 +1469,10 @@ func TestFindProjectRoot(t *testing.T) {
 
 func TestFindSgBinary(t *testing.T) {
 	t.Run("Find binary on current system", func(t *testing.T) {
-		// Test that findSgBinary doesn't panic
+		// Test that extractSgBinary doesn't panic
 		// In test environment, this will likely fail to find the binary
 		// but should not panic
-		path, err := findSgBinary()
+		path, err := extractSgBinary([]byte{})
 
 		// We expect this to fail in test environment since we don't have ast-grep installed
 		// The important thing is that it doesn't panic
