@@ -930,7 +930,7 @@ func TestDiscoverFiles(t *testing.T) {
 
 	// Test Case 1: Single file
 	t.Run("Single file", func(t *testing.T) {
-		files, err := discoverFiles("test1.go", "")
+		files, err := discoverFiles("test1.go", "", "")
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
 		}
@@ -946,7 +946,7 @@ func TestDiscoverFiles(t *testing.T) {
 
 	// Test Case 2: Directory scan
 	t.Run("Directory scan", func(t *testing.T) {
-		files, err := discoverFiles(".", "")
+		files, err := discoverFiles(".", "", "")
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
 		}
@@ -959,7 +959,7 @@ func TestDiscoverFiles(t *testing.T) {
 
 	// Test Case 3: Language filtering
 	t.Run("Language filtering", func(t *testing.T) {
-		files, err := discoverFiles(".", "go")
+		files, err := discoverFiles(".", "go", "")
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
 		}
@@ -972,7 +972,7 @@ func TestDiscoverFiles(t *testing.T) {
 
 	// Test Case 4: Non-existent file
 	t.Run("Non-existent file", func(t *testing.T) {
-		files, err := discoverFiles("nonexistent.go", "")
+		files, err := discoverFiles("nonexistent.go", "", "")
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
 		}
@@ -1078,7 +1078,7 @@ func main() {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, err := discoverFiles(".", "go")
+		_, err := discoverFiles(".", "go", "")
 		if err != nil {
 			b.Fatalf("discoverFiles failed: %v", err)
 		}
