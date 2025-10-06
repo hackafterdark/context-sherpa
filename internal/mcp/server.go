@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -61,17 +63,27 @@ var communityRulesRepo = "https://raw.githubusercontent.com/hackafterdark/contex
 // projectRootOverride stores the custom project root directory when specified via command-line argument
 var projectRootOverride string
 
+// Logging configuration
+var (
+	verboseLogging bool
+	logFile        *os.File
+	customLogger   *log.Logger
+)
+
 // getCommunityRulesRepoURL returns the community rules repository URL (can be overridden in tests)
 func getCommunityRulesRepoURL() string {
 	return communityRulesRepo
 }
 
 // Start initializes and starts the MCP server.
-func Start(sgBinary []byte, projectRoot string) {
+func Start(sgBinary []byte, projectRoot string, verbose bool, logFilePath string) {
 	if projectRoot != "" {
 		projectRootOverride = projectRoot
 	}
 	sgBinaryData = sgBinary
+
+	// Initialize logging system
+	initLogging(verbose, logFilePath)
 
 	// Create a new MCP server
 	s := server.NewMCPServer(
@@ -215,15 +227,17 @@ Example: "Create a rule to catch SQL injection" → generates ast-grep YAML rule
 	s.AddTool(getCommunityRuleDetailsTool, getCommunityRuleDetailsHandler)
 	s.AddTool(importCommunityRuleTool, importCommunityRuleHandler)
 
-	log.Println("Starting MCP server...")
+	customLogger.Println("Starting MCP server...")
 
 	// Start the stdio server
 	if err := server.ServeStdio(s); err != nil {
-		log.Printf("Server error: %v\n", err)
+		customLogger.Printf("Server error: %v\n", err)
 	}
 }
 
 func scanCodeHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var projectRoot string
+
 	code, err := req.RequireString("code")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -242,12 +256,21 @@ func scanCodeHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	}
 
 	// --- DEBUG LOGGING ---
-	log.Printf("Using sgconfig file: %s", sgconfigStr)
+	verboseLog("scanCodeHandler: Using sgconfig file: %s", sgconfigStr)
 	// --- END DEBUG LOGGING ---
 
-	// Check if the configuration file exists
-	if _, err := os.Stat(sgconfigStr); os.IsNotExist(err) {
-		return mcp.NewToolResultText(fmt.Sprintf("Error: Configuration file '%s' not found. Please run the 'initialize_ast_grep' tool first to set up the project.", sgconfigStr)), nil
+	// Find the project root where sgconfig.yml is located
+	projectRoot, err = findProjectRoot()
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// Resolve sgconfig path relative to project root
+	resolvedSgconfigPath := resolvePathRelativeToProjectRoot(sgconfigStr, projectRoot)
+
+	// Check if the configuration file exists at the resolved path
+	if _, err := os.Stat(resolvedSgconfigPath); os.IsNotExist(err) {
+		return mcp.NewToolResultText(fmt.Sprintf("Error: Configuration file '%s' not found at resolved path '%s'. Please run the 'initialize_ast_grep' tool first to set up the project.", sgconfigStr, resolvedSgconfigPath)), nil
 	}
 
 	tmpfile, err := os.CreateTemp("", "ast-grep-scan.*."+language)
@@ -270,13 +293,7 @@ func scanCodeHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	}
 	defer os.Remove(sgPath)
 
-	// Find the project root where sgconfig.yml is located
-	projectRoot, err := findProjectRoot()
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-
-	cmd := exec.Command(sgPath, "scan", "--config", sgconfigStr, tmpfile.Name(), "--json")
+	cmd := exec.Command(sgPath, "scan", "--config", resolvedSgconfigPath, tmpfile.Name(), "--json")
 	cmd.Dir = projectRoot // Run ast-grep from the project root
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -289,6 +306,8 @@ func scanCodeHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 
 // scanPathHandler handles the scan_path tool
 func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var projectRoot string
+
 	path, err := req.RequireString("path")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -310,16 +329,25 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	}
 
 	// --- DEBUG LOGGING ---
-	log.Printf("scan_file: Using sgconfig file: %s", sgconfigStr)
-	log.Printf("scan_file: Scanning path: %s", path)
+	verboseLog("scanPathHandler: Using sgconfig file: %s", sgconfigStr)
+	verboseLog("scanPathHandler: Scanning path: %s", path)
 	if languageFilter != "" {
-		log.Printf("scan_file: Language filter: %s", languageFilter)
+		verboseLog("scanPathHandler: Language filter: %s", languageFilter)
 	}
 	// --- END DEBUG LOGGING ---
 
-	// Check if the configuration file exists
-	if _, err := os.Stat(sgconfigStr); os.IsNotExist(err) {
-		return mcp.NewToolResultText(fmt.Sprintf("Error: Configuration file '%s' not found. Please run the 'initialize_ast_grep' tool first to set up the project.", sgconfigStr)), nil
+	// Find the project root where sgconfig.yml is located
+	projectRoot, err = findProjectRoot()
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// Resolve sgconfig path relative to project root
+	resolvedSgconfigPath := resolvePathRelativeToProjectRoot(sgconfigStr, projectRoot)
+
+	// Check if the configuration file exists at the resolved path
+	if _, err := os.Stat(resolvedSgconfigPath); os.IsNotExist(err) {
+		return mcp.NewToolResultText(fmt.Sprintf("Error: Configuration file '%s' not found at resolved path '%s'. Please run the 'initialize_ast_grep' tool first to set up the project.", sgconfigStr, resolvedSgconfigPath)), nil
 	}
 
 	sgPath, err := extractSgBinary(sgBinaryData)
@@ -328,14 +356,8 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	}
 	defer os.Remove(sgPath)
 
-	// Find the project root where sgconfig.yml is located
-	projectRoot, err := findProjectRoot()
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-
 	// Discover files to scan
-	files, err := discoverFiles(path, languageFilter)
+	files, err := discoverFiles(path, languageFilter, projectRoot)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Error discovering files: %v", err)), nil
 	}
@@ -345,7 +367,7 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	}
 
 	// --- DEBUG LOGGING ---
-	log.Printf("scan_file: Found %d files to scan", len(files))
+	verboseLog("scan_file: Found %d files to scan", len(files))
 	// --- END DEBUG LOGGING ---
 
 	// Filter files by size (1MB limit) - FIRST ITERATION FEATURE
@@ -354,13 +376,13 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	for _, file := range files {
 		fileInfo, err := os.Stat(file)
 		if err != nil {
-			log.Printf("scan_file: Warning - could not stat file %s: %v", file, err)
+			verboseLog("scan_file: Warning - could not stat file %s: %v", file, err)
 			continue
 		}
 
 		if fileInfo.Size() > 1024*1024 { // 1MB limit
 			skippedFiles = append(skippedFiles, file)
-			log.Printf("scan_file: Skipping file %s (size: %d bytes > 1MB limit)", file, fileInfo.Size())
+			verboseLog("scan_file: Skipping file %s (size: %d bytes > 1MB limit)", file, fileInfo.Size())
 			continue
 		}
 
@@ -368,7 +390,7 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	}
 
 	// --- DEBUG LOGGING ---
-	log.Printf("scan_file: %d files valid for scanning, %d files skipped (over 1MB)", len(validFiles), len(skippedFiles))
+	verboseLog("scan_file: %d files valid for scanning, %d files skipped (over 1MB)", len(validFiles), len(skippedFiles))
 	// --- END DEBUG LOGGING ---
 
 	if len(validFiles) == 0 {
@@ -376,7 +398,7 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	}
 
 	// Scan files in batches
-	allOutput, err := scanFileBatch(validFiles, sgconfigStr, projectRoot, sgPath)
+	allOutput, err := scanFileBatch(validFiles, resolvedSgconfigPath, projectRoot, sgPath)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Error scanning files: %v", err)), nil
 	}
@@ -385,21 +407,30 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 }
 
 // discoverFiles discovers files to scan based on the path pattern
-func discoverFiles(path, languageFilter string) ([]string, error) {
+func discoverFiles(path, languageFilter, projectRoot string) ([]string, error) {
 	var files []string
 
 	// Check if path is a direct file
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		// Resolve file path relative to project root for consistency
+		resolvedPath := resolvePathRelativeToProjectRoot(path, projectRoot)
+
 		// Apply language filter if specified
-		if languageFilter != "" && !matchesLanguage(path, languageFilter) {
+		if languageFilter != "" && !matchesLanguage(resolvedPath, languageFilter) {
 			return files, nil // Return empty slice if file doesn't match language filter
 		}
-		return []string{path}, nil
+		return []string{resolvedPath}, nil
 	}
 
 	// Handle directory scanning (when path is "." or a directory)
 	if path == "." {
-		err := filepath.Walk(".", func(currentPath string, info os.FileInfo, err error) error {
+		// Resolve "." relative to project root
+		searchRoot := projectRoot
+		if searchRoot == "" {
+			searchRoot = "."
+		}
+
+		err := filepath.Walk(searchRoot, func(currentPath string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
 			}
@@ -423,7 +454,16 @@ func discoverFiles(path, languageFilter string) ([]string, error) {
 
 	// Check if it's a directory path
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
-		err := filepath.Walk(path, func(currentPath string, info os.FileInfo, err error) error {
+		// For directory check, we need to resolve the path first to handle project root override
+		resolvedPath := resolvePathRelativeToProjectRoot(path, projectRoot)
+
+		// Verify the resolved path is actually a directory
+		if resolvedInfo, err := os.Stat(resolvedPath); err != nil || !resolvedInfo.IsDir() {
+			// If resolved path doesn't exist or isn't a directory, fall back to original path
+			resolvedPath = path
+		}
+
+		err := filepath.Walk(resolvedPath, func(currentPath string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
 			}
@@ -445,8 +485,13 @@ func discoverFiles(path, languageFilter string) ([]string, error) {
 		return files, err
 	}
 
-	// Handle glob patterns - walk current directory and match patterns
-	err := filepath.Walk(".", func(currentPath string, info os.FileInfo, err error) error {
+	// Handle glob patterns - walk project root directory and match patterns
+	searchRoot := projectRoot
+	if searchRoot == "" {
+		searchRoot = "."
+	}
+
+	err := filepath.Walk(searchRoot, func(currentPath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -519,8 +564,11 @@ func scanFileBatch(files []string, sgconfigStr, projectRoot, sgPath string) (str
 	if err != nil {
 		// ast-grep exits with non-zero status code if issues are found.
 		// We still want to parse the output.
-		log.Printf("scan_file: ast-grep command exited with error: %v", err)
+		verboseLog("scan_file: ast-grep command exited with error: %v", err)
 	}
+
+	// Log the actual ast-grep command output when verbose logging is enabled
+	verboseLog("scan_file: ast-grep command output: %s", string(output))
 
 	return string(output), nil
 }
@@ -562,6 +610,7 @@ func findProjectRoot() (string, error) {
 
 	if projectRootOverride != "" {
 		// Use the specified project root as starting point
+		verboseLog("Using custom project root override: %s", projectRootOverride)
 		dir = projectRootOverride
 	} else {
 		// Fall back to current behavior
@@ -589,6 +638,26 @@ func findProjectRoot() (string, error) {
 }
 
 func extractSgBinary(sgBinary []byte) (string, error) {
+	// Windows-specific logic: use system ast-grep.exe instead of embedded binary
+	if runtime.GOOS == "windows" {
+		// On Windows, look for ast-grep.exe in the same directory as the running executable
+		execPath, err := os.Executable()
+		if err != nil {
+			return "", fmt.Errorf("failed to get executable path: %v", err)
+		}
+
+		execDir := filepath.Dir(execPath)
+		sgPath := filepath.Join(execDir, "ast-grep.exe")
+
+		if _, err := os.Stat(sgPath); os.IsNotExist(err) {
+			return "", fmt.Errorf("ast-grep.exe not found in %s. Please download ast-grep.exe from https://github.com/ast-grep/ast-grep/releases and place it in the same directory as context-sherpa.exe", execDir)
+		}
+
+		verboseLog("Found ast-grep.exe at: %s", sgPath)
+		return sgPath, nil
+	}
+
+	// For non-Windows systems, use the embedded binary (original behavior)
 	tmpfile, err := os.CreateTemp("", "sg")
 	if err != nil {
 		return "", err
@@ -614,6 +683,7 @@ func getRuleDir() (string, error) {
 
 	if projectRootOverride != "" {
 		// Use the specified project root as starting point
+		verboseLog("Using custom project root override: %s", projectRootOverride)
 		dir = projectRootOverride
 	} else {
 		// Fall back to current behavior
@@ -718,11 +788,11 @@ func initializeAstGrepHandler(ctx context.Context, req mcp.CallToolRequest) (*mc
 func fetchCommunityRuleIndex() (*CommunityRuleIndex, error) {
 	// Check if we have a valid cached index
 	if communityRuleCache != nil && time.Since(cacheTimestamp) < cacheTTL {
-		log.Println("Using cached community rule index")
+		verboseLog("Using cached community rule index")
 		return communityRuleCache, nil
 	}
 
-	log.Println("Fetching community rule index from repository")
+	verboseLog("Fetching community rule index from repository")
 
 	// Fetch the index.json file
 	resp, err := http.Get(getCommunityRulesRepoURL())
@@ -744,8 +814,74 @@ func fetchCommunityRuleIndex() (*CommunityRuleIndex, error) {
 	communityRuleCache = &index
 	cacheTimestamp = time.Now()
 
-	log.Printf("Successfully loaded %d community rules", len(index.Rules))
+	verboseLog("Successfully loaded %d community rules", len(index.Rules))
 	return &index, nil
+}
+
+// initLogging initializes the logging system with support for verbose logging and log files
+func initLogging(verbose bool, logFilePath string) {
+	verboseLogging = verbose
+
+	var writers []io.Writer
+
+	// Always write to stdout/stderr
+	writers = append(writers, os.Stdout, os.Stderr)
+
+	// If log file is specified, append to it
+	if logFilePath != "" {
+		var err error
+		logFile, err = os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		if err != nil {
+			log.Printf("Warning: Failed to open log file %s: %v", logFilePath, err)
+		} else {
+			writers = append(writers, logFile)
+		}
+	}
+
+	// Create multi-writer for logging
+	if len(writers) > 2 { // stdout + stderr + file
+		customLogger = log.New(io.MultiWriter(writers...), "", log.LstdFlags)
+	} else {
+		customLogger = log.New(io.MultiWriter(writers...), "", log.LstdFlags)
+	}
+
+	if verbose {
+		customLogger.Println("Verbose logging enabled")
+		if logFilePath != "" {
+			customLogger.Printf("Logging to file: %s", logFilePath)
+		}
+	}
+}
+
+// verboseLog logs a message only if verbose logging is enabled
+func verboseLog(format string, v ...interface{}) {
+	if verboseLogging && customLogger != nil {
+		customLogger.Printf(format, v...)
+	}
+}
+
+// resolvePathRelativeToProjectRoot resolves a user-provided path relative to the project root.
+// If the path is absolute, it returns the path as-is.
+// If the path is relative, it joins it with the project root.
+// If projectRoot is empty, it treats the path as relative to current directory.
+func resolvePathRelativeToProjectRoot(path, projectRoot string) string {
+	// If path is absolute, return as-is
+	if filepath.IsAbs(path) {
+		return path
+	}
+
+	// If no project root override, return path as-is (relative to current directory)
+	if projectRoot == "" {
+		return path
+	}
+
+	// Resolve relative path against project root
+	resolvedPath := filepath.Join(projectRoot, path)
+
+	// Add verbose logging for debugging
+	verboseLog("resolvePathRelativeToProjectRoot: '%s' resolved to '%s' (projectRoot: '%s')", path, resolvedPath, projectRoot)
+
+	return resolvedPath
 }
 
 // searchCommunityRulesHandler handles the search_community_rules tool
