@@ -6,6 +6,9 @@ server
 bin
 rules
 .roo
+context-sherpa
+ast-grep
+sg
 
 # Binaries for programs and plugins
 *.exe
