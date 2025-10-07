@@ -156,7 +156,7 @@ jobs:
         if: matrix.os != 'windows-latest'
         run: |
           echo "Testing context-sherpa binary with ast-grep on ${{ matrix.os }}..."
-          BINARY_NAME="context-sherpa-$GOOS-$GOARCH"
+          BINARY_NAME="context-sherpa-${{ matrix.goos }}-${{ matrix.goarch }}"
           echo "Binary name: $BINARY_NAME"
           # Run context-sherpa with ast-grep for 5 seconds then kill it
           timeout 5s ./$BINARY_NAME --astGrepPath=./ast-grep > context-sherpa.log 2>&1 &
