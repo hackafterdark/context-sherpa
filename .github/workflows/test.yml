@@ -16,10 +16,10 @@ jobs:
     - name: Download ast-grep binary for tests
       run: |
         curl -L -o ast-grep.zip https://github.com/ast-grep/ast-grep/releases/latest/download/app-x86_64-unknown-linux-gnu.zip
-        unzip -o ast-grep.zip -d cmd/server/bin/
+        unzip -o ast-grep.zip
         # Verify ast-grep binary works
-        if [ -f "cmd/server/bin/ast-grep" ]; then
-          ./cmd/server/bin/ast-grep --version || (echo "ast-grep binary not working"; exit 1)
+        if [ -f "ast-grep" ]; then
+          ./ast-grep --version || (echo "ast-grep binary not working"; exit 1)
         fi
         rm ast-grep.zip
 
@@ -30,6 +30,27 @@ jobs:
     - name: Verify build works
       run: |
         go build ./...
+        go build -o context-sherpa ./cmd/context-sherpa
+
+    - name: Test context-sherpa with ast-grep integration
+      run: |
+        echo "Testing context-sherpa binary with ast-grep..."
+        # Run context-sherpa with ast-grep for 5 seconds then kill it
+        timeout 5s ./context-sherpa --astGrepPath=./ast-grep > context-sherpa.log 2>&1 &
+        SERVER_PID=$!
+        # Wait for startup messages
+        sleep 2
+        # Kill the server
+        kill $SERVER_PID 2>/dev/null || true
+        # Check for expected startup messages
+        if grep -q "Using ast-grep:" context-sherpa.log && grep -q "Starting MCP server..." context-sherpa.log; then
+          echo "✅ context-sherpa started successfully with ast-grep"
+        else
+          echo "❌ context-sherpa did not start properly with ast-grep"
+          echo "Server output:"
+          cat context-sherpa.log
+          exit 1
+        fi
 
     - name: Run Unit tests
       run: |
