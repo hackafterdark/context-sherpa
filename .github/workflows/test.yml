@@ -40,6 +40,26 @@ jobs:
         chmod +x test-mcp-server.sh
         ./test-mcp-server.sh
 
+    - name: Test context-sherpa with ast-grep integration
+      run: |
+        echo "Testing context-sherpa binary with ast-grep..."
+        # Run context-sherpa with ast-grep for 5 seconds then kill it
+        timeout 5s ./context-sherpa --astGrepPath=./ast-grep > context-sherpa.log 2>&1 &
+        SERVER_PID=$!
+        # Wait for startup messages
+        sleep 2
+        # Kill the server
+        kill $SERVER_PID 2>/dev/null || true
+        # Check for expected startup messages
+        if grep -q "Using ast-grep:" context-sherpa.log && grep -q "Starting MCP server..." context-sherpa.log; then
+          echo "✅ context-sherpa started successfully with ast-grep"
+        else
+          echo "❌ context-sherpa did not start properly with ast-grep"
+          echo "Server output:"
+          cat context-sherpa.log
+          exit 1
+        fi
+
     - name: Run Unit tests
       run: |
         go test -race -covermode atomic -coverprofile=coverage.out -v ./...
