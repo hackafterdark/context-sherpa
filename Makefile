@@ -1,5 +1,9 @@
 # Multi-Architecture Build System for context-sherpa
-# Version: 1.0
+# Version: 2.0
+#
+# Note: This Makefile no longer embeds ast-grep binary.
+# For development, use 'make download-ast-grep' to get ast-grep binary for testing.
+# For production use, install ast-grep via package manager (recommended).
 
 # Variables
 BINARY_NAME := context-sherpa
@@ -32,26 +36,25 @@ clean:
 	rm -rf $(BUILD_DIR)
 	rm -f $(BINARY_NAME)*
 
-# Download ast-grep binary for current platform (linux/amd64)
+# Download ast-grep binary for development/testing (linux/amd64)
 .PHONY: download-ast-grep
 download-ast-grep:
-	@echo "Downloading ast-grep binary for linux/amd64..."
+	@echo "Downloading ast-grep binary for development/testing..."
 	@curl -L -o ast-grep.zip https://github.com/ast-grep/ast-grep/releases/download/$(AST_GREP_VERSION)/app-x86_64-unknown-linux-gnu.zip
-	@unzip -o ast-grep.zip -d cmd/server/bin/
+	@unzip -o ast-grep.zip
 	# Verify ast-grep binary works
-	@if [ -f "cmd/server/bin/ast-grep" ]; then \
-		echo "Ensured ast-grep file exists for embedding"; \
-		./cmd/server/bin/ast-grep --version >/dev/null && echo "Verified ast-grep binary works" || (echo "ast-grep binary not working"; exit 1); \
+	@if [ -f "ast-grep" ]; then \
+		./ast-grep --version >/dev/null && echo "✅ ast-grep binary downloaded and verified" || (echo "❌ ast-grep binary not working"; exit 1); \
 	fi
 	@rm ast-grep.zip
-	@echo "ast-grep binary downloaded and verified"
+	@echo "ast-grep binary downloaded to project root for development use"
 
 # Build for current architecture (linux/amd64)
 .PHONY: build-current-arch
-build-current-arch: download-ast-grep test
+build-current-arch: test
 	@echo "Building for current architecture (linux/amd64)..."
 	@mkdir -p $(BUILD_DIR)
-	go build $(GO_FLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/server
+	go build $(GO_FLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/context-sherpa
 	@echo "Binary built: $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64"
 
 # Create release package
@@ -77,10 +80,15 @@ help:
 	@echo "  build-current-arch - Build for current platform (linux/amd64)"
 	@echo "  release            - Create release package"
 	@echo "  clean              - Clean build artifacts"
+	@echo "  download-ast-grep  - Download ast-grep binary for development/testing"
 	@echo "  dev                - Development workflow (setup + test + build)"
 	@echo "  help               - Show this help"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make dev                    # Full development cycle"
 	@echo "  make build-current-arch     # Quick local build"
+	@echo "  make download-ast-grep      # Get ast-grep for development"
 	@echo "  make release                # Create release package"
+	@echo ""
+	@echo "Note: ast-grep binary is no longer embedded in the context-sherpa binary."
+	@echo "For production use, install ast-grep via package manager (recommended)."
