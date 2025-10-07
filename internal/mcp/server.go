@@ -19,8 +19,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var sgBinaryData []byte
-
 // SgConfig represents the structure of sgconfig.yml
 type SgConfig struct {
 	RuleDirs []string `yaml:"ruleDirs"`
@@ -63,6 +61,9 @@ var communityRulesRepo = "https://raw.githubusercontent.com/hackafterdark/contex
 // projectRootOverride stores the custom project root directory when specified via command-line argument
 var projectRootOverride string
 
+// astGrepPathOverride stores the custom ast-grep binary path when specified via command-line argument
+var astGrepPathOverride string
+
 // Logging configuration
 var (
 	verboseLogging bool
@@ -76,11 +77,13 @@ func getCommunityRulesRepoURL() string {
 }
 
 // Start initializes and starts the MCP server.
-func Start(sgBinary []byte, projectRoot string, verbose bool, logFilePath string) {
+func Start(projectRoot string, verbose bool, logFilePath string, astGrepPath string) {
 	if projectRoot != "" {
 		projectRootOverride = projectRoot
 	}
-	sgBinaryData = sgBinary
+	if astGrepPath != "" {
+		astGrepPathOverride = astGrepPath
+	}
 
 	// Initialize logging system
 	initLogging(verbose, logFilePath)
@@ -287,11 +290,10 @@ func scanCodeHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 		return mcp.NewToolResultError(fmt.Sprintf("Error closing temporary file: %v", err)), nil
 	}
 
-	sgPath, err := extractSgBinary(sgBinaryData)
+	sgPath, err := findAstGrepBinary(astGrepPathOverride)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error extracting sg binary: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("Error finding ast-grep binary: %v", err)), nil
 	}
-	defer os.Remove(sgPath)
 
 	cmd := exec.Command(sgPath, "scan", "--config", resolvedSgconfigPath, tmpfile.Name(), "--json")
 	cmd.Dir = projectRoot // Run ast-grep from the project root
@@ -350,11 +352,10 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 		return mcp.NewToolResultText(fmt.Sprintf("Error: Configuration file '%s' not found at resolved path '%s'. Please run the 'initialize_ast_grep' tool first to set up the project.", sgconfigStr, resolvedSgconfigPath)), nil
 	}
 
-	sgPath, err := extractSgBinary(sgBinaryData)
+	sgPath, err := findAstGrepBinary(astGrepPathOverride)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error extracting sg binary: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("Error finding ast-grep binary: %v", err)), nil
 	}
-	defer os.Remove(sgPath)
 
 	// Discover files to scan
 	files, err := discoverFiles(path, languageFilter, projectRoot)
@@ -637,42 +638,49 @@ func findProjectRoot() (string, error) {
 	return "", fmt.Errorf("sgconfig.yml not found. Please run 'ast-grep new' to initialize an ast-grep project first")
 }
 
-func extractSgBinary(sgBinary []byte) (string, error) {
-	// Windows-specific logic: use system ast-grep.exe instead of embedded binary
+func findAstGrepBinary(astGrepPath string) (string, error) {
+	// 1. User explicitly specified path (highest priority)
+	if astGrepPath != "" {
+		if _, err := os.Stat(astGrepPath); err == nil {
+			verboseLog("Using user-specified ast-grep path: %s", astGrepPath)
+			return astGrepPath, nil
+		}
+		return "", fmt.Errorf("ast-grep not found at specified path: %s", astGrepPath)
+	}
+
+	// 2. System PATH (standard location)
+	if path, err := exec.LookPath("ast-grep"); err == nil {
+		verboseLog("Found ast-grep in PATH: %s", path)
+		return path, nil
+	}
+
 	if runtime.GOOS == "windows" {
-		// On Windows, look for ast-grep.exe in the same directory as the running executable
-		execPath, err := os.Executable()
-		if err != nil {
-			return "", fmt.Errorf("failed to get executable path: %v", err)
+		if path, err := exec.LookPath("ast-grep.exe"); err == nil {
+			verboseLog("Found ast-grep.exe in PATH: %s", path)
+			return path, nil
 		}
-
-		execDir := filepath.Dir(execPath)
-		sgPath := filepath.Join(execDir, "ast-grep.exe")
-
-		if _, err := os.Stat(sgPath); os.IsNotExist(err) {
-			return "", fmt.Errorf("ast-grep.exe not found in %s. Please download ast-grep.exe from https://github.com/ast-grep/ast-grep/releases and place it in the same directory as context-sherpa.exe", execDir)
-		}
-
-		verboseLog("Found ast-grep.exe at: %s", sgPath)
-		return sgPath, nil
 	}
 
-	// For non-Windows systems, use the embedded binary (original behavior)
-	tmpfile, err := os.CreateTemp("", "sg")
-	if err != nil {
-		return "", err
-	}
-	defer tmpfile.Close()
+	// 3. Clear error - explain MCP server limitation
+	return "", fmt.Errorf(`ast-grep not found in PATH.
 
-	if _, err := tmpfile.Write(sgBinary); err != nil {
-		return "", err
-	}
+As an MCP server communicating via stdio, I cannot:
+- Detect where your editor/IDE is running from
+- Access your current working directory
+- Find binaries in project-specific locations
 
-	if err := tmpfile.Chmod(0755); err != nil {
-		return "", err
-	}
+Please ensure ast-grep is available in one of these ways:
 
-	return tmpfile.Name(), nil
+1. Install in system PATH (see https://ast-grep.github.io/guide/quick-start.html):
+   # Choose one of these installation methods:
+   brew install ast-grep                    # macOS/Linux
+   cargo install ast-grep --locked         # Rust
+   npm i @ast-grep/cli -g                  # Node.js
+   pip install ast-grep-cli                # Python
+   sudo port install ast-grep              # MacPorts
+
+2. Specify explicit path:
+   context-sherpa --astGrepPath="/path/to/ast-grep"`)
 }
 
 // getRuleDir determines the directory where rules should be stored by searching

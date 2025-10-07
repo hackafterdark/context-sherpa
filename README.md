@@ -1,6 +1,6 @@
 # Context Sherpa
 
-Context Sherpa is an AI-powered code analysis server that helps developers guide AI coding agents. It provides tools for linting, validating, and dynamically managing code rules based on natural language feedback. The server is designed to be a portable, cross-platform solution that works with minimal setup - Linux/macOS users need only a single binary, while Windows users need both the Context Sherpa binary and the separate ast-grep.exe binary.
+Context Sherpa is an AI-powered code analysis server that helps developers guide AI coding agents. It provides tools for linting, validating, and dynamically managing code rules based on natural language feedback. The server is designed to be a portable, cross-platform solution that works with minimal setup and respects OS security models.
 
 ## What is Context Sherpa?
 
@@ -16,48 +16,93 @@ As a developer using an AI coding agent, you want to:
 
 ## Installation
 
-Context Sherpa is delivered as a single, self-contained binary for easy integration with AI coding agents.
+### Recommended: Go Install
 
-### Option 1: Download from Releases
-
-1.  Navigate to the [releases page](https://github.com/hackafterdark/context-sherpa/releases/latest) of the GitHub repository.
-2.  Download the binary that matches your operating system and architecture:
-      - `context-sherpa-linux-amd64` (Linux)
-      - `context-sherpa-darwin-amd64` or `context-sherpa-darwin-arm64` (macOS)
-      - `context-sherpa-windows-amd64.exe` or `context-sherpa-windows-arm64.exe` (Windows)
-3.  **For Windows users**: Download the `ast-grep` binary from the [ast-grep releases page](https://github.com/ast-grep/ast-grep/releases/latest) and place `ast-grep.exe` in the same directory as `context-sherpa.exe`.
-4.  Configure your AI coding tool (Roo Code, Cline, Cursor, etc.) to use Context Sherpa as an MCP server.
-
-**Important Windows Notes:**
-- Both `context-sherpa.exe` and `ast-grep.exe` must be in your project directory for relative paths to work correctly
-- Due to Windows security restrictions, the `ast-grep.exe` binary cannot be embedded in the main executable
-- You may need to unblock the `ast-grep.exe` file in Windows security settings if it shows security warnings
-
-**Important macOS Notes:**
-- On macOS, you may need to double-click the Context Sherpa app in Finder first to bypass Gatekeeper security restrictions since the binary is not currently code-signed
-- After the initial launch, the app will run normally in subsequent uses
-- Code signing will be implemented in a future update to eliminate this requirement
-- **Alternative:** If you build from source yourself, you won't encounter this issue since the binary will be recognized as coming from your own machine
-
-### Option 2: Build from Source
-
-You can also build from source, though you'll need to ensure the `ast-grep` binary is available.
-
-**For Windows users**: Due to security restrictions, you must download the `ast-grep.exe` binary separately:
-
-1.  Download `ast-grep.exe` from the [ast-grep releases page](https://github.com/ast-grep/ast-grep/releases/latest)
-2.  Place `ast-grep.exe` in the same directory as your built `context-sherpa.exe`
-3.  Both executables should be in your project directory for relative paths to work correctly
-
-**For Linux/macOS users**: The build process will attempt to use the system `ast-grep` installation.
-
-**Note for macOS Users**: Building from source eliminates the need to double-click the app in Finder first, as the binary will be recognized as coming from your own machine and won't trigger Gatekeeper security restrictions.
+If you have the Go toolchain installed, this is the simplest and most secure method:
 
 ```bash
-go build -o context-sherpa ./cmd/server
+# Install Context Sherpa
+go install github.com/hackafterdark/context-sherpa/cmd/context-sherpa@latest
+
+# Install ast-grep (choose one method)
+# Option 1: Homebrew (macOS/Linux)
+brew install ast-grep
+
+# Option 2: Cargo (Rust)
+cargo install ast-grep --locked
+
+# Option 3: NPM
+npm i @ast-grep/cli -g
+
+# Option 4: Other methods (see https://ast-grep.github.io/guide/quick-start.html)
+# pip install ast-grep-cli
+# sudo port install ast-grep (MacPorts)
+
+# Verify installation
+context-sherpa --version
+ast-grep --version  # or 'sg --version' on Linux
 ```
 
-**Note**: If you encounter issues with the ast-grep executable on Windows, you may need to unblock the file in Windows security settings or run it from a trusted location.
+**For Windows Users:** Install ast-grep using one of the methods above, or download from [GitHub releases](https://github.com/ast-grep/ast-grep/releases/latest).
+
+### Manual Installation
+
+Download pre-compiled binaries from [GitHub Releases](https://github.com/hackafterdark/context-sherpa/releases/latest).
+
+1. **Download Context Sherpa** for your platform
+2. **Download ast-grep** from [ast-grep releases](https://github.com/ast-grep/ast-grep/releases/latest)
+3. **Place both in same directory** (preferably in your PATH)
+
+**macOS Security:** Remove quarantine attribute:
+```bash
+xattr -d com.apple.quarantine ./context-sherpa-darwin-amd64
+```
+
+**Windows Security:** Right-click files → Properties → Security → Unblock
+
+### Custom ast-grep Path
+
+If ast-grep is installed in a non-standard location, you can specify the path explicitly:
+
+```bash
+context-sherpa --astGrepPath="/custom/path/to/ast-grep" --projectRoot="/path/to/your/project"
+```
+
+### Configuration
+
+Configure your AI coding tool (Roo Code, Cline, Cursor, etc.) to use Context Sherpa as an MCP server:
+
+```json
+{
+  "mcpServers": {
+    "context-sherpa": {
+      "command": "context-sherpa",
+      "args": ["--projectRoot", "/path/to/your/project"]
+    }
+  }
+}
+```
+
+### Custom Project Root (Optional)
+
+If your MCP server binary is installed in a different location than your project directory, you can specify a custom project root:
+
+**Command Line:**
+```bash
+context-sherpa --projectRoot="/path/to/your/project"
+```
+
+**MCP Configuration:**
+```json
+{
+  "mcpServers": {
+    "context-sherpa": {
+      "command": "context-sherpa",
+      "args": ["--projectRoot", "/path/to/your/project"]
+    }
+  }
+}
+```
 
 ## Configuration
 
@@ -89,11 +134,12 @@ This ensures that `sgconfig.yml`, `rules/`, and other project files are created 
 ## Features
 
 - **Dynamic Rule Management**: Create, update, and remove linting rules on the fly based on natural language feedback.
-- **Cross-Platform Compatibility**: Single binary for Linux/macOS; Windows users need separate `ast-grep.exe` binary.
+- **Cross-Platform Compatibility**: Works identically across Linux, macOS, and Windows with standard package managers.
 - **Easy Integration**: Designed to work seamlessly with AI coding agents through the MCP server.
 - **Community Rules**: Access to a growing collection of pre-built rules from the [Context Sherpa Community Rules](https://github.com/hackafterdark/context-sherpa-community-rules) repository.
 - **Verbose Logging**: Debug mode with detailed command execution logs and optional file logging.
 - **Extensible**: Future-proofed with a plan to integrate semantic analysis for more powerful and accurate linting.
+- **Zero Security Issues**: Built locally with `go install` or uses system-trusted package managers.
 
 ## Example Usage
 
@@ -105,8 +151,7 @@ You can use an AI agent to scan this file and see the violation.
 
     Add the Context Sherpa server to your tool's MCP configuration. The exact configuration method varies by tool:
 
-    **For binaries downloaded from releases**: Use `context-sherpa` as the command name
-    **For binaries built from source**: Use the output filename you specified (default: `context-sherpa` if you followed the build instructions)
+    Use `context-sherpa` as the command name
 
     ```json
     {
@@ -230,27 +275,17 @@ We welcome contributions from the community! Whether you're reporting bugs, sugg
 
 If you prefer to build from source, you'll need Go installed on your system:
 
-**For Windows users**:
-1.  **Download the `ast-grep.exe` binary**:
-    -   Go to the [`ast-grep` releases page](https://github.com/ast-grep/ast-grep/releases/latest).
-    -   Download the Windows binary appropriate for your architecture.
-    -   Place `ast-grep.exe` in the same directory as your built `context-sherpa.exe`.
-    -   Both files should be in your project directory for relative paths to work correctly.
-
-**For Linux/macOS users**:
-1.  **Download the `ast-grep` binary**:
-    -   Go to the [`ast-grep` releases page](https://github.com/ast-grep/ast-grep/releases/latest).
-    -   Download the binary appropriate for your target platform and architecture.
-    -   Place the binary in the `cmd/server/bin/` directory with the name `ast-grep`.
+**For all platforms**:
+1.  **Install ast-grep** using one of the methods mentioned in the Installation section above.
 
 2.  **Build the server**:
     ```bash
-    go build -o context-sherpa ./cmd/server
+    go build -o context-sherpa ./cmd/context-sherpa
     ```
 
 3.  **Run the server**:
     ```bash
-    ./context-sherpa
+    ./context-sherpa --projectRoot="/path/to/your/project"
     ```
 
 ## Acknowledgments

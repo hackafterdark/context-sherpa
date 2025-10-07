@@ -1119,7 +1119,7 @@ func TestStartFunction(t *testing.T) {
 
 		// Test that we can call extractSgBinary (simulating what Start does)
 		// Note: This will fail in test environment without actual binary
-		_, err := extractSgBinary([]byte{})
+		_, err := findAstGrepBinary("")
 		if err == nil {
 			t.Log("extractSgBinary succeeded in test environment")
 		}
@@ -1472,7 +1472,7 @@ func TestFindSgBinary(t *testing.T) {
 		// Test that extractSgBinary doesn't panic
 		// In test environment, this will likely fail to find the binary
 		// but should not panic
-		path, err := extractSgBinary([]byte{})
+		path, err := findAstGrepBinary("")
 
 		// We expect this to fail in test environment since we don't have ast-grep installed
 		// The important thing is that it doesn't panic
