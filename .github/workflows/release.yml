@@ -112,8 +112,6 @@ jobs:
           echo "Download URL: $AST_GREP_URL"
           curl -L -o ast-grep.zip "$AST_GREP_URL"
           unzip -o ast-grep.zip
-          # Move ast-grep binary to project root (alongside context-sherpa binary)
-          mv ast-grep .
           if [ -f "ast-grep" ]; then
             echo "ast-grep binary ready"
           else
