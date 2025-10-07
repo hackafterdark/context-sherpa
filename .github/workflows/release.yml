@@ -23,10 +23,12 @@ jobs:
       - name: Download ast-grep binary for tests
         run: |
           curl -L -o ast-grep.zip https://github.com/ast-grep/ast-grep/releases/latest/download/app-x86_64-unknown-linux-gnu.zip
-          unzip -o ast-grep.zip -d cmd/server/bin/
+          unzip -o ast-grep.zip
+          # Move ast-grep binary to project root (alongside context-sherpa binary)
+          mv ast-grep .
           # Verify ast-grep binary works
-          if [ -f "cmd/server/bin/ast-grep" ]; then
-            ./cmd/server/bin/ast-grep --version || (echo "ast-grep binary not working"; exit 1)
+          if [ -f "ast-grep" ]; then
+            ./ast-grep --version || (echo "ast-grep binary not working"; exit 1)
           fi
           rm ast-grep.zip
 
@@ -89,8 +91,10 @@ jobs:
           AST_GREP_URL="https://github.com/ast-grep/ast-grep/releases/latest/download/${{ matrix.ast_grep_asset }}"
           echo "Download URL: $AST_GREP_URL"
           curl -L -o ast-grep.zip "$AST_GREP_URL"
-          unzip -o ast-grep.zip -d cmd/server/bin/
-          if [ -f "cmd/server/bin/ast-grep" ]; then
+          unzip -o ast-grep.zip
+          # Move ast-grep binary to project root (alongside context-sherpa binary)
+          mv ast-grep .
+          if [ -f "ast-grep" ]; then
             echo "ast-grep binary ready"
           else
             echo "Error: No ast-grep binary found after extraction"
@@ -109,10 +113,9 @@ jobs:
           Expand-Archive -Path ast-grep.zip -DestinationPath ./temp_extract -Force
           $exeFile = Get-ChildItem -Path ./temp_extract -Recurse -Filter *.exe | Select-Object -First 1
           if ($exeFile) {
-              # Copy the .exe file to cmd/server/bin/ast-grep (without .exe extension)
-              # This matches what the go:embed directive expects
-              Copy-Item -Path $exeFile.FullName -Destination "cmd/server/bin/ast-grep" -Force
-              Write-Host "Copied $($exeFile.Name) to cmd/server/bin/ast-grep"
+              # Copy the .exe file to project root (alongside context-sherpa.exe binary)
+              Copy-Item -Path $exeFile.FullName -Destination "ast-grep.exe" -Force
+              Write-Host "Copied $($exeFile.Name) to project root as ast-grep.exe"
           } else {
               Write-Host "Error: ast-grep.exe not found in the extracted archive."
               Write-Host "Contents of temp_extract:"
@@ -129,7 +132,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           echo "Building for OS: $GOOS, ARCH: $GOARCH, Version: $VERSION"
-          ${{ matrix.goos == 'windows' && 'go build -ldflags "-X main.version=$env:VERSION -s -w" -o context-sherpa-$env:GOOS-$env:GOARCH.exe ./cmd/server' || 'go build -ldflags "-X main.version=$VERSION -s -w" -o context-sherpa-$GOOS-$GOARCH ./cmd/server' }}
+          ${{ matrix.goos == 'windows' && 'go build -ldflags "-X main.version=$env:VERSION -s -w" -o context-sherpa-$env:GOOS-$env:GOARCH.exe ./cmd/context-sherpa' || 'go build -ldflags "-X main.version=$VERSION -s -w" -o context-sherpa-$GOOS-$GOARCH ./cmd/context-sherpa' }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

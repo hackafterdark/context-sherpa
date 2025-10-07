@@ -83,6 +83,22 @@ Configure your AI coding tool (Roo Code, Cline, Cursor, etc.) to use Context She
 }
 ```
 
+**With Custom ast-grep Path** (when ast-grep is installed in a non-standard location):
+
+```json
+{
+  "mcpServers": {
+    "context-sherpa": {
+      "command": "context-sherpa",
+      "args": [
+        "--projectRoot", "/path/to/your/project",
+        "--astGrepPath", "/custom/path/to/ast-grep"
+      ]
+    }
+  }
+}
+```
+
 ### Custom Project Root (Optional)
 
 If your MCP server binary is installed in a different location than your project directory, you can specify a custom project root:

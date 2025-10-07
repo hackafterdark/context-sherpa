@@ -230,6 +230,21 @@ Example: "Create a rule to catch SQL injection" → generates ast-grep YAML rule
 	s.AddTool(getCommunityRuleDetailsTool, getCommunityRuleDetailsHandler)
 	s.AddTool(importCommunityRuleTool, importCommunityRuleHandler)
 
+	// Test ast-grep binary and log version information
+	sgPath, err := findAstGrepBinary(astGrepPathOverride)
+	if err != nil {
+		customLogger.Printf("Failed to find ast-grep binary: %v\n", err)
+		// Don't exit here - let the MCP tools handle the error when actually used
+	} else {
+		// Log ast-grep version for debugging and verification
+		versionCmd := exec.Command(sgPath, "--version")
+		if versionOutput, err := versionCmd.Output(); err == nil {
+			customLogger.Printf("Using ast-grep: %s", strings.TrimSpace(string(versionOutput)))
+		} else {
+			customLogger.Printf("Warning: Could not get ast-grep version: %v", err)
+		}
+	}
+
 	customLogger.Println("Starting MCP server...")
 
 	// Start the stdio server

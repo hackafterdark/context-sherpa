@@ -16,10 +16,12 @@ jobs:
     - name: Download ast-grep binary for tests
       run: |
         curl -L -o ast-grep.zip https://github.com/ast-grep/ast-grep/releases/latest/download/app-x86_64-unknown-linux-gnu.zip
-        unzip -o ast-grep.zip -d cmd/server/bin/
+        unzip -o ast-grep.zip
+        # Move ast-grep binary to project root (alongside context-sherpa binary)
+        mv ast-grep .
         # Verify ast-grep binary works
-        if [ -f "cmd/server/bin/ast-grep" ]; then
-          ./cmd/server/bin/ast-grep --version || (echo "ast-grep binary not working"; exit 1)
+        if [ -f "ast-grep" ]; then
+          ./ast-grep --version || (echo "ast-grep binary not working"; exit 1)
         fi
         rm ast-grep.zip
 
@@ -30,6 +32,13 @@ jobs:
     - name: Verify build works
       run: |
         go build ./...
+        go build -o context-sherpa ./cmd/context-sherpa
+
+    - name: Test MCP server stdio communication
+      run: |
+        # Run the MCP server test script (shell-based, no extra dependencies needed)
+        chmod +x test-mcp-server.sh
+        ./test-mcp-server.sh
 
     - name: Run Unit tests
       run: |
