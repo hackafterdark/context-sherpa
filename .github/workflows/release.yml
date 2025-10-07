@@ -152,46 +152,48 @@ jobs:
           echo "Building for OS: $GOOS, ARCH: $GOARCH, Version: $VERSION"
           ${{ matrix.goos == 'windows' && 'go build -ldflags "-X main.version=$env:VERSION -s -w" -o context-sherpa-$env:GOOS-$env:GOARCH.exe ./cmd/context-sherpa' || 'go build -ldflags "-X main.version=$VERSION -s -w" -o context-sherpa-$GOOS-$GOARCH ./cmd/context-sherpa' }}
 
-      - name: Test context-sherpa with ast-grep integration (Linux/macOS)
-        if: matrix.os != 'windows-latest'
-        run: |
-          echo "Testing context-sherpa binary with ast-grep on ${{ matrix.os }}..."
-          BINARY_NAME="context-sherpa-${{ matrix.goos }}-${{ matrix.goarch }}"
-          echo "Binary name: $BINARY_NAME"
-          # Run context-sherpa with ast-grep for 5 seconds then kill it
-          timeout 5s ./$BINARY_NAME --astGrepPath=./ast-grep > context-sherpa.log 2>&1 &
-          SERVER_PID=$!
-          sleep 2
-          kill $SERVER_PID 2>/dev/null || true
-          # Check for expected startup messages
-          if grep -q "Using ast-grep:" context-sherpa.log && grep -q "Starting MCP server..." context-sherpa.log; then
-            echo "✅ context-sherpa started successfully with ast-grep"
-          else
-            echo "❌ context-sherpa did not start properly with ast-grep"
-            echo "Server output:"
-            cat context-sherpa.log
-            exit 1
-          fi
+      # Can't test for platforms other than linux x86_64 as that's what the action is running in. Will need to think of other solutions here.
+      #
+      # - name: Test context-sherpa with ast-grep integration (Linux/macOS)
+      #   if: matrix.os != 'windows-latest'
+      #   run: |
+      #     echo "Testing context-sherpa binary with ast-grep on ${{ matrix.os }}..."
+      #     BINARY_NAME="context-sherpa-${{ matrix.goos }}-${{ matrix.goarch }}"
+      #     echo "Binary name: $BINARY_NAME"
+      #     # Run context-sherpa with ast-grep for 5 seconds then kill it
+      #     timeout 5s ./$BINARY_NAME --astGrepPath=./ast-grep > context-sherpa.log 2>&1 &
+      #     SERVER_PID=$!
+      #     sleep 2
+      #     kill $SERVER_PID 2>/dev/null || true
+      #     # Check for expected startup messages
+      #     if grep -q "Using ast-grep:" context-sherpa.log && grep -q "Starting MCP server..." context-sherpa.log; then
+      #       echo "✅ context-sherpa started successfully with ast-grep"
+      #     else
+      #       echo "❌ context-sherpa did not start properly with ast-grep"
+      #       echo "Server output:"
+      #       cat context-sherpa.log
+      #       exit 1
+      #     fi
 
-      - name: Test context-sherpa with ast-grep integration (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: powershell
-        run: |
-          Write-Host "Testing context-sherpa binary with ast-grep on ${{ matrix.os }}..."
-          $BINARY_NAME = "context-sherpa-$env:GOOS-$env:GOARCH.exe"
-          Write-Host "Binary name: $BINARY_NAME"
-          # Run context-sherpa with ast-grep for 5 seconds then kill it
-          $proc = Start-Process -FilePath $BINARY_NAME -ArgumentList "--astGrepPath=ast-grep.exe" -PassThru -RedirectStandardOutput context-sherpa.log -RedirectStandardError context-sherpa.log -NoNewWindow
-          Start-Sleep -Seconds 3
-          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-          # Check for expected startup messages
-          if (Select-String -Path context-sherpa.log -Pattern "Using ast-grep:" -Quiet -And (Select-String -Path context-sherpa.log -Pattern "Starting MCP server..." -Quiet)) {
-            Write-Host "✅ context-sherpa started successfully with ast-grep"
-          } else {
-            Write-Host "❌ context-sherpa did not start properly with ast-grep"
-            Get-Content context-sherpa.log
-            exit 1
-          }
+      # - name: Test context-sherpa with ast-grep integration (Windows)
+      #   if: matrix.os == 'windows-latest'
+      #   shell: powershell
+      #   run: |
+      #     Write-Host "Testing context-sherpa binary with ast-grep on ${{ matrix.os }}..."
+      #     $BINARY_NAME = "context-sherpa-$env:GOOS-$env:GOARCH.exe"
+      #     Write-Host "Binary name: $BINARY_NAME"
+      #     # Run context-sherpa with ast-grep for 5 seconds then kill it
+      #     $proc = Start-Process -FilePath $BINARY_NAME -ArgumentList "--astGrepPath=ast-grep.exe" -PassThru -RedirectStandardOutput context-sherpa.log -RedirectStandardError context-sherpa.log -NoNewWindow
+      #     Start-Sleep -Seconds 3
+      #     Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+      #     # Check for expected startup messages
+      #     if (Select-String -Path context-sherpa.log -Pattern "Using ast-grep:" -Quiet -And (Select-String -Path context-sherpa.log -Pattern "Starting MCP server..." -Quiet)) {
+      #       Write-Host "✅ context-sherpa started successfully with ast-grep"
+      #     } else {
+      #       Write-Host "❌ context-sherpa did not start properly with ast-grep"
+      #       Get-Content context-sherpa.log
+      #       exit 1
+      #     }
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
