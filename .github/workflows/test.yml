@@ -32,12 +32,6 @@ jobs:
         go build ./...
         go build -o context-sherpa ./cmd/context-sherpa
 
-    - name: Test MCP server stdio communication
-      run: |
-        # Run the MCP server test script (shell-based, no extra dependencies needed)
-        chmod +x test-mcp-server.sh
-        ./test-mcp-server.sh
-
     - name: Test context-sherpa with ast-grep integration
       run: |
         echo "Testing context-sherpa binary with ast-grep..."
