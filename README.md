@@ -33,6 +33,12 @@ Context Sherpa is delivered as a single, self-contained binary for easy integrat
 - Due to Windows security restrictions, the `ast-grep.exe` binary cannot be embedded in the main executable
 - You may need to unblock the `ast-grep.exe` file in Windows security settings if it shows security warnings
 
+**Important macOS Notes:**
+- On macOS, you may need to double-click the Context Sherpa app in Finder first to bypass Gatekeeper security restrictions since the binary is not currently code-signed
+- After the initial launch, the app will run normally in subsequent uses
+- Code signing will be implemented in a future update to eliminate this requirement
+- **Alternative:** If you build from source yourself, you won't encounter this issue since the binary will be recognized as coming from your own machine
+
 ### Option 2: Build from Source
 
 You can also build from source, though you'll need to ensure the `ast-grep` binary is available.
@@ -44,6 +50,8 @@ You can also build from source, though you'll need to ensure the `ast-grep` bina
 3.  Both executables should be in your project directory for relative paths to work correctly
 
 **For Linux/macOS users**: The build process will attempt to use the system `ast-grep` installation.
+
+**Note for macOS Users**: Building from source eliminates the need to double-click the app in Finder first, as the binary will be recognized as coming from your own machine and won't trigger Gatekeeper security restrictions.
 
 ```bash
 go build -o context-sherpa ./cmd/server
