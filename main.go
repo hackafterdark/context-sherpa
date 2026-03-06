@@ -22,7 +22,8 @@ func main() {
 	mcpFlag := flag.Bool("mcp", false, "Run in headless MCP server mode")
 	
 	// Also parse legacy flags from cmd/context-sherpa/main.go
-	projectRoot := flag.String("projectRoot", "", "Project root directory (defaults to current working directory)")
+	workspaceRoot := flag.String("workspaceRoot", "", "Workspace root directory (defaults to current working directory)")
+	projectRoot := flag.String("projectRoot", "", "Workspace root directory (legacy alias for workspaceRoot)")
 	verbose := flag.Bool("verbose", false, "Enable verbose logging for debugging")
 	logFile := flag.String("logFile", "", "Path to file where logs will be appended (optional)")
 	astGrepPath := flag.String("astGrepPath", "", "Explicit path to ast-grep binary")
@@ -44,7 +45,14 @@ func main() {
 	// 2. Dispatch
 	if isMCPMode {
 		log.Println("Starting Context-Sherpa in Headless (MCP) Mode...")
-		mcp.Start(*projectRoot, *verbose, *logFile, *astGrepPath)
+		
+		// Use workspaceRoot if provided, otherwise fallback to projectRoot for backward compatibility
+		finalWorkspaceRoot := *workspaceRoot
+		if finalWorkspaceRoot == "" {
+			finalWorkspaceRoot = *projectRoot
+		}
+		
+		mcp.Start(finalWorkspaceRoot, *verbose, *logFile, *astGrepPath)
 		return
 	}
 

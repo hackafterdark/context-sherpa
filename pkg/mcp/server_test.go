@@ -415,11 +415,6 @@ func TestSearchCommunityRulesHandler(t *testing.T) {
 				t.Fatal("Expected result content, got nil or empty")
 			}
 
-			// For now, skip detailed result validation in tests
-			// The important thing is that the handler doesn't return an error
-			if result == nil {
-				t.Error("Expected result, got nil")
-			}
 			// HTTP integration test passed - handler successfully processed request
 		})
 	}
@@ -539,9 +534,6 @@ func TestGetCommunityRuleDetailsHandler(t *testing.T) {
 		}
 
 		// HTTP integration test passed - handler successfully fetched rule details
-		if result == nil || len(result.Content) == 0 {
-			t.Error("Expected result content")
-		}
 	})
 
 	t.Run("Rule not found", func(t *testing.T) {
@@ -581,9 +573,6 @@ func TestGetCommunityRuleDetailsHandler(t *testing.T) {
 		}
 
 		// HTTP integration test passed - handler successfully processed rule not found case
-		if result == nil || len(result.Content) == 0 {
-			t.Error("Expected result content")
-		}
 	})
 }
 
@@ -1308,7 +1297,7 @@ func TestRemoveRuleHandler(t *testing.T) {
 }
 
 func TestInitializeAstGrepHandler(t *testing.T) {
-	t.Run("Initialize project", func(t *testing.T) {
+	t.Run("Initialize workspace", func(t *testing.T) {
 		// Create a temporary directory for this test
 		tempDir := t.TempDir()
 
@@ -1443,8 +1432,8 @@ func TestGetRuleDir(t *testing.T) {
 	})
 }
 
-func TestFindProjectRoot(t *testing.T) {
-	t.Run("Find project root without config", func(t *testing.T) {
+func TestFindWorkspaceRoot(t *testing.T) {
+	t.Run("Find workspace root without config", func(t *testing.T) {
 		// Create a temporary directory for this test
 		tempDir := t.TempDir()
 
@@ -1460,9 +1449,9 @@ func TestFindProjectRoot(t *testing.T) {
 		}
 
 		// This should fail because there's no sgconfig.yml
-		_, err = findProjectRoot("")
+		_, err = findWorkspaceRoot("")
 		if err == nil {
-			t.Error("Expected findProjectRoot to fail without sgconfig.yml")
+			t.Error("Expected findWorkspaceRoot to fail without sgconfig.yml")
 		}
 	})
 }

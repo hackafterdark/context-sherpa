@@ -58,8 +58,8 @@ var (
 
 var communityRulesRepo = "https://raw.githubusercontent.com/hackafterdark/context-sherpa-community-rules/main/index.json"
 
-// projectRootOverride stores the custom project root directory when specified via command-line argument
-var projectRootOverride string
+// workspaceRootOverride stores the custom workspace root directory when specified via command-line argument
+var workspaceRootOverride string
 
 // astGrepPathOverride stores the custom ast-grep binary path when specified via command-line argument
 var astGrepPathOverride string
@@ -77,9 +77,9 @@ func getCommunityRulesRepoURL() string {
 }
 
 // Start initializes and starts the MCP server.
-func Start(projectRoot string, verbose bool, logFilePath string, astGrepPath string) {
-	if projectRoot != "" {
-		projectRootOverride = projectRoot
+func Start(workspaceRoot string, verbose bool, logFilePath string, astGrepPath string) {
+	if workspaceRoot != "" {
+		workspaceRootOverride = workspaceRoot
 	}
 	if astGrepPath != "" {
 		astGrepPathOverride = astGrepPath
@@ -95,6 +95,22 @@ func Start(projectRoot string, verbose bool, logFilePath string, astGrepPath str
 		server.WithToolCapabilities(false),
 	)
 
+	// --- Workspace Initialization ---
+	// Attempt to resolve workspace root early for local state and registration
+	resolvedRoot, err := findWorkspaceRoot("")
+	if err == nil {
+		// 1. Initialize local state (.context-sherpa/ folder)
+		if err := initLocalState(resolvedRoot); err != nil {
+			customLogger.Printf("Warning: Failed to initialize local state: %v\n", err)
+		}
+
+		// 2. Register with Hub (Master Hub Ping)
+		go registerWithHub(resolvedRoot)
+	} else {
+		customLogger.Printf("Warning: Could not resolve workspace root on startup: %v\n", err)
+	}
+	// --- End Workspace Initialization ---
+
 	// Add scan_code tool
 	scanCodeTool := mcp.NewTool("scan_code",
 		mcp.WithDescription("Scan a given string of source code for violations against the currently configured ast-grep rules."),
@@ -107,7 +123,7 @@ func Start(projectRoot string, verbose bool, logFilePath string, astGrepPath str
 			mcp.Description("The programming language of the code (e.g., 'go', 'python')."),
 		),
 		mcp.WithString("sgconfig",
-			mcp.Description("Path to a specific sgconfig.yml file to use for the scan. If omitted, it defaults to the root sgconfig.yml."),
+			mcp.Description("Path to a specific sgconfig.yml file to use for the scan. If omitted, it defaults to the workspace root sgconfig.yml."),
 		),
 	)
 
@@ -119,7 +135,7 @@ func Start(projectRoot string, verbose bool, logFilePath string, astGrepPath str
 			mcp.Description("File path, directory path, or glob pattern to scan. Examples: 'src/main.go' (single file), 'src/' (directory), '**/*.go' (all Go files), 'internal/**/*.js' (pattern)."),
 		),
 		mcp.WithString("sgconfig",
-			mcp.Description("Path to specific sgconfig.yml configuration file. If omitted, uses 'sgconfig.yml' in project root. Example: 'custom/sgconfig.yml'."),
+			mcp.Description("Path to specific sgconfig.yml configuration file. If omitted, uses 'sgconfig.yml' in workspace root. Example: 'custom/sgconfig.yml'."),
 		),
 		mcp.WithString("language",
 			mcp.Description("Programming language filter for directory scans. Supported: 'go', 'python', 'javascript', 'typescript', 'rust', 'java', 'cpp', 'c'. If specified, only files with matching extensions are scanned."),
@@ -165,7 +181,7 @@ severity: error`),
 
 	// Add remove_rule tool
 	removeRuleTool := mcp.NewTool("remove_rule",
-		mcp.WithDescription("Remove a specific ast-grep rule file from the local project's rule directory."),
+		mcp.WithDescription("Remove a specific ast-grep rule file from the local workspace's rule directory."),
 		mcp.WithString("rule_id",
 			mcp.Required(),
 			mcp.Description("The unique ID of the rule to be removed (e.g., 'no-sql-injection'). This should match the filename without the .yml extension."),
@@ -174,7 +190,7 @@ severity: error`),
 
 	// Add initialize_ast_grep tool
 	initializeAstGrepTool := mcp.NewTool("initialize_ast_grep",
-		mcp.WithDescription("Sets up the current project for ast-grep by creating a default `sgconfig.yml` file and a `rules/` directory. This is a required first step before adding or importing local rules."),
+		mcp.WithDescription("Sets up the current workspace for ast-grep by creating a default `sgconfig.yml` file and a `rules/` directory. This is a required first step before adding or importing local rules."),
 	)
 
 	// Add search_community_rules tool
@@ -213,7 +229,7 @@ Example: "Create a rule to catch SQL injection" → generates ast-grep YAML rule
 
 	// Add import_community_rule tool
 	importCommunityRuleTool := mcp.NewTool("import_community_rule",
-		mcp.WithDescription("Download a community rule and add it to the local project"),
+		mcp.WithDescription("Download a community rule and add it to the local workspace"),
 		mcp.WithString("rule_id",
 			mcp.Required(),
 			mcp.Description("Unique identifier of the rule to import"),
@@ -253,8 +269,61 @@ Example: "Create a rule to catch SQL injection" → generates ast-grep YAML rule
 	}
 }
 
+// initLocalState ensures the .context-sherpa directory exists in the workspace root
+func initLocalState(workspaceRoot string) error {
+	sherpaDir := filepath.Join(workspaceRoot, ".context-sherpa")
+	if err := os.MkdirAll(sherpaDir, 0755); err != nil {
+		return fmt.Errorf("failed to create .context-sherpa directory: %w", err)
+	}
+	
+	// Check if we should initialize the database
+	// dbPath := filepath.Join(sherpaDir, "sherpa.db")
+	// For now, we just ensure the directory. Actual DB init can happen when needed.
+	
+	return nil
+}
+
+// registerWithHub pings the Master Hub to register this workspace
+func registerWithHub(workspaceRoot string) {
+	// Payload: { "pid": os.Getpid(), "root": "/path/to/workspace", "client": "goose", "state": "initializing" }
+	payload := map[string]interface{}{
+		"pid":    os.Getpid(),
+		"root":   workspaceRoot,
+		"client": "unknown", // Could improve this by detecting the parent process
+		"state":  "active",
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		verboseLog("Failed to marshal registration payload: %v", err)
+		return
+	}
+
+	// Ping the Hub on port 9000
+	req, err := http.NewRequest(http.MethodPut, "http://localhost:9000/workspaces", strings.NewReader(string(jsonData)))
+	if err != nil {
+		verboseLog("Failed to create registration request: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		verboseLog("Hub registration ping failed (Hub might not be running): %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		verboseLog("Hub registration returned unexpected status: %d", resp.StatusCode)
+	} else {
+		verboseLog("Successfully registered workspace with Hub: %s", workspaceRoot)
+	}
+}
+
 func scanCodeHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var projectRoot string
+	var workspaceRoot string
 
 	code, err := req.RequireString("code")
 	if err != nil {
@@ -277,18 +346,18 @@ func scanCodeHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	verboseLog("scanCodeHandler: Using sgconfig file: %s", sgconfigStr)
 	// --- END DEBUG LOGGING ---
 
-	// Find the project root where sgconfig.yml is located
-	projectRoot, err = findProjectRoot("")
+	// Find the workspace root where sgconfig.yml is located
+	workspaceRoot, err = findWorkspaceRoot("")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	// Resolve sgconfig path relative to project root
-	resolvedSgconfigPath := resolvePathRelativeToProjectRoot(sgconfigStr, projectRoot)
+	// Resolve sgconfig path relative to workspace root
+	resolvedSgconfigPath := resolvePathRelativeToWorkspaceRoot(sgconfigStr, workspaceRoot)
 
 	// Check if the configuration file exists at the resolved path
 	if _, err := os.Stat(resolvedSgconfigPath); os.IsNotExist(err) {
-		return mcp.NewToolResultText(fmt.Sprintf("Error: Configuration file '%s' not found at resolved path '%s'. Please run the 'initialize_ast_grep' tool first to set up the project.", sgconfigStr, resolvedSgconfigPath)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("Error: Configuration file '%s' not found at resolved path '%s'. Please run the 'initialize_ast_grep' tool first to set up the workspace.", sgconfigStr, resolvedSgconfigPath)), nil
 	}
 
 	tmpfile, err := os.CreateTemp("", "ast-grep-scan.*."+language)
@@ -311,7 +380,7 @@ func scanCodeHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	}
 
 	cmd := exec.Command(sgPath, "scan", "--config", resolvedSgconfigPath, tmpfile.Name(), "--json")
-	cmd.Dir = projectRoot // Run ast-grep from the project root
+	cmd.Dir = workspaceRoot // Run ast-grep from the workspace root
 	output, err := cmd.Output()
 	if err != nil {
 		// ast-grep exits with non-zero status code if issues are found.
@@ -323,7 +392,7 @@ func scanCodeHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 
 // scanPathHandler handles the scan_path tool
 func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var projectRoot string
+	var workspaceRoot string
 
 	path, err := req.RequireString("path")
 	if err != nil {
@@ -353,19 +422,19 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	}
 	// --- END DEBUG LOGGING ---
 
-	// Find the project root where sgconfig.yml is located
-	projectRoot, err = findProjectRoot(path)
+	// Find the workspace root where sgconfig.yml is located
+	workspaceRoot, err = findWorkspaceRoot(path)
 	
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	// Resolve sgconfig path relative to project root
-	resolvedSgconfigPath := resolvePathRelativeToProjectRoot(sgconfigStr, projectRoot)
+	// Resolve sgconfig path relative to workspace root
+	resolvedSgconfigPath := resolvePathRelativeToWorkspaceRoot(sgconfigStr, workspaceRoot)
 
 	// Check if the configuration file exists at the resolved path
 	if _, err := os.Stat(resolvedSgconfigPath); os.IsNotExist(err) {
-		return mcp.NewToolResultText(fmt.Sprintf("Error: Configuration file '%s' not found at resolved path '%s'. Please run the 'initialize_ast_grep' tool first to set up the project.", sgconfigStr, resolvedSgconfigPath)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("Error: Configuration file '%s' not found at resolved path '%s'. Please run the 'initialize_ast_grep' tool first to set up the workspace.", sgconfigStr, resolvedSgconfigPath)), nil
 	}
 
 	sgPath, err := findAstGrepBinary(astGrepPathOverride)
@@ -374,7 +443,7 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	}
 
 	// Discover files to scan
-	files, err := discoverFiles(path, languageFilter, projectRoot)
+	files, err := discoverFiles(path, languageFilter, workspaceRoot)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Error discovering files: %v", err)), nil
 	}
@@ -415,7 +484,7 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	}
 
 	// Scan files in batches
-	allOutput, err := scanFileBatch(validFiles, resolvedSgconfigPath, projectRoot, sgPath)
+	allOutput, err := scanFileBatch(validFiles, resolvedSgconfigPath, workspaceRoot, sgPath)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Error scanning files: %v", err)), nil
 	}
@@ -424,13 +493,13 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 }
 
 // discoverFiles discovers files to scan based on the path pattern
-func discoverFiles(path, languageFilter, projectRoot string) ([]string, error) {
+func discoverFiles(path, languageFilter, workspaceRoot string) ([]string, error) {
 	var files []string
 
 	// Check if path is a direct file
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
-		// Resolve file path relative to project root for consistency
-		resolvedPath := resolvePathRelativeToProjectRoot(path, projectRoot)
+		// Resolve file path relative to workspace root for consistency
+		resolvedPath := resolvePathRelativeToWorkspaceRoot(path, workspaceRoot)
 
 		// Apply language filter if specified
 		if languageFilter != "" && !matchesLanguage(resolvedPath, languageFilter) {
@@ -441,8 +510,8 @@ func discoverFiles(path, languageFilter, projectRoot string) ([]string, error) {
 
 	// Handle directory scanning (when path is "." or a directory)
 	if path == "." {
-		// Resolve "." relative to project root
-		searchRoot := projectRoot
+		// Resolve "." relative to workspace root
+		searchRoot := workspaceRoot
 		if searchRoot == "" {
 			searchRoot = "."
 		}
@@ -471,8 +540,8 @@ func discoverFiles(path, languageFilter, projectRoot string) ([]string, error) {
 
 	// Check if it's a directory path
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
-		// For directory check, we need to resolve the path first to handle project root override
-		resolvedPath := resolvePathRelativeToProjectRoot(path, projectRoot)
+		// For directory check, we need to resolve the path first to handle workspace root override
+		resolvedPath := resolvePathRelativeToWorkspaceRoot(path, workspaceRoot)
 
 		// Verify the resolved path is actually a directory
 		if resolvedInfo, err := os.Stat(resolvedPath); err != nil || !resolvedInfo.IsDir() {
@@ -502,8 +571,8 @@ func discoverFiles(path, languageFilter, projectRoot string) ([]string, error) {
 		return files, err
 	}
 
-	// Handle glob patterns - walk project root directory and match patterns
-	searchRoot := projectRoot
+	// Handle glob patterns - walk workspace root directory and match patterns
+	searchRoot := workspaceRoot
 	if searchRoot == "" {
 		searchRoot = "."
 	}
@@ -564,7 +633,7 @@ func matchesLanguage(filePath, language string) bool {
 }
 
 // scanFileBatch scans a batch of files and returns combined results
-func scanFileBatch(files []string, sgconfigStr, projectRoot, sgPath string) (string, error) {
+func scanFileBatch(files []string, sgconfigStr, workspaceRoot, sgPath string) (string, error) {
 	if len(files) == 0 {
 		return "[]", nil
 	}
@@ -576,7 +645,7 @@ func scanFileBatch(files []string, sgconfigStr, projectRoot, sgPath string) (str
 	args = append(args, "--json")
 
 	cmd := exec.Command(sgPath, args...)
-	cmd.Dir = projectRoot
+	cmd.Dir = workspaceRoot
 	
 	output, err := cmd.Output()
 	if err != nil {
@@ -607,7 +676,7 @@ func addOrUpdateRuleHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 	if err != nil {
 		// If sgconfig.yml doesn't exist, suggest using the initialize tool
 		if strings.Contains(err.Error(), "sgconfig.yml not found") {
-			return mcp.NewToolResultText(fmt.Sprintf("Error: %s. Please run the 'initialize_ast_grep' tool first to set up the project.", err.Error())), nil
+			return mcp.NewToolResultText(fmt.Sprintf("Error: %s. Please run the 'initialize_ast_grep' tool first to set up the workspace.", err.Error())), nil
 		}
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -620,16 +689,16 @@ func addOrUpdateRuleHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 	return mcp.NewToolResultText(fmt.Sprintf("Rule '%s' was added or updated successfully.", ruleID)), nil
 }
 
-// findProjectRoot finds the project root by searching for sgconfig.yml
-// in the requested directory and its parent directories.
-func findProjectRoot(startPath string) (string, error) {
+// findWorkspaceRoot finds the workspace root by searching for sgconfig.yml
+// or .git in the requested directory and its parent directories.
+func findWorkspaceRoot(startPath string) (string, error) {
 	var dir string
 	var err error
 
-	if projectRootOverride != "" {
-		// Use the specified project root as starting point
-		verboseLog("Using custom project root override: %s", projectRootOverride)
-		dir = projectRootOverride
+	if workspaceRootOverride != "" {
+		// Use the specified workspace root as starting point
+		verboseLog("Using custom workspace root override: %s", workspaceRootOverride)
+		dir = workspaceRootOverride
 	} else if startPath != "" {
 		absPath, err := filepath.Abs(startPath)
 		if err == nil {
@@ -649,21 +718,48 @@ func findProjectRoot(startPath string) (string, error) {
 		}
 	}
 
+	// 1. Search for sgconfig.yml (ast-grep workspace)
+	tempDir := dir
 	for {
-		configPath := filepath.Join(dir, "sgconfig.yml")
+		configPath := filepath.Join(tempDir, "sgconfig.yml")
 		if _, err := os.Stat(configPath); err == nil {
-			return dir, nil
+			return tempDir, nil
 		}
 
-		// Move to parent directory
-		parentDir := filepath.Dir(dir)
-		if parentDir == dir {
-			break // Reached root
+		parentDir := filepath.Dir(tempDir)
+		if parentDir == tempDir {
+			break 
 		}
-		dir = parentDir
+		tempDir = parentDir
 	}
 
-	return "", fmt.Errorf("sgconfig.yml not found. Please run 'ast-grep new' to initialize an ast-grep project first")
+	// 2. Search for git root
+	tempDir = dir
+	// Try git rev-parse first
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Dir = dir
+	if gitOutput, err := cmd.Output(); err == nil {
+		gitRoot := strings.TrimSpace(string(gitOutput))
+		if gitRoot != "" {
+			return gitRoot, nil
+		}
+	}
+
+	// Fallback to manual .git discovery
+	for {
+		gitPath := filepath.Join(tempDir, ".git")
+		if _, err := os.Stat(gitPath); err == nil {
+			return tempDir, nil
+		}
+
+		parentDir := filepath.Dir(tempDir)
+		if parentDir == tempDir {
+			break
+		}
+		tempDir = parentDir
+	}
+
+	return "", fmt.Errorf("could not resolve workspace root (no sgconfig.yml or .git found). Please run 'ast-grep new' or initialize a git repository first")
 }
 
 func findAstGrepBinary(astGrepPath string) (string, error) {
@@ -725,7 +821,7 @@ func findAstGrepBinary(astGrepPath string) (string, error) {
 As an MCP server communicating via stdio, I cannot:
 - Detect where your editor/IDE is running from
 - Access your current working directory
-- Find binaries in project-specific locations
+- Find binaries in workspace-specific locations
 
 Please ensure ast-grep is available in one of these ways:
 
@@ -749,10 +845,10 @@ func getRuleDir() (string, error) {
 	var dir string
 	var err error
 
-	if projectRootOverride != "" {
-		// Use the specified project root as starting point
-		verboseLog("Using custom project root override: %s", projectRootOverride)
-		dir = projectRootOverride
+	if workspaceRootOverride != "" {
+		// Use the specified workspace root as starting point
+		verboseLog("Using custom workspace root override: %s", workspaceRootOverride)
+		dir = workspaceRootOverride
 	} else {
 		// Fall back to current behavior
 		dir, err = os.Getwd()
@@ -790,7 +886,7 @@ func getRuleDir() (string, error) {
 		dir = parentDir
 	}
 
-	return "", fmt.Errorf("sgconfig.yml not found. Please run 'ast-grep new' to initialize an ast-grep project first")
+	return "", fmt.Errorf("sgconfig.yml not found. Please run 'ast-grep new' to initialize an ast-grep workspace first")
 }
 
 func removeRuleHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -804,7 +900,7 @@ func removeRuleHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallT
 	if err != nil {
 		// If sgconfig.yml doesn't exist, suggest using the initialize tool
 		if strings.Contains(err.Error(), "sgconfig.yml not found") {
-			return mcp.NewToolResultText(fmt.Sprintf("Error: %s. Please run the 'initialize_ast_grep' tool first to set up the project.", err.Error())), nil
+			return mcp.NewToolResultText(fmt.Sprintf("Error: %s. Please run the 'initialize_ast_grep' tool first to set up the workspace.", err.Error())), nil
 		}
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -820,36 +916,42 @@ func removeRuleHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallT
 	return mcp.NewToolResultText(fmt.Sprintf("Rule '%s' was removed successfully.", ruleID)), nil
 }
 
+// initializeAstGrepHandler handles the initialize_ast_grep tool
 func initializeAstGrepHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// Determine the project root to use
-	var projectRoot string
+	var workspaceRoot string
 	var err error
 
-	if projectRootOverride != "" {
-		projectRoot = projectRootOverride
+	if workspaceRootOverride != "" {
+		workspaceRoot = workspaceRootOverride
 	} else {
-		projectRoot, err = os.Getwd()
+		workspaceRoot, err = os.Getwd()
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Error getting current directory: %v", err)), nil
 		}
 	}
 
-	// Create the rules directory if it doesn't exist
-	rulesDir := filepath.Join(projectRoot, "rules")
+	// Create rules directory
+	rulesDir := filepath.Join(workspaceRoot, "rules")
 	if err := os.MkdirAll(rulesDir, 0755); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Error creating rules directory: %v", err)), nil
 	}
 
-	// Create a basic sgconfig.yml file
-	sgconfigPath := filepath.Join(projectRoot, "sgconfig.yml")
-	sgconfigContent := `ruleDirs:
-  - rules
- `
-	if err := os.WriteFile(sgconfigPath, []byte(sgconfigContent), 0644); err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error creating sgconfig.yml: %v", err)), nil
+	// Create default sgconfig.yml
+	sgconfigPath := filepath.Join(workspaceRoot, "sgconfig.yml")
+	if _, err := os.Stat(sgconfigPath); os.IsNotExist(err) {
+		config := SgConfig{
+			RuleDirs: []string{"rules"},
+		}
+		data, err := yaml.Marshal(config)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Error creating sgconfig.yml: %v", err)), nil
+		}
+		if err := os.WriteFile(sgconfigPath, data, 0644); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Error writing sgconfig.yml: %v", err)), nil
+		}
 	}
 
-	return mcp.NewToolResultText("ast-grep project initialized successfully. Created sgconfig.yml and rules/ directory."), nil
+	return mcp.NewToolResultText("ast-grep has been initialized successfully. You can now add rules to the 'rules' directory."), nil
 }
 
 // fetchCommunityRuleIndex fetches and caches the community rule index
@@ -925,27 +1027,22 @@ func verboseLog(format string, v ...interface{}) {
 	}
 }
 
-// resolvePathRelativeToProjectRoot resolves a user-provided path relative to the project root.
-// If the path is absolute, it returns the path as-is.
-// If the path is relative, it joins it with the project root.
-// If projectRoot is empty, it treats the path as relative to current directory.
-func resolvePathRelativeToProjectRoot(path, projectRoot string) string {
-	// If path is absolute, return as-is
+// resolvePathRelativeToWorkspaceRoot resolves a user-provided path relative to the workspace root.
+// If the path is already absolute, it returns it as is.
+// If workspaceRoot is empty, it treats the path as relative to current directory.
+func resolvePathRelativeToWorkspaceRoot(path, workspaceRoot string) string {
 	if filepath.IsAbs(path) {
 		return path
 	}
 
-	// If no project root override, return path as-is (relative to current directory)
-	if projectRoot == "" {
-		return path
+	if workspaceRoot == "" {
+		absPath, _ := filepath.Abs(path)
+		return absPath
 	}
 
-	// Resolve relative path against project root
-	resolvedPath := filepath.Join(projectRoot, path)
-
-	// Add verbose logging for debugging
-	verboseLog("resolvePathRelativeToProjectRoot: '%s' resolved to '%s' (projectRoot: '%s')", path, resolvedPath, projectRoot)
-
+	resolvedPath := filepath.Join(workspaceRoot, path)
+	// Log resolution for debugging
+	verboseLog("resolvePathRelativeToWorkspaceRoot: '%s' resolved to '%s' (workspaceRoot: '%s')", path, resolvedPath, workspaceRoot)
 	return resolvedPath
 }
 
@@ -1207,7 +1304,7 @@ func importCommunityRuleHandler(ctx context.Context, req mcp.CallToolRequest) (*
 	ruleDir, err := getRuleDir()
 	if err != nil {
 		if strings.Contains(err.Error(), "sgconfig.yml not found") {
-			return mcp.NewToolResultText(fmt.Sprintf("Error: %s. Please run the 'initialize_ast_grep' tool first to set up the project.", err.Error())), nil
+			return mcp.NewToolResultText(fmt.Sprintf("Error: %s. Please run the 'initialize_ast_grep' tool first to set up the workspace.", err.Error())), nil
 		}
 		return mcp.NewToolResultError(err.Error()), nil
 	}

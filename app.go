@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,9 +14,18 @@ import (
 	"strings"
 )
 
+// Workspace represents a detected workspace from a Node
+type Workspace struct {
+	PID    int    `json:"pid"`
+	Root   string `json:"root"`
+	Client string `json:"client"`
+	State  string `json:"state"`
+}
+
 // App struct
 type App struct {
-	ctx context.Context
+	ctx        context.Context
+	workspaces []Workspace
 }
 
 // NewApp creates a new App application struct
@@ -26,6 +36,51 @@ func NewApp() *App {
 // startup is called when the app starts.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.workspaces = make([]Workspace, 0)
+	
+	// Start the Hub's registration server on a background goroutine
+	go a.startHubServer()
+}
+
+func (a *App) startHubServer() {
+	http.HandleFunc("/workspaces", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var ws Workspace
+		if err := json.NewDecoder(r.Body).Decode(&ws); err != nil {
+			http.Error(w, "Invalid payload", http.StatusBadRequest)
+			return
+		}
+
+		// Check if we already have this workspace (same root)
+		found := false
+		for i, existing := range a.workspaces {
+			if existing.Root == ws.Root {
+				a.workspaces[i] = ws
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			a.workspaces = append(a.workspaces, ws)
+		}
+
+		fmt.Printf("Hub: Workspace registered/updated: %s (PID: %d, Client: %s)\n", ws.Root, ws.PID, ws.Client)
+		
+		// Emit event to frontend if needed (Wails)
+		// runtime.EventsEmit(a.ctx, "workspace-updated", a.workspaces)
+
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	fmt.Println("Hub: Workspace registration server listening on http://localhost:9000")
+	if err := http.ListenAndServe(":9000", nil); err != nil {
+		fmt.Printf("Hub: Server failed: %v\n", err)
+	}
 }
 
 // GetAstGrepStatus checks if ast-grep is installed and returns its version
@@ -188,6 +243,11 @@ func (a *App) InstallAstGrep() (string, error) {
 	}
 
 	return fmt.Sprintf("Latest ast-grep installed successfully to %s", targetPath), nil
+}
+
+// GetWorkspaces returns the list of registered workspaces
+func (a *App) GetWorkspaces() []Workspace {
+	return a.workspaces
 }
 
 // Helper to extract a single file from a zip archive

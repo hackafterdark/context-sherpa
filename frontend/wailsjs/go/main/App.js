@@ -6,6 +6,10 @@ export function GetAstGrepStatus() {
   return window['go']['main']['App']['GetAstGrepStatus']();
 }
 
+export function GetWorkspaces() {
+  return window['go']['main']['App']['GetWorkspaces']();
+}
+
 export function InstallAstGrep() {
   return window['go']['main']['App']['InstallAstGrep']();
 }
