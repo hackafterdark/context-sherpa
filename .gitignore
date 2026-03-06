@@ -11,6 +11,10 @@ ast-grep
 sg
 .context-sherpa
 
+# Dependencies
+node_modules
+frontend/node_modules
+
 # Binaries for programs and plugins
 *.exe
 *.exe~
@@ -48,7 +52,7 @@ Thumbs.db
 # Build artifacts
 dist/
 build/
-node_modules
+frontend/dist
 
 # Environment files
 .env

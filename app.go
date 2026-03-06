@@ -1,7 +1,9 @@
 package main
 
 import (
+	"archive/tar"
 	"archive/zip"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -143,6 +145,217 @@ func (a *App) GetAstGrepStatus() map[string]interface{} {
 	return result
 }
 
+// getSherpaBinDir returns the platform-specific path to the Context-Sherpa bin directory
+func getSherpaBinDir() (string, error) {
+	var homeDir string
+	var err error
+	if runtime.GOOS == "windows" {
+		homeDir = os.Getenv("LOCALAPPDATA")
+		if homeDir == "" {
+			homeDir, err = os.UserHomeDir()
+		}
+	} else {
+		homeDir, err = os.UserHomeDir()
+	}
+
+	if err != nil {
+		return "", err
+	}
+
+	binDir := filepath.Join(homeDir, "context-sherpa", "bin")
+	if runtime.GOOS != "windows" {
+		binDir = filepath.Join(homeDir, ".context-sherpa", "bin")
+	}
+	return binDir, nil
+}
+
+// OpenBinDir opens the Context-Sherpa bin directory in the OS file explorer
+func (a *App) OpenBinDir() error {
+	path, err := getSherpaBinDir()
+	if err != nil {
+		return err
+	}
+
+	// Ensure it exists
+	if err := os.MkdirAll(path, 0755); err != nil {
+		return err
+	}
+
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("explorer", path)
+	case "darwin":
+		cmd = exec.Command("open", path)
+	default: // linux
+		cmd = exec.Command("xdg-open", path)
+	}
+
+	return cmd.Start()
+}
+
+// GetScipIndexerStatus checks if a SCIP indexer for a specific language is installed
+func (a *App) GetScipIndexerStatus(language string) map[string]interface{} {
+	result := map[string]interface{}{
+		"installed": false,
+		"version":   "",
+		"path":      "",
+	}
+
+	binName := "scip-" + language
+	if language == "go" {
+		binName = "scip-go"
+	}
+
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+
+	binDir, err := getSherpaBinDir()
+	if err != nil {
+		return result
+	}
+
+	targetPath := filepath.Join(binDir, binName)
+	// For npm-installed tools, they might be in node_modules/.bin
+	npmBinPath := filepath.Join(binDir, "node_modules", ".bin", binName)
+
+	if _, err := os.Stat(targetPath); err == nil {
+		result["installed"] = true
+		result["path"] = targetPath
+	} else if _, err := os.Stat(npmBinPath); err == nil {
+		result["installed"] = true
+		result["path"] = npmBinPath
+	}
+
+	if result["installed"].(bool) {
+		// Try to get version
+		cmd := exec.Command(result["path"].(string), "--version")
+		if output, err := cmd.Output(); err == nil {
+			result["version"] = strings.TrimSpace(string(output))
+		}
+	} else {
+		// Fallback to system PATH
+		if path, err := exec.LookPath(binName); err == nil {
+			result["installed"] = true
+			result["path"] = path
+			cmd := exec.Command(path, "--version")
+			if output, err := cmd.Output(); err == nil {
+				result["version"] = strings.TrimSpace(string(output))
+			}
+		}
+	}
+
+	return result
+}
+
+// InstallScipIndexer downloads and installs a SCIP indexer for a specific language
+func (a *App) InstallScipIndexer(language string) (string, error) {
+	binDir, err := getSherpaBinDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get bin directory: %w", err)
+	}
+
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create bin directory: %w", err)
+	}
+
+	if language == "typescript" || language == "python" {
+		npmPkg := "@sourcegraph/scip-" + language
+		// Check for npm
+		if _, err := exec.LookPath("npm"); err != nil {
+			return "", fmt.Errorf("npm is required to install %s. Please install Node.js/npm first.", npmPkg)
+		}
+
+		// Install locally to bin directory
+		cmd := exec.Command("npm", "install", "--prefix", binDir, npmPkg)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("npm install failed: %v\nOutput: %s", err, string(output))
+		}
+		return fmt.Sprintf("Successfully installed %s to %s", npmPkg, binDir), nil
+	}
+
+	// For now, focusing on scip-go as the primary "native" example
+	if language != "go" {
+		return "", fmt.Errorf("automatic installation for %s is not yet implemented. Please install it manually in ~/.context-sherpa/bin/", language)
+	}
+
+	// scip-go release logic
+	version := "0.1.26"
+	arch := runtime.GOARCH
+	osStr := runtime.GOOS
+
+	var mappedArch, mappedOS string
+	switch arch {
+	case "amd64":
+		mappedArch = "amd64"
+	case "arm64":
+		mappedArch = "arm64"
+	default:
+		return "", fmt.Errorf("unsupported architecture: %s", arch)
+	}
+
+	switch osStr {
+	case "windows":
+		mappedOS = "windows"
+	case "darwin":
+		mappedOS = "darwin"
+	case "linux":
+		mappedOS = "linux"
+	default:
+		return "", fmt.Errorf("unsupported OS: %s", osStr)
+	}
+
+	// Example: scip-go_0.1.26_windows_amd64.tar.gz
+	filename := fmt.Sprintf("scip-go_%s_%s_%s.tar.gz", version, mappedOS, mappedArch)
+	downloadURL := fmt.Sprintf("https://github.com/sourcegraph/scip-go/releases/download/v%s/%s", version, filename)
+
+	binDir, err = getSherpaBinDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get bin directory: %w", err)
+	}
+
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create bin directory: %w", err)
+	}
+
+	// Download
+	resp, err := http.Get(downloadURL)
+	if err != nil {
+		return "", fmt.Errorf("download failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to download scip-go: HTTP %d", resp.StatusCode)
+	}
+
+	// Save to temp
+	tmpFile, err := os.CreateTemp("", "scip-go-dl-*.tar.gz")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+		return "", fmt.Errorf("failed to save download: %w", err)
+	}
+
+	// Extract .tar.gz
+	// Since scip-go's tar.gz contains the binary at the root (usually)
+	binName := "scip-go"
+	if osStr == "windows" {
+		binName = "scip-go.exe"
+	}
+
+	if err := extractTarGz(tmpFile.Name(), binDir, binName); err != nil {
+		return "", fmt.Errorf("failed to extract: %w", err)
+	}
+
+	return fmt.Sprintf("Successfully installed scip-go to %s", binDir), nil
+}
+
 // InstallAstGrep downloads and extracts the latest ast-grep binary to local app data
 func (a *App) InstallAstGrep() (string, error) {
 	arch := runtime.GOARCH
@@ -173,24 +386,9 @@ func (a *App) InstallAstGrep() (string, error) {
 	filename := fmt.Sprintf("app-%s-%s.zip", mappedArch, mappedOS)
 	downloadURL := fmt.Sprintf("https://github.com/ast-grep/ast-grep/releases/latest/download/%s", filename)
 
-	// Determine install path based on OS
-	var homeDir string
-	var err error
-	if osStr == "windows" {
-		homeDir = os.Getenv("LOCALAPPDATA")
-		if homeDir == "" {
-			homeDir, err = os.UserHomeDir()
-		}
-	} else {
-		homeDir, err = os.UserHomeDir()
-	}
+	binDir, err := getSherpaBinDir()
 	if err != nil {
-		return "", fmt.Errorf("failed to get home directory: %w", err)
-	}
-
-	binDir := filepath.Join(homeDir, "context-sherpa", "bin")
-	if osStr != "windows" {
-		binDir = filepath.Join(homeDir, ".context-sherpa", "bin")
+		return "", fmt.Errorf("failed to get bin directory: %w", err)
 	}
 
 	if err := os.MkdirAll(binDir, 0755); err != nil {
@@ -279,4 +477,52 @@ func extractZip(zipPath, targetPath, targetFileName string) error {
 		}
 	}
 	return fmt.Errorf("file %s not found in zip archive", targetFileName)
+}
+// Helper to extract a single file from a tar.gz archive
+func extractTarGz(tarPath, targetPath, targetFileName string) error {
+	// Note: In a production environment, you'd use archive/tar and compress/gzip.
+	// For simplicity in this agentic task, I'll implement a basic extractor block here.
+	// However, many SCIP tools follow this format.
+	
+	// Implementation using standard libraries
+	f, err := os.Open(tarPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	gzr, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	defer gzr.Close()
+
+	tr := tar.NewReader(gzr)
+
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		// Look for the binary
+		if filepath.Base(header.Name) == targetFileName {
+			targetFile := filepath.Join(targetPath, targetFileName)
+			outFile, err := os.OpenFile(targetFile, os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.FileMode(header.Mode))
+			if err != nil {
+				return err
+			}
+			defer outFile.Close()
+
+			if _, err := io.Copy(outFile, tr); err != nil {
+				return err
+			}
+			return nil
+		}
+	}
+
+	return fmt.Errorf("could not find %s in archive", targetFileName)
 }

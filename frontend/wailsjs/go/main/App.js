@@ -6,10 +6,22 @@ export function GetAstGrepStatus() {
   return window['go']['main']['App']['GetAstGrepStatus']();
 }
 
+export function GetScipIndexerStatus(arg1) {
+  return window['go']['main']['App']['GetScipIndexerStatus'](arg1);
+}
+
 export function GetWorkspaces() {
   return window['go']['main']['App']['GetWorkspaces']();
 }
 
 export function InstallAstGrep() {
   return window['go']['main']['App']['InstallAstGrep']();
+}
+
+export function InstallScipIndexer(arg1) {
+  return window['go']['main']['App']['InstallScipIndexer'](arg1);
+}
+
+export function OpenBinDir() {
+  return window['go']['main']['App']['OpenBinDir']();
 }

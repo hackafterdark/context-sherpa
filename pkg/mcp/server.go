@@ -16,6 +16,8 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	scip "github.com/sourcegraph/scip/bindings/go/scip"
+	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
 )
 
@@ -142,6 +144,18 @@ func Start(workspaceRoot string, verbose bool, logFilePath string, astGrepPath s
 		),
 	)
 
+	// Add get_symbol_map tool
+	getSymbolMapTool := mcp.NewTool("get_symbol_map",
+		mcp.WithDescription("Get a map of definitions and references for a specific symbol using SCIP code intelligence."),
+		mcp.WithString("symbolName",
+			mcp.Required(),
+			mcp.Description("The name of the symbol to look up (e.g., 'AuthService')."),
+		),
+		mcp.WithString("language",
+			mcp.Description("Optional language hint (e.g., 'go', 'typescript'). Defaults to workspace language detection."),
+		),
+	)
+
 	// Add add_or_update_rule tool
 	addOrUpdateRuleTool := mcp.NewTool("add_or_update_rule",
 		mcp.WithDescription(`Create or update an ast-grep rule for pattern-based code analysis.
@@ -239,6 +253,7 @@ Example: "Create a rule to catch SQL injection" → generates ast-grep YAML rule
 	// Add tool handlers
 	s.AddTool(scanCodeTool, scanCodeHandler)
 	s.AddTool(scanPathTool, scanPathHandler)
+	s.AddTool(getSymbolMapTool, getSymbolMapHandler)
 	s.AddTool(addOrUpdateRuleTool, addOrUpdateRuleHandler)
 	s.AddTool(removeRuleTool, removeRuleHandler)
 	s.AddTool(initializeAstGrepTool, initializeAstGrepHandler)
@@ -320,6 +335,170 @@ func registerWithHub(workspaceRoot string) {
 	} else {
 		verboseLog("Successfully registered workspace with Hub: %s", workspaceRoot)
 	}
+}
+
+func getSymbolMapHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	symbolName, err := req.RequireString("symbolName")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("symbolName is required: %v", err)), nil
+	}
+
+	language, _ := req.GetArguments()["language"].(string)
+
+	workspaceRoot, err := findWorkspaceRoot("")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to resolve workspace root: %v", err)), nil
+	}
+
+	sherpaDir := filepath.Join(workspaceRoot, ".context-sherpa")
+	scipPath := filepath.Join(sherpaDir, "index.scip")
+
+	// Ensure .context-sherpa exists
+	if err := os.MkdirAll(sherpaDir, 0755); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to create .context-sherpa directory: %v", err)), nil
+	}
+
+	// Trigger indexing if needed (for now, always try to update if it's older than 1 hour or missing)
+	shouldIndex := false
+	if info, err := os.Stat(scipPath); os.IsNotExist(err) {
+		shouldIndex = true
+	} else if time.Since(info.ModTime()) > 1*time.Hour {
+		shouldIndex = true
+	}
+
+	if shouldIndex {
+		verboseLog("Indexing workspace: %s", workspaceRoot)
+		if err := indexWorkspace(workspaceRoot, language); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to index workspace: %v. If it is a non-Go project, please install the appropriate indexer in the Dashboard.", err)), nil
+		}
+	}
+
+	// Parse SCIP index
+	data, err := os.ReadFile(scipPath)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to read SCIP index: %v", err)), nil
+	}
+
+	var index scip.Index
+	if err := proto.Unmarshal(data, &index); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to parse SCIP index: %v", err)), nil
+	}
+
+	// Search for symbol
+	result := map[string]interface{}{
+		"symbol":     symbolName,
+		"definition": nil,
+		"references": []map[string]interface{}{},
+	}
+
+	// Symbols in SCIP are often formatted like "scip-go gomodule ...#SymbolName#"
+	// We'll look for occurrences that match our symbol name
+	for _, doc := range index.Documents {
+		for _, occ := range doc.Occurrences {
+			// Check if this occurrence is the symbol we're looking for
+			// Simple suffix match to handle fully qualified symbols
+			isMatch := strings.HasSuffix(occ.Symbol, "#"+symbolName+"#") || 
+					  strings.HasSuffix(occ.Symbol, " "+symbolName) ||
+					  occ.Symbol == symbolName
+
+			if isMatch {
+				loc := map[string]interface{}{
+					"file": doc.RelativePath,
+					"line": occ.Range[0] + 1, // 0-indexed to 1-indexed
+				}
+
+				// Check roles (Definition = 1 << 0)
+				if occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0 {
+					result["definition"] = loc
+				} else {
+					result["references"] = append(result["references"].([]map[string]interface{}), loc)
+				}
+			}
+		}
+	}
+
+	jsonRes, _ := json.MarshalIndent(result, "", "  ")
+	return mcp.NewToolResultText(string(jsonRes)), nil
+}
+
+func indexWorkspace(workspaceRoot string, language string) error {
+	// 1. Detect language if not provided
+	if language == "" {
+		if _, err := os.Stat(filepath.Join(workspaceRoot, "go.mod")); err == nil {
+			language = "go"
+		} else if _, err := os.Stat(filepath.Join(workspaceRoot, "package.json")); err == nil {
+			language = "typescript"
+		} else if _, err := os.Stat(filepath.Join(workspaceRoot, "requirements.txt")); err == nil || (func() bool { _, e := os.Stat(filepath.Join(workspaceRoot, "pyproject.toml")); return e == nil }()) {
+			language = "python"
+		} else {
+			return fmt.Errorf("could not auto-detect language for workspace: %s", workspaceRoot)
+		}
+	}
+
+	var cmd *exec.Cmd
+
+	var homeDir string
+	if runtime.GOOS == "windows" {
+		homeDir = os.Getenv("LOCALAPPDATA")
+		if homeDir == "" {
+			homeDir, _ = os.UserHomeDir()
+		}
+	} else {
+		homeDir, _ = os.UserHomeDir()
+	}
+
+	binDir := filepath.Join(homeDir, "context-sherpa", "bin")
+	if runtime.GOOS != "windows" {
+		binDir = filepath.Join(homeDir, ".context-sherpa", "bin")
+	}
+
+	if language == "go" {
+		// Use scip-go. Try to find it in PATH or context-sherpa/bin
+		indexerName := "scip-go"
+		if runtime.GOOS == "windows" {
+			indexerName += ".exe"
+		}
+		indexerPath := indexerName
+		localBin := filepath.Join(binDir, indexerName)
+
+		if _, err := os.Stat(localBin); err == nil {
+			indexerPath = localBin
+		}
+
+		cmd = exec.Command(indexerPath, "--output", ".context-sherpa/index.scip")
+		cmd.Dir = workspaceRoot
+	} else {
+		// Try to find managed indexer for other languages
+		indexerName := "scip-" + language
+		if runtime.GOOS == "windows" {
+			indexerName += ".exe"
+		}
+
+		localBin := filepath.Join(binDir, indexerName)
+		npmBin := filepath.Join(binDir, "node_modules", ".bin", indexerName)
+
+		indexPath := ""
+		if _, err := os.Stat(localBin); err == nil {
+			indexPath = localBin
+		} else if _, err := os.Stat(npmBin); err == nil {
+			indexPath = npmBin
+		} else if path, err := exec.LookPath(indexerName); err == nil {
+			indexPath = path
+		}
+
+		if indexPath == "" {
+			return fmt.Errorf("indexer for %s not found. Please install it via the Context-Sherpa Dashboard", language)
+		}
+
+		cmd = exec.Command(indexPath, "index", "--output", ".context-sherpa/index.scip")
+		cmd.Dir = workspaceRoot
+	}
+
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("indexing failed: %v\nOutput: %s", err, string(output))
+	}
+
+	return nil
 }
 
 func scanCodeHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

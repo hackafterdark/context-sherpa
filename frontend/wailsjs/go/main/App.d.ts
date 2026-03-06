@@ -4,6 +4,12 @@ import {main} from '../models';
 
 export function GetAstGrepStatus():Promise<Record<string, any>>;
 
+export function GetScipIndexerStatus(arg1:string):Promise<Record<string, any>>;
+
 export function GetWorkspaces():Promise<Array<main.Workspace>>;
 
 export function InstallAstGrep():Promise<string>;
+
+export function InstallScipIndexer(arg1:string):Promise<string>;
+
+export function OpenBinDir():Promise<void>;
