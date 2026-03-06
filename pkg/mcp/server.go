@@ -154,6 +154,9 @@ func Start(workspaceRoot string, verbose bool, logFilePath string, astGrepPath s
 		mcp.WithString("language",
 			mcp.Description("Optional language hint (e.g., 'go', 'typescript'). Defaults to workspace language detection."),
 		),
+		mcp.WithString("workspaceRoot",
+			mcp.Description("Optional workspace root directory to index. If omitted, it will try to auto-detect the workspace root."),
+		),
 	)
 
 	// Add add_or_update_rule tool
@@ -343,9 +346,18 @@ func getSymbolMapHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
 		return mcp.NewToolResultError(fmt.Sprintf("symbolName is required: %v", err)), nil
 	}
 
-	language, _ := req.GetArguments()["language"].(string)
+	language := ""
+	workspaceRootArg := ""
+	if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
+		if lang, ok := args["language"].(string); ok && lang != "" {
+			language = strings.ToLower(lang)
+		}
+		if wr, ok := args["workspaceRoot"].(string); ok && wr != "" {
+			workspaceRootArg = wr
+		}
+	}
 
-	workspaceRoot, err := findWorkspaceRoot("")
+	workspaceRoot, err := findWorkspaceRoot(workspaceRootArg)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to resolve workspace root: %v", err)), nil
 	}
@@ -391,24 +403,23 @@ func getSymbolMapHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
 		"references": []map[string]interface{}{},
 	}
 
-	// Symbols in SCIP are often formatted like "scip-go gomodule ...#SymbolName#"
+	// Symbols in SCIP are often formatted like "scip-go gomodule ... github.com/user/project/pkg/ SymbolName#"
 	// We'll look for occurrences that match our symbol name
 	for _, doc := range index.Documents {
 		for _, occ := range doc.Occurrences {
 			// Check if this occurrence is the symbol we're looking for
-			// Simple suffix match to handle fully qualified symbols
-			isMatch := strings.HasSuffix(occ.Symbol, "#"+symbolName+"#") || 
-					  strings.HasSuffix(occ.Symbol, " "+symbolName) ||
-					  occ.Symbol == symbolName
-
-			if isMatch {
+			if isSymbolMatch(occ.Symbol, symbolName) {
 				loc := map[string]interface{}{
 					"file": doc.RelativePath,
 					"line": occ.Range[0] + 1, // 0-indexed to 1-indexed
 				}
 
-				// Check roles (Definition = 1 << 0)
-				if occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0 {
+				// Check roles:
+				// scip-go seems to use Role 8 (ReadAccess) for definitions in some cases,
+				// or maybe we should just treat the first occurrence of a symbol as its definition if none is marked.
+				// Based on debug: "Symbol: ...`App`#workspaces. (Roles: 8)"
+				isDef := occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0 || occ.SymbolRoles == 8
+				if isDef && result["definition"] == nil {
 					result["definition"] = loc
 				} else {
 					result["references"] = append(result["references"].([]map[string]interface{}), loc)
@@ -422,6 +433,17 @@ func getSymbolMapHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
 }
 
 func indexWorkspace(workspaceRoot string, language string) error {
+	// 0. Use canonical absolute path to avoid Windows drive letter case issues
+	if abs, err := filepath.EvalSymlinks(workspaceRoot); err == nil {
+		workspaceRoot = abs
+	} else if abs, err := filepath.Abs(workspaceRoot); err == nil {
+		workspaceRoot = abs
+	}
+	// Normalize Windows drive letter to uppercase explicitly just to be safe
+	if runtime.GOOS == "windows" && len(workspaceRoot) > 1 && workspaceRoot[1] == ':' {
+		workspaceRoot = strings.ToUpper(string(workspaceRoot[0])) + workspaceRoot[1:]
+	}
+
 	// 1. Detect language if not provided
 	if language == "" {
 		if _, err := os.Stat(filepath.Join(workspaceRoot, "go.mod")); err == nil {
@@ -465,7 +487,8 @@ func indexWorkspace(workspaceRoot string, language string) error {
 			indexerPath = localBin
 		}
 
-		cmd = exec.Command(indexerPath, "--output", ".context-sherpa/index.scip")
+		absOutput := filepath.Join(workspaceRoot, ".context-sherpa", "index.scip")
+		cmd = exec.Command(indexerPath, "--project-root", workspaceRoot, "--repository-root", workspaceRoot, "--output", absOutput)
 		cmd.Dir = workspaceRoot
 	} else {
 		// Try to find managed indexer for other languages
@@ -490,7 +513,8 @@ func indexWorkspace(workspaceRoot string, language string) error {
 			return fmt.Errorf("indexer for %s not found. Please install it via the Context-Sherpa Dashboard", language)
 		}
 
-		cmd = exec.Command(indexPath, "index", "--output", ".context-sherpa/index.scip")
+		absOutput := filepath.Join(workspaceRoot, ".context-sherpa", "index.scip")
+		cmd = exec.Command(indexPath, "index", "--output", absOutput)
 		cmd.Dir = workspaceRoot
 	}
 
@@ -499,6 +523,63 @@ func indexWorkspace(workspaceRoot string, language string) error {
 	}
 
 	return nil
+}
+
+// isSymbolMatch checks if a SCIP symbol string represents the given symbol name.
+// It handles various SCIP naming conventions (suffixes like #, ., (), etc.)
+func isSymbolMatch(scipSymbol string, symbolName string) bool {
+	if scipSymbol == symbolName {
+		return true
+	}
+
+	// SCIP symbols are structured. We care about the "base" name at the end.
+	// scip-go often encloses the symbol in backticks: `SymbolName`
+	
+	// Check for backticked version
+	backticked := "`" + symbolName + "`"
+	if strings.Contains(scipSymbol, backticked) {
+		// Ensure it's not part of a larger word
+		idx := strings.Index(scipSymbol, backticked)
+		// Check character before and after
+		if idx > 0 {
+			prev := scipSymbol[idx-1]
+			if prev != '/' && prev != ' ' && prev != '.' && prev != '#' {
+				// Part of a larger word?
+			} else {
+				return true
+			}
+		} else {
+			return true
+		}
+	}
+
+	// Common suffixes:
+	// - Go Types: TypeName#
+	// - Go Methods: TypeName#MethodName().
+	// - Go Functions: FuncName().
+	// - TS/Py: .../SymbolName
+	
+	// Check for suffixes
+	suffixes := []string{"#", ".", "().", "()"}
+	for _, s := range suffixes {
+		if strings.HasSuffix(scipSymbol, symbolName+s) {
+			// Ensure it's preceded by a separator to avoid partial matches (e.g., "MyApp" matching "App")
+			prefix := strings.TrimSuffix(scipSymbol, symbolName+s)
+			if prefix == "" || strings.HasSuffix(prefix, "/") || strings.HasSuffix(prefix, " ") || strings.HasSuffix(prefix, ".") || strings.HasSuffix(prefix, "#") {
+				return true
+			}
+		}
+	}
+
+	// Check if it ends exactly with the symbol name preceded by a separator
+	separators := []string{"/", " ", ".", "#"}
+	for _, s := range separators {
+		if strings.HasSuffix(scipSymbol, s+symbolName) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func scanCodeHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

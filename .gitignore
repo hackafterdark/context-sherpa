@@ -10,6 +10,7 @@ context-sherpa
 ast-grep
 sg
 .context-sherpa
+symbols_dump.txt
 
 # Dependencies
 node_modules
