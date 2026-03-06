@@ -9,6 +9,7 @@ rules
 context-sherpa
 ast-grep
 sg
+.context-sherpa
 
 # Binaries for programs and plugins
 *.exe
@@ -47,6 +48,7 @@ Thumbs.db
 # Build artifacts
 dist/
 build/
+node_modules
 
 # Environment files
 .env

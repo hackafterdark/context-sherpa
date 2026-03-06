@@ -1460,7 +1460,7 @@ func TestFindProjectRoot(t *testing.T) {
 		}
 
 		// This should fail because there's no sgconfig.yml
-		_, err = findProjectRoot()
+		_, err = findProjectRoot("")
 		if err == nil {
 			t.Error("Expected findProjectRoot to fail without sgconfig.yml")
 		}

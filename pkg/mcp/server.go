@@ -278,7 +278,7 @@ func scanCodeHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	// --- END DEBUG LOGGING ---
 
 	// Find the project root where sgconfig.yml is located
-	projectRoot, err = findProjectRoot()
+	projectRoot, err = findProjectRoot("")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -312,7 +312,7 @@ func scanCodeHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 
 	cmd := exec.Command(sgPath, "scan", "--config", resolvedSgconfigPath, tmpfile.Name(), "--json")
 	cmd.Dir = projectRoot // Run ast-grep from the project root
-	output, err := cmd.CombinedOutput()
+	output, err := cmd.Output()
 	if err != nil {
 		// ast-grep exits with non-zero status code if issues are found.
 		// We still want to parse the output.
@@ -354,7 +354,8 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	// --- END DEBUG LOGGING ---
 
 	// Find the project root where sgconfig.yml is located
-	projectRoot, err = findProjectRoot()
+	projectRoot, err = findProjectRoot(path)
+	
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -576,7 +577,8 @@ func scanFileBatch(files []string, sgconfigStr, projectRoot, sgPath string) (str
 
 	cmd := exec.Command(sgPath, args...)
 	cmd.Dir = projectRoot
-	output, err := cmd.CombinedOutput()
+	
+	output, err := cmd.Output()
 	if err != nil {
 		// ast-grep exits with non-zero status code if issues are found.
 		// We still want to parse the output.
@@ -619,8 +621,8 @@ func addOrUpdateRuleHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 }
 
 // findProjectRoot finds the project root by searching for sgconfig.yml
-// in the current and parent directories.
-func findProjectRoot() (string, error) {
+// in the requested directory and its parent directories.
+func findProjectRoot(startPath string) (string, error) {
 	var dir string
 	var err error
 
@@ -628,6 +630,17 @@ func findProjectRoot() (string, error) {
 		// Use the specified project root as starting point
 		verboseLog("Using custom project root override: %s", projectRootOverride)
 		dir = projectRootOverride
+	} else if startPath != "" {
+		absPath, err := filepath.Abs(startPath)
+		if err == nil {
+			if info, err := os.Stat(absPath); err == nil && !info.IsDir() {
+				dir = filepath.Dir(absPath)
+			} else {
+				dir = absPath
+			}
+		} else {
+			dir, _ = os.Getwd()
+		}
 	} else {
 		// Fall back to current behavior
 		dir, err = os.Getwd()
@@ -676,8 +689,38 @@ func findAstGrepBinary(astGrepPath string) (string, error) {
 		}
 	}
 
-	// 3. Clear error - explain MCP server limitation
-	return "", fmt.Errorf(`ast-grep not found in PATH.
+	// 3. Custom Context-Sherpa installation directory
+	var homeDir string
+	var err error
+	if runtime.GOOS == "windows" {
+		homeDir = os.Getenv("LOCALAPPDATA")
+		if homeDir == "" {
+			homeDir, err = os.UserHomeDir()
+		}
+	} else {
+		homeDir, err = os.UserHomeDir()
+	}
+
+	if err == nil {
+		binDir := filepath.Join(homeDir, "context-sherpa", "bin")
+		if runtime.GOOS != "windows" {
+			binDir = filepath.Join(homeDir, ".context-sherpa", "bin")
+		}
+
+		binName := "ast-grep"
+		if runtime.GOOS == "windows" {
+			binName = "ast-grep.exe"
+		}
+		
+		customPath := filepath.Join(binDir, binName)
+		if _, err := os.Stat(customPath); err == nil {
+			verboseLog("Found ast-grep in custom context-sherpa bin dir: %s", customPath)
+			return customPath, nil
+		}
+	}
+
+	// 4. Clear error - explain MCP server limitation
+	return "", fmt.Errorf(`ast-grep not found in PATH or in the global Context-Sherpa directory.
 
 As an MCP server communicating via stdio, I cannot:
 - Detect where your editor/IDE is running from
@@ -686,7 +729,9 @@ As an MCP server communicating via stdio, I cannot:
 
 Please ensure ast-grep is available in one of these ways:
 
-1. Install in system PATH (see https://ast-grep.github.io/guide/quick-start.html):
+1. Use the Context-Sherpa Desktop Dashboard to install it (recommended).
+
+2. Install in system PATH (see https://ast-grep.github.io/guide/quick-start.html):
    # Choose one of these installation methods:
    brew install ast-grep                    # macOS/Linux
    cargo install ast-grep --locked         # Rust
@@ -694,7 +739,7 @@ Please ensure ast-grep is available in one of these ways:
    pip install ast-grep-cli                # Python
    sudo port install ast-grep              # MacPorts
 
-2. Specify explicit path:
+3. Specify explicit path:
    context-sherpa --astGrepPath="/path/to/ast-grep"`)
 }
 
@@ -847,8 +892,9 @@ func initLogging(verbose bool, logFilePath string) {
 
 	var writers []io.Writer
 
-	// Always write to stdout/stderr
-	writers = append(writers, os.Stdout, os.Stderr)
+	// MCP protocol requires strictly writing ONLY JSON-RPC to stdout.
+	// All logging MUST go to stderr.
+	writers = append(writers, os.Stderr)
 
 	// If log file is specified, append to it
 	if logFilePath != "" {
@@ -862,11 +908,7 @@ func initLogging(verbose bool, logFilePath string) {
 	}
 
 	// Create multi-writer for logging
-	if len(writers) > 2 { // stdout + stderr + file
-		customLogger = log.New(io.MultiWriter(writers...), "", log.LstdFlags)
-	} else {
-		customLogger = log.New(io.MultiWriter(writers...), "", log.LstdFlags)
-	}
+	customLogger = log.New(io.MultiWriter(writers...), "", log.LstdFlags)
 
 	if verbose {
 		customLogger.Println("Verbose logging enabled")

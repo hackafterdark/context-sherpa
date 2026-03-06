@@ -4,7 +4,7 @@ import (
 	_ "embed"
 	"flag"
 
-	"github.com/hackafterdark/context-sherpa/internal/mcp"
+	"github.com/hackafterdark/context-sherpa/pkg/mcp"
 )
 
 func main() {
