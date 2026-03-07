@@ -80,6 +80,16 @@ func getCommunityRulesRepoURL() string {
 
 // Start initializes and starts the MCP server.
 func Start(workspaceRoot string, verbose bool, logFilePath string, astGrepPath string) {
+	if workspaceRoot == "" {
+		// Attempt to auto-discover workspace root from executable location
+		if exePath, err := os.Executable(); err == nil {
+			if root, err := findWorkspaceRoot(filepath.Dir(exePath)); err == nil {
+				workspaceRoot = root
+				verboseLog("Auto-discovered workspace root: %s", workspaceRoot)
+			}
+		}
+	}
+
 	if workspaceRoot != "" {
 		workspaceRootOverride = workspaceRoot
 	}
@@ -87,8 +97,8 @@ func Start(workspaceRoot string, verbose bool, logFilePath string, astGrepPath s
 		astGrepPathOverride = astGrepPath
 	}
 
-	// Initialize logging system
-	initLogging(verbose, logFilePath)
+	// Initialize logging system with the resolved workspace root
+	initLogging(verbose, logFilePath, workspaceRoot)
 
 	// Create a new MCP server
 	s := server.NewMCPServer(
@@ -277,12 +287,24 @@ Example: "Create a rule to catch SQL injection" → generates ast-grep YAML rule
 		),
 	)
 
+	// Add initialize_scip tool
+	initializeScipTool := mcp.NewTool("initialize_scip",
+		mcp.WithDescription("Indexes the workspace for SCIP-based navigation."),
+		mcp.WithString("workspaceRoot",
+			mcp.Description("Optional workspace root directory to index. If omitted, it will try to auto-detect the workspace root."),
+		),
+		mcp.WithString("language",
+			mcp.Description("Programming language of the project (e.g., 'go', 'typescript', 'python'). If omitted, will attempt auto-detection."),
+		),
+	)
+
 	// Add tool handlers
 	s.AddTool(scanCodeTool, scanCodeHandler)
 	s.AddTool(scanPathTool, scanPathHandler)
 	s.AddTool(getSymbolMapTool, getSymbolMapHandler)
 	s.AddTool(listSymbolsInFileTool, listSymbolsInFileHandler)
 	s.AddTool(searchDefinitionsTool, searchDefinitionsHandler)
+	s.AddTool(initializeScipTool, initializeScipHandler)
 	s.AddTool(addOrUpdateRuleTool, addOrUpdateRuleHandler)
 	s.AddTool(removeRuleTool, removeRuleHandler)
 	s.AddTool(initializeAstGrepTool, initializeAstGrepHandler)
@@ -319,11 +341,11 @@ func initLocalState(workspaceRoot string) error {
 	if err := os.MkdirAll(sherpaDir, 0755); err != nil {
 		return fmt.Errorf("failed to create .context-sherpa directory: %w", err)
 	}
-	
+
 	// Check if we should initialize the database
 	// dbPath := filepath.Join(sherpaDir, "sherpa.db")
 	// For now, we just ensure the directory. Actual DB init can happen when needed.
-	
+
 	return nil
 }
 
@@ -476,6 +498,7 @@ func listSymbolsInFileHandler(ctx context.Context, req mcp.CallToolRequest) (*mc
 
 	sherpaDir := filepath.Join(workspaceRoot, ".context-sherpa")
 	scipPath := filepath.Join(sherpaDir, "index.scip")
+	verboseLog("listSymbolsInFileHandler: using workspaceRoot: '%s', scipPath: '%s'", workspaceRoot, scipPath)
 
 	if _, err := os.Stat(scipPath); os.IsNotExist(err) {
 		return mcp.NewToolResultError("SCIP index not found. Please index the workspace first via the Dashboard."), nil
@@ -490,16 +513,24 @@ func listSymbolsInFileHandler(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if err := proto.Unmarshal(data, &index); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to parse SCIP index: %v", err)), nil
 	}
+	verboseLog("listSymbolsInFileHandler: unmarshaled index, documents: %d", len(index.Documents))
 
-	// Normalize input path
-	inputPath := filepath.ToSlash(filePath)
+	// Normalize input path to match SCIP's internal format (native separators)
+	inputPath := filepath.FromSlash(filePath)
+	verboseLog("listSymbolsInFileHandler: searching for '%s' (inputPath), filePath: '%s'", inputPath, filePath)
 	
 	var symbols []map[string]interface{}
-	for _, doc := range index.Documents {
-		if filepath.ToSlash(doc.RelativePath) == inputPath {
+	for i, doc := range index.Documents {
+		rel := doc.RelativePath 
+		if i < 10 { // Log more documents for debugging
+			verboseLog("listSymbolsInFileHandler: doc[%d] = '%s'", i, rel)
+		}
+		if rel == inputPath {
+			verboseLog("listSymbolsInFileHandler: matched file '%s'", rel)
 			for _, occ := range doc.Occurrences {
 				// Only include definitions (Role 1)
 				isDef := occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0
+				
 				if isDef {
 					symbolInfo := map[string]interface{}{
 						"symbol": occ.Symbol,
@@ -577,6 +608,51 @@ func searchDefinitionsHandler(ctx context.Context, req mcp.CallToolRequest) (*mc
 
 	jsonRes, _ := json.MarshalIndent(definitions, "", "  ")
 	return mcp.NewToolResultText(string(jsonRes)), nil
+}
+
+func initializeScipHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	workspaceRootArg := ""
+	if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
+		if wr, ok := args["workspaceRoot"].(string); ok && wr != "" {
+			workspaceRootArg = wr
+		}
+	}
+
+	workspaceRoot, err := findWorkspaceRoot(workspaceRootArg)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to resolve workspace root: %v", err)), nil
+	}
+
+	language := ""
+	if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
+		if l, ok := args["language"].(string); ok && l != "" {
+			language = l
+		}
+	}
+
+	// Auto-detect language if not provided
+	if language == "" {
+		if _, err := os.Stat(filepath.Join(workspaceRoot, "go.mod")); err == nil {
+			language = "go"
+		} else if _, err := os.Stat(filepath.Join(workspaceRoot, "package.json")); err == nil {
+			language = "typescript"
+		} else if _, err := os.Stat(filepath.Join(workspaceRoot, "requirements.txt")); err == nil {
+			language = "python"
+		} else if _, err := os.Stat(filepath.Join(workspaceRoot, "setup.py")); err == nil {
+			language = "python"
+		}
+	}
+
+	if language == "" {
+		return mcp.NewToolResultError("Could not auto-detect project language. Please specify 'language' parameter."), nil
+	}
+
+	err = indexWorkspace(workspaceRoot, language)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Indexing failed: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Workspace indexed successfully for %s.", language)), nil
 }
 
 func indexWorkspace(workspaceRoot string, language string) error {
@@ -681,7 +757,7 @@ func isSymbolMatch(scipSymbol string, symbolName string) bool {
 
 	// SCIP symbols are structured. We care about the "base" name at the end.
 	// scip-go often encloses the symbol in backticks: `SymbolName`
-	
+
 	// Check for backticked version
 	backticked := "`" + symbolName + "`"
 	if strings.Contains(scipSymbol, backticked) {
@@ -705,7 +781,7 @@ func isSymbolMatch(scipSymbol string, symbolName string) bool {
 	// - Go Methods: TypeName#MethodName().
 	// - Go Functions: FuncName().
 	// - TS/Py: .../SymbolName
-	
+
 	// Check for suffixes
 	suffixes := []string{"#", ".", "().", "()"}
 	for _, s := range suffixes {
@@ -831,7 +907,7 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 
 	// Find the workspace root where sgconfig.yml is located
 	workspaceRoot, err = findWorkspaceRoot(path)
-	
+
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -1053,7 +1129,7 @@ func scanFileBatch(files []string, sgconfigStr, workspaceRoot, sgPath string) (s
 
 	cmd := exec.Command(sgPath, args...)
 	cmd.Dir = workspaceRoot
-	
+
 	output, err := cmd.Output()
 	if err != nil {
 		// ast-grep exits with non-zero status code if issues are found.
@@ -1103,9 +1179,13 @@ func findWorkspaceRoot(startPath string) (string, error) {
 	var err error
 
 	if workspaceRootOverride != "" {
-		// Use the specified workspace root as starting point
-		verboseLog("Using custom workspace root override: %s", workspaceRootOverride)
-		dir = workspaceRootOverride
+		// Use the absolute path of the override if possible
+		if abs, err := filepath.Abs(workspaceRootOverride); err == nil {
+			dir = abs
+		} else {
+			dir = workspaceRootOverride
+		}
+		verboseLog("Using custom workspace root override: %s", dir)
 	} else if startPath != "" {
 		absPath, err := filepath.Abs(startPath)
 		if err == nil {
@@ -1135,7 +1215,7 @@ func findWorkspaceRoot(startPath string) (string, error) {
 
 		parentDir := filepath.Dir(tempDir)
 		if parentDir == tempDir {
-			break 
+			break
 		}
 		tempDir = parentDir
 	}
@@ -1214,7 +1294,7 @@ func findAstGrepBinary(astGrepPath string) (string, error) {
 		if runtime.GOOS == "windows" {
 			binName = "ast-grep.exe"
 		}
-		
+
 		customPath := filepath.Join(binDir, binName)
 		if _, err := os.Stat(customPath); err == nil {
 			verboseLog("Found ast-grep in custom context-sherpa bin dir: %s", customPath)
@@ -1396,7 +1476,7 @@ func fetchCommunityRuleIndex() (*CommunityRuleIndex, error) {
 }
 
 // initLogging initializes the logging system with support for verbose logging and log files
-func initLogging(verbose bool, logFilePath string) {
+func initLogging(verbose bool, logFilePath string, workspaceRoot string) {
 	verboseLogging = verbose
 
 	var writers []io.Writer
@@ -1405,7 +1485,11 @@ func initLogging(verbose bool, logFilePath string) {
 	// All logging MUST go to stderr.
 	writers = append(writers, os.Stderr)
 
-	// If log file is specified, append to it
+	// If log file is specified, append to it. Otherwise use a default in workspace root if possible.
+	if logFilePath == "" && workspaceRoot != "" {
+		logFilePath = filepath.Join(workspaceRoot, "mcp_debug.log")
+	}
+
 	if logFilePath != "" {
 		var err error
 		logFile, err = os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
@@ -1443,8 +1527,7 @@ func resolvePathRelativeToWorkspaceRoot(path, workspaceRoot string) string {
 	}
 
 	if workspaceRoot == "" {
-		absPath, _ := filepath.Abs(path)
-		return absPath
+		return path
 	}
 
 	resolvedPath := filepath.Join(workspaceRoot, path)
