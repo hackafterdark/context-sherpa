@@ -253,10 +253,36 @@ Example: "Create a rule to catch SQL injection" → generates ast-grep YAML rule
 		),
 	)
 
+	// Add list_symbols_in_file tool
+	listSymbolsInFileTool := mcp.NewTool("list_symbols_in_file",
+		mcp.WithDescription("Lists all classes, functions, and variables defined in a specific file using the symbolic index."),
+		mcp.WithString("file_path",
+			mcp.Required(),
+			mcp.Description("File path relative to workspace root (e.g., 'pkg/mcp/server.go')."),
+		),
+		mcp.WithString("workspaceRoot",
+			mcp.Description("Optional workspace root directory to index. If omitted, it will try to auto-detect the workspace root."),
+		),
+	)
+
+	// Add search_definitions tool
+	searchDefinitionsTool := mcp.NewTool("search_definitions",
+		mcp.WithDescription("Searches for a symbol definition across the entire project using SCIP code intelligence."),
+		mcp.WithString("query",
+			mcp.Required(),
+			mcp.Description("The symbol name to search for (e.g., 'App')."),
+		),
+		mcp.WithString("workspaceRoot",
+			mcp.Description("Optional workspace root directory to index. If omitted, it will try to auto-detect the workspace root."),
+		),
+	)
+
 	// Add tool handlers
 	s.AddTool(scanCodeTool, scanCodeHandler)
 	s.AddTool(scanPathTool, scanPathHandler)
 	s.AddTool(getSymbolMapTool, getSymbolMapHandler)
+	s.AddTool(listSymbolsInFileTool, listSymbolsInFileHandler)
+	s.AddTool(searchDefinitionsTool, searchDefinitionsHandler)
 	s.AddTool(addOrUpdateRuleTool, addOrUpdateRuleHandler)
 	s.AddTool(removeRuleTool, removeRuleHandler)
 	s.AddTool(initializeAstGrepTool, initializeAstGrepHandler)
@@ -415,10 +441,8 @@ func getSymbolMapHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
 				}
 
 				// Check roles:
-				// scip-go seems to use Role 8 (ReadAccess) for definitions in some cases,
-				// or maybe we should just treat the first occurrence of a symbol as its definition if none is marked.
-				// Based on debug: "Symbol: ...`App`#workspaces. (Roles: 8)"
-				isDef := occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0 || occ.SymbolRoles == 8
+				// Definitions are marked with Role 1 (Definition role).
+				isDef := occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0
 				if isDef && result["definition"] == nil {
 					result["definition"] = loc
 				} else {
@@ -429,6 +453,129 @@ func getSymbolMapHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
 	}
 
 	jsonRes, _ := json.MarshalIndent(result, "", "  ")
+	return mcp.NewToolResultText(string(jsonRes)), nil
+}
+
+func listSymbolsInFileHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	filePath, err := req.RequireString("file_path")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("file_path is required: %v", err)), nil
+	}
+
+	workspaceRootArg := ""
+	if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
+		if wr, ok := args["workspaceRoot"].(string); ok && wr != "" {
+			workspaceRootArg = wr
+		}
+	}
+
+	workspaceRoot, err := findWorkspaceRoot(workspaceRootArg)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to resolve workspace root: %v", err)), nil
+	}
+
+	sherpaDir := filepath.Join(workspaceRoot, ".context-sherpa")
+	scipPath := filepath.Join(sherpaDir, "index.scip")
+
+	if _, err := os.Stat(scipPath); os.IsNotExist(err) {
+		return mcp.NewToolResultError("SCIP index not found. Please index the workspace first via the Dashboard."), nil
+	}
+
+	data, err := os.ReadFile(scipPath)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to read SCIP index: %v", err)), nil
+	}
+
+	var index scip.Index
+	if err := proto.Unmarshal(data, &index); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to parse SCIP index: %v", err)), nil
+	}
+
+	// Normalize input path
+	inputPath := filepath.ToSlash(filePath)
+	
+	var symbols []map[string]interface{}
+	for _, doc := range index.Documents {
+		if filepath.ToSlash(doc.RelativePath) == inputPath {
+			for _, occ := range doc.Occurrences {
+				// Only include definitions (Role 1)
+				isDef := occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0
+				if isDef {
+					symbolInfo := map[string]interface{}{
+						"symbol": occ.Symbol,
+						"line":   occ.Range[0] + 1,
+					}
+					symbols = append(symbols, symbolInfo)
+				}
+			}
+			break
+		}
+	}
+
+	if len(symbols) == 0 {
+		return mcp.NewToolResultText(fmt.Sprintf("No symbols found in file: %s", filePath)), nil
+	}
+
+	jsonRes, _ := json.MarshalIndent(symbols, "", "  ")
+	return mcp.NewToolResultText(string(jsonRes)), nil
+}
+
+func searchDefinitionsHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	query, err := req.RequireString("query")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("query is required: %v", err)), nil
+	}
+
+	workspaceRootArg := ""
+	if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
+		if wr, ok := args["workspaceRoot"].(string); ok && wr != "" {
+			workspaceRootArg = wr
+		}
+	}
+
+	workspaceRoot, err := findWorkspaceRoot(workspaceRootArg)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to resolve workspace root: %v", err)), nil
+	}
+
+	sherpaDir := filepath.Join(workspaceRoot, ".context-sherpa")
+	scipPath := filepath.Join(sherpaDir, "index.scip")
+
+	if _, err := os.Stat(scipPath); os.IsNotExist(err) {
+		return mcp.NewToolResultError("SCIP index not found. Please index the workspace first via the Dashboard."), nil
+	}
+
+	data, err := os.ReadFile(scipPath)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to read SCIP index: %v", err)), nil
+	}
+
+	var index scip.Index
+	if err := proto.Unmarshal(data, &index); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to parse SCIP index: %v", err)), nil
+	}
+
+	var definitions []map[string]interface{}
+	for _, doc := range index.Documents {
+		for _, occ := range doc.Occurrences {
+			if isSymbolMatch(occ.Symbol, query) {
+				isDef := occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0
+				if isDef {
+					definitions = append(definitions, map[string]interface{}{
+						"symbol": occ.Symbol,
+						"file":   doc.RelativePath,
+						"line":   occ.Range[0] + 1,
+					})
+				}
+			}
+		}
+	}
+
+	if len(definitions) == 0 {
+		return mcp.NewToolResultText(fmt.Sprintf("No definitions found for query: %s", query)), nil
+	}
+
+	jsonRes, _ := json.MarshalIndent(definitions, "", "  ")
 	return mcp.NewToolResultText(string(jsonRes)), nil
 }
 
