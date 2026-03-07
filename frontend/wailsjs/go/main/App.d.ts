@@ -13,3 +13,7 @@ export function InstallAstGrep():Promise<string>;
 export function InstallScipIndexer(arg1:string):Promise<string>;
 
 export function OpenBinDir():Promise<void>;
+
+export function OpenWorkspace(arg1:string):Promise<void>;
+
+export function RestartWorkspace(arg1:number):Promise<void>;

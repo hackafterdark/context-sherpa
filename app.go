@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/hackafterdark/context-sherpa/pkg/mcp"
@@ -22,10 +23,11 @@ import (
 
 // Workspace represents a detected workspace from a Node
 type Workspace struct {
-	PID    int    `json:"pid"`
-	Root   string `json:"root"`
-	Client string `json:"client"`
-	State  string `json:"state"`
+	PID      int       `json:"pid"`
+	Root     string    `json:"root"`
+	Client   string    `json:"client"`
+	State    string    `json:"state"`
+	LastSeen time.Time `json:"lastSeen"`
 }
 
 // App struct
@@ -45,15 +47,41 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.workspaces = make([]Workspace, 0)
 	
-	// Try to become the Master Hub
+	// Ensure we have a clean start by checking lock liveness
 	if a.tryAcquireHubLock() {
 		a.isHub = true
 		fmt.Println("Hub: Successfully acquired hub.lock. Starting as Master Hub.")
 		// Start the Hub's registration server on a background goroutine
 		go a.startHubServer()
+		go a.startSweeper()
 	} else {
 		fmt.Println("Hub: Another instance is already Master Hub. Starting as Node viewer.")
+		go a.startViewerPoller()
 	}
+}
+
+func isProcessRunning(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	
+	// platform specific check
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/NH")
+		out, err := cmd.Output()
+		if err != nil {
+			return false
+		}
+		return strings.Contains(string(out), fmt.Sprintf("%d", pid))
+	}
+	
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	// On Unix, Signal(0) checks for existence
+	err = p.Signal(syscall.Signal(0))
+	return err == nil
 }
 
 func (a *App) tryAcquireHubLock() bool {
@@ -64,10 +92,11 @@ func (a *App) tryAcquireHubLock() bool {
 		var lock mcp.HubLock
 		if err := json.Unmarshal(data, &lock); err == nil {
 			// Check if process still exists
-			if _, err := os.FindProcess(lock.PID); err == nil {
-				// Hub is likely already running
+			if isProcessRunning(lock.PID) {
+				// Hub is truly already running
 				return false
 			}
+			fmt.Printf("Hub: Stale lock found (PID %d not running). Overwriting...\n", lock.PID)
 		}
 	}
 
@@ -97,6 +126,11 @@ func (a *App) Shutdown(ctx context.Context) {
 
 func (a *App) startHubServer() {
 	http.HandleFunc("/workspaces", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(a.workspaces)
+			return
+		}
 		if r.Method != http.MethodPut {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -108,10 +142,14 @@ func (a *App) startHubServer() {
 			return
 		}
 
-		// Check if we already have this workspace (same root)
+		// Check if we already have this workspace (same root AND same PID)
 		found := false
 		for i, existing := range a.workspaces {
-			if existing.Root == ws.Root {
+			if existing.Root == ws.Root && existing.PID == ws.PID {
+				ws.LastSeen = time.Now()
+				if ws.State == "offline" {
+					ws.State = "active"
+				}
 				a.workspaces[i] = ws
 				found = true
 				break
@@ -119,6 +157,7 @@ func (a *App) startHubServer() {
 		}
 
 		if !found {
+			ws.LastSeen = time.Now()
 			a.workspaces = append(a.workspaces, ws)
 		}
 
@@ -496,7 +535,59 @@ func (a *App) InstallAstGrep() (string, error) {
 
 // GetWorkspaces returns the list of registered workspaces
 func (a *App) GetWorkspaces() []Workspace {
+	if a.isHub {
+		return a.workspaces
+	}
+
+	// If not Hub, try to fetch from the Master Hub
+	lockPath := mcp.GetHubLockPath()
+	data, err := os.ReadFile(lockPath)
+	if err != nil {
+		return a.workspaces
+	}
+
+	var lock mcp.HubLock
+	if err := json.Unmarshal(data, &lock); err != nil {
+		return a.workspaces
+	}
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/workspaces", lock.Port)
+	client := &http.Client{Timeout: 1 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return a.workspaces
+	}
+	defer resp.Body.Close()
+
+	var ws []Workspace
+	if err := json.NewDecoder(resp.Body).Decode(&ws); err == nil {
+		a.workspaces = ws
+	}
 	return a.workspaces
+}
+
+// RestartWorkspace attempts to restart a workspace node by killing its process.
+// Most MCP clients (VS Code, etc.) will automatically respawn it.
+func (a *App) RestartWorkspace(pid int) error {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("failed to find process: %w", err)
+	}
+	return p.Kill()
+}
+
+// OpenWorkspace opens the workspace root in the system's file explorer.
+func (a *App) OpenWorkspace(root string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("explorer", root)
+	case "darwin":
+		cmd = exec.Command("open", root)
+	default: // linux
+		cmd = exec.Command("xdg-open", root)
+	}
+	return cmd.Start()
 }
 
 // Helper to extract a single file from a zip archive
@@ -576,4 +667,56 @@ func extractTarGz(tarPath, targetPath, targetFileName string) error {
 	}
 
 	return fmt.Errorf("could not find %s in archive", targetFileName)
+}
+
+func (a *App) startViewerPoller() {
+	ticker := time.NewTicker(5 * time.Second)
+	for range ticker.C {
+		if a.ctx == nil {
+			continue
+		}
+		// Trigger a GetWorkspaces call to sync from Master Hub
+		oldLen := len(a.workspaces)
+		ws := a.GetWorkspaces()
+		if len(ws) != oldLen {
+			// If length changed, emit event to frontend
+			wailsRuntime.EventsEmit(a.ctx, "workspace-updated", ws)
+		}
+	}
+}
+
+// startSweeper runs on the Master Hub to mark stale nodes as offline
+func (a *App) startSweeper() {
+	ticker := time.NewTicker(15 * time.Second)
+	for range ticker.C {
+		if a.ctx == nil {
+			continue
+		}
+		updated := false
+		for i, ws := range a.workspaces {
+			// If not seen for > 60s, mark as offline
+			if ws.State != "offline" && time.Since(ws.LastSeen) > 60*time.Second {
+				a.workspaces[i].State = "offline"
+				updated = true
+			}
+		}
+		if updated {
+			fmt.Println("Hub: Sweeper marked workspaces as offline")
+			wailsRuntime.EventsEmit(a.ctx, "workspace-updated", a.workspaces)
+		}
+
+		// Also update the hub.lock heartbeat so others know we're alive
+		a.updateHubLock()
+	}
+}
+
+func (a *App) updateHubLock() {
+	lockPath := mcp.GetHubLockPath()
+	lock := mcp.HubLock{
+		PID:       os.Getpid(),
+		Port:      9000,
+		StartTime: time.Now(), // Using StartTime as LastHeartbeat for simplicity
+	}
+	data, _ := json.MarshalIndent(lock, "", "  ")
+	_ = os.WriteFile(lockPath, data, 0644)
 }

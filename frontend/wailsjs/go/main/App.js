@@ -25,3 +25,11 @@ export function InstallScipIndexer(arg1) {
 export function OpenBinDir() {
   return window['go']['main']['App']['OpenBinDir']();
 }
+
+export function OpenWorkspace(arg1) {
+  return window['go']['main']['App']['OpenWorkspace'](arg1);
+}
+
+export function RestartWorkspace(arg1) {
+  return window['go']['main']['App']['RestartWorkspace'](arg1);
+}

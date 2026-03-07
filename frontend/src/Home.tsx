@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '@iconify/react';
-import { GetWorkspaces } from '../wailsjs/go/main/App';
+import { GetWorkspaces, RestartWorkspace, OpenWorkspace } from '../wailsjs/go/main/App';
 import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
 
 type Workspace = {
@@ -64,15 +64,41 @@ export default function Home() {
                                             <th>Client</th>
                                             <th>Status</th>
                                             <th>PID</th>
+                                            <th className="text-right">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {workspaces.map((ws, i) => (
-                                            <tr key={i} className="hover">
-                                                <td className="font-mono text-xs">{ws.root}</td>
+                                        {workspaces.map((ws) => (
+                                            <tr key={`${ws.root}-${ws.pid}`} className={`hover group ${ws.state === 'offline' ? 'opacity-50 grayscale' : ''}`}>
+                                                <td className="font-mono text-xs max-w-xs truncate" title={ws.root}>{ws.root}</td>
                                                 <td><span className="badge badge-ghost badge-sm">{ws.client}</span></td>
-                                                <td><span className={`badge badge-sm ${ws.state === 'active' ? 'badge-success' : 'badge-warning'}`}>{ws.state}</span></td>
+                                                <td>
+                                                    <span className={`badge badge-sm ${ws.state === 'active' ? 'badge-success' :
+                                                        ws.state === 'offline' ? 'badge-ghost' :
+                                                            'badge-warning'
+                                                        }`}>
+                                                        {ws.state}
+                                                    </span>
+                                                </td>
                                                 <td className="opacity-50 text-xs">{ws.pid}</td>
+                                                <td className="text-right whitespace-nowrap">
+                                                    <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <button
+                                                            onClick={() => OpenWorkspace(ws.root)}
+                                                            className="btn btn-ghost btn-xs btn-square tooltip tooltip-left"
+                                                            data-tip="Browse Folder"
+                                                        >
+                                                            <Icon icon="lucide:external-link" className="w-4 h-4" />
+                                                        </button>
+                                                        <button
+                                                            onClick={() => RestartWorkspace(ws.pid)}
+                                                            className="btn btn-ghost btn-xs btn-square tooltip tooltip-left text-warning"
+                                                            data-tip="Restart Node"
+                                                        >
+                                                            <Icon icon="lucide:refresh-cw" className="w-4 h-4" />
+                                                        </button>
+                                                    </div>
+                                                </td>
                                             </tr>
                                         ))}
                                     </tbody>

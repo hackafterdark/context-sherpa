@@ -415,8 +415,10 @@ func registerWithHub(workspaceRoot string, clientName string) {
 			if err == nil {
 				resp.Body.Close()
 				if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK {
-					verboseLog("Successfully registered workspace with Hub: %s", workspaceRoot)
-					return // Success!
+					verboseLog("Heartbeat: Successfully registered workspace with Hub: %s", workspaceRoot)
+					// Heartbeat interval: 30 seconds
+					time.Sleep(30 * time.Second)
+					continue
 				}
 				verboseLog("Hub returned error status: %d", resp.StatusCode)
 			} else {
