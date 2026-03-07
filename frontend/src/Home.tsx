@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '@iconify/react';
-import { GetWorkspaces, RestartWorkspace, OpenWorkspace } from '../wailsjs/go/main/App';
+import { GetWorkspaces, OpenWorkspace } from '../wailsjs/go/main/App';
 import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
 
 type Workspace = {
@@ -82,20 +82,13 @@ export default function Home() {
                                                 </td>
                                                 <td className="opacity-50 text-xs">{ws.pid}</td>
                                                 <td className="text-right whitespace-nowrap">
-                                                    <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <div className="flex justify-end gap-1">
                                                         <button
                                                             onClick={() => OpenWorkspace(ws.root)}
-                                                            className="btn btn-ghost btn-xs btn-square tooltip tooltip-left"
+                                                            className="btn btn-ghost btn-xs btn-square tooltip tooltip-left text-primary hover:bg-primary/10"
                                                             data-tip="Browse Folder"
                                                         >
                                                             <Icon icon="lucide:external-link" className="w-4 h-4" />
-                                                        </button>
-                                                        <button
-                                                            onClick={() => RestartWorkspace(ws.pid)}
-                                                            className="btn btn-ghost btn-xs btn-square tooltip tooltip-left text-warning"
-                                                            data-tip="Restart Node"
-                                                        >
-                                                            <Icon icon="lucide:refresh-cw" className="w-4 h-4" />
                                                         </button>
                                                     </div>
                                                 </td>

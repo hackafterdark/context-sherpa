@@ -29,7 +29,3 @@ export function OpenBinDir() {
 export function OpenWorkspace(arg1) {
   return window['go']['main']['App']['OpenWorkspace'](arg1);
 }
-
-export function RestartWorkspace(arg1) {
-  return window['go']['main']['App']['RestartWorkspace'](arg1);
-}

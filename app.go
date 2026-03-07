@@ -46,7 +46,7 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.workspaces = make([]Workspace, 0)
-	
+
 	// Ensure we have a clean start by checking lock liveness
 	if a.tryAcquireHubLock() {
 		a.isHub = true
@@ -64,7 +64,7 @@ func isProcessRunning(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	
+
 	// platform specific check
 	if runtime.GOOS == "windows" {
 		cmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/NH")
@@ -74,7 +74,7 @@ func isProcessRunning(pid int) bool {
 		}
 		return strings.Contains(string(out), fmt.Sprintf("%d", pid))
 	}
-	
+
 	p, err := os.FindProcess(pid)
 	if err != nil {
 		return false
@@ -86,7 +86,7 @@ func isProcessRunning(pid int) bool {
 
 func (a *App) tryAcquireHubLock() bool {
 	lockPath := mcp.GetHubLockPath()
-	
+
 	// 1. Try to read existing lock
 	if data, err := os.ReadFile(lockPath); err == nil {
 		var lock mcp.HubLock
@@ -107,10 +107,10 @@ func (a *App) tryAcquireHubLock() bool {
 		StartTime: time.Now(),
 	}
 	data, _ := json.MarshalIndent(lock, "", "  ")
-	
+
 	// Create directory if it doesn't exist (GetHubLockPath does this, but being safe)
 	_ = os.MkdirAll(filepath.Dir(lockPath), 0755)
-	
+
 	err := os.WriteFile(lockPath, data, 0644)
 	return err == nil
 }
@@ -162,7 +162,7 @@ func (a *App) startHubServer() {
 		}
 
 		fmt.Printf("Hub: Workspace registered/updated: %s (PID: %d, Client: %s)\n", ws.Root, ws.PID, ws.Client)
-		
+
 		// Emit event to frontend for real-time updates
 		wailsRuntime.EventsEmit(a.ctx, "workspace-updated", a.workspaces)
 
@@ -566,17 +566,7 @@ func (a *App) GetWorkspaces() []Workspace {
 	return a.workspaces
 }
 
-// RestartWorkspace attempts to restart a workspace node by killing its process.
-// Most MCP clients (VS Code, etc.) will automatically respawn it.
-func (a *App) RestartWorkspace(pid int) error {
-	p, err := os.FindProcess(pid)
-	if err != nil {
-		return fmt.Errorf("failed to find process: %w", err)
-	}
-	return p.Kill()
-}
-
-// OpenWorkspace opens the workspace root in the system's file explorer.
+// OpenWorkspace opens the workspace root directory in the default file browser.
 func (a *App) OpenWorkspace(root string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
@@ -584,10 +574,10 @@ func (a *App) OpenWorkspace(root string) error {
 		cmd = exec.Command("explorer", root)
 	case "darwin":
 		cmd = exec.Command("open", root)
-	default: // linux
+	default: // linux and others
 		cmd = exec.Command("xdg-open", root)
 	}
-	return cmd.Start()
+	return cmd.Run()
 }
 
 // Helper to extract a single file from a zip archive
@@ -620,12 +610,13 @@ func extractZip(zipPath, targetPath, targetFileName string) error {
 	}
 	return fmt.Errorf("file %s not found in zip archive", targetFileName)
 }
+
 // Helper to extract a single file from a tar.gz archive
 func extractTarGz(tarPath, targetPath, targetFileName string) error {
 	// Note: In a production environment, you'd use archive/tar and compress/gzip.
 	// For simplicity in this agentic task, I'll implement a basic extractor block here.
 	// However, many SCIP tools follow this format.
-	
+
 	// Implementation using standard libraries
 	f, err := os.Open(tarPath)
 	if err != nil {
@@ -693,15 +684,28 @@ func (a *App) startSweeper() {
 			continue
 		}
 		updated := false
-		for i, ws := range a.workspaces {
-			// If not seen for > 60s, mark as offline
+		newWorkspaces := make([]Workspace, 0)
+
+		for _, ws := range a.workspaces {
+			// Stage 2: Remove entirely after 2 minutes of silence
+			if time.Since(ws.LastSeen) > 120*time.Second {
+				fmt.Printf("Hub: Sweeper removing dead workspace: %s (PID: %d)\n", ws.Root, ws.PID)
+				updated = true
+				continue
+			}
+
+			// Stage 1: Mark as offline after 60s
 			if ws.State != "offline" && time.Since(ws.LastSeen) > 60*time.Second {
-				a.workspaces[i].State = "offline"
+				ws.State = "offline"
+				fmt.Printf("Hub: Sweeper marking workspace as offline: %s (PID: %d)\n", ws.Root, ws.PID)
 				updated = true
 			}
+
+			newWorkspaces = append(newWorkspaces, ws)
 		}
+
 		if updated {
-			fmt.Println("Hub: Sweeper marked workspaces as offline")
+			a.workspaces = newWorkspaces
 			wailsRuntime.EventsEmit(a.ctx, "workspace-updated", a.workspaces)
 		}
 
