@@ -14,6 +14,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
+
+	"github.com/hackafterdark/context-sherpa/pkg/mcp"
+	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // Workspace represents a detected workspace from a Node
@@ -28,6 +32,7 @@ type Workspace struct {
 type App struct {
 	ctx        context.Context
 	workspaces []Workspace
+	isHub      bool
 }
 
 // NewApp creates a new App application struct
@@ -40,8 +45,54 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.workspaces = make([]Workspace, 0)
 	
-	// Start the Hub's registration server on a background goroutine
-	go a.startHubServer()
+	// Try to become the Master Hub
+	if a.tryAcquireHubLock() {
+		a.isHub = true
+		fmt.Println("Hub: Successfully acquired hub.lock. Starting as Master Hub.")
+		// Start the Hub's registration server on a background goroutine
+		go a.startHubServer()
+	} else {
+		fmt.Println("Hub: Another instance is already Master Hub. Starting as Node viewer.")
+	}
+}
+
+func (a *App) tryAcquireHubLock() bool {
+	lockPath := mcp.GetHubLockPath()
+	
+	// 1. Try to read existing lock
+	if data, err := os.ReadFile(lockPath); err == nil {
+		var lock mcp.HubLock
+		if err := json.Unmarshal(data, &lock); err == nil {
+			// Check if process still exists
+			if _, err := os.FindProcess(lock.PID); err == nil {
+				// Hub is likely already running
+				return false
+			}
+		}
+	}
+
+	// 2. Try to take the lock
+	lock := mcp.HubLock{
+		PID:       os.Getpid(),
+		Port:      9000,
+		StartTime: time.Now(),
+	}
+	data, _ := json.MarshalIndent(lock, "", "  ")
+	
+	// Create directory if it doesn't exist (GetHubLockPath does this, but being safe)
+	_ = os.MkdirAll(filepath.Dir(lockPath), 0755)
+	
+	err := os.WriteFile(lockPath, data, 0644)
+	return err == nil
+}
+
+// Shutdown is called when the app closes
+func (a *App) Shutdown(ctx context.Context) {
+	if a.isHub {
+		lockPath := mcp.GetHubLockPath()
+		_ = os.Remove(lockPath)
+		fmt.Println("Hub: Released hub.lock")
+	}
 }
 
 func (a *App) startHubServer() {
@@ -73,8 +124,8 @@ func (a *App) startHubServer() {
 
 		fmt.Printf("Hub: Workspace registered/updated: %s (PID: %d, Client: %s)\n", ws.Root, ws.PID, ws.Client)
 		
-		// Emit event to frontend if needed (Wails)
-		// runtime.EventsEmit(a.ctx, "workspace-updated", a.workspaces)
+		// Emit event to frontend for real-time updates
+		wailsRuntime.EventsEmit(a.ctx, "workspace-updated", a.workspaces)
 
 		w.WriteHeader(http.StatusNoContent)
 	})

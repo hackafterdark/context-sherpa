@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '@iconify/react';
 import { GetWorkspaces } from '../wailsjs/go/main/App';
+import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
 
 type Workspace = {
     pid: number;
@@ -23,8 +24,18 @@ export default function Home() {
         };
 
         fetchWorkspaces();
-        const interval = setInterval(fetchWorkspaces, 3000);
-        return () => clearInterval(interval);
+
+        // Listen for real-time updates from the Hub
+        EventsOn('workspace-updated', (ws: Workspace[]) => {
+            setWorkspaces(ws);
+        });
+
+        const interval = setInterval(fetchWorkspaces, 10000); // Slower polling as backup
+
+        return () => {
+            clearInterval(interval);
+            EventsOff('workspace-updated');
+        };
     }, []);
 
     return (

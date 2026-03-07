@@ -21,6 +21,27 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// HubLock represents the metadata stored in the hub.lock file
+type HubLock struct {
+	PID       int       `json:"pid"`
+	Port      int       `json:"port"`
+	StartTime time.Time `json:"startTime"`
+}
+
+// GetHubLockPath returns the platform-specific path to the hub.lock file
+func GetHubLockPath() string {
+	var baseDir string
+	if runtime.GOOS == "windows" {
+		baseDir = os.Getenv("LOCALAPPDATA")
+	} else {
+		home, _ := os.UserHomeDir()
+		baseDir = filepath.Join(home, ".local", "share") // Standard for Linux/macOS
+	}
+	dir := filepath.Join(baseDir, "context-sherpa")
+	_ = os.MkdirAll(dir, 0755)
+	return filepath.Join(dir, "hub.lock")
+}
+
 // SgConfig represents the structure of sgconfig.yml
 type SgConfig struct {
 	RuleDirs []string `yaml:"ruleDirs"`
@@ -79,7 +100,7 @@ func getCommunityRulesRepoURL() string {
 }
 
 // Start initializes and starts the MCP server.
-func Start(workspaceRoot string, verbose bool, logFilePath string, astGrepPath string) {
+func Start(workspaceRoot string, verbose bool, logFilePath string, astGrepPath string, clientName string) {
 	if workspaceRoot == "" {
 		// Attempt to auto-discover workspace root from executable location
 		if exePath, err := os.Executable(); err == nil {
@@ -100,6 +121,11 @@ func Start(workspaceRoot string, verbose bool, logFilePath string, astGrepPath s
 	// Initialize logging system with the resolved workspace root
 	initLogging(verbose, logFilePath, workspaceRoot)
 
+	// Detect client if not provided
+	if clientName == "" {
+		clientName = detectClientName()
+	}
+
 	// Create a new MCP server
 	s := server.NewMCPServer(
 		"context-sherpa 🚀",
@@ -117,7 +143,7 @@ func Start(workspaceRoot string, verbose bool, logFilePath string, astGrepPath s
 		}
 
 		// 2. Register with Hub (Master Hub Ping)
-		go registerWithHub(resolvedRoot)
+		go registerWithHub(resolvedRoot, clientName)
 	} else {
 		customLogger.Printf("Warning: Could not resolve workspace root on startup: %v\n", err)
 	}
@@ -350,41 +376,58 @@ func initLocalState(workspaceRoot string) error {
 }
 
 // registerWithHub pings the Master Hub to register this workspace
-func registerWithHub(workspaceRoot string) {
-	// Payload: { "pid": os.Getpid(), "root": "/path/to/workspace", "client": "goose", "state": "initializing" }
-	payload := map[string]interface{}{
-		"pid":    os.Getpid(),
-		"root":   workspaceRoot,
-		"client": "unknown", // Could improve this by detecting the parent process
-		"state":  "active",
-	}
+func registerWithHub(workspaceRoot string, clientName string) {
+	// 1. Discover the Hub via lock file
+	lockPath := GetHubLockPath()
+	var hubPort int = 9000 // Default fallback
 
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		verboseLog("Failed to marshal registration payload: %v", err)
-		return
-	}
+	// Retry loop
+	for {
+		data, err := os.ReadFile(lockPath)
+		if err == nil {
+			var lock HubLock
+			if err := json.Unmarshal(data, &lock); err == nil {
+				// Check if process is still alive (optional but recommended)
+				if _, err := os.FindProcess(lock.PID); err == nil {
+					// On Windows, FindProcess always succeeds, so we might need a more robust check later
+					// But for now, trust the lock file
+					hubPort = lock.Port
+				}
+			}
+		}
 
-	// Ping the Hub on port 9000
-	req, err := http.NewRequest(http.MethodPut, "http://localhost:9000/workspaces", strings.NewReader(string(jsonData)))
-	if err != nil {
-		verboseLog("Failed to create registration request: %v", err)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
+		hubURL := fmt.Sprintf("http://127.0.0.1:%d/workspaces", hubPort)
+		verboseLog("Attempting to register workspace with Hub at %s...", hubURL)
 
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		verboseLog("Hub registration ping failed (Hub might not be running): %v", err)
-		return
-	}
-	defer resp.Body.Close()
+		payload := map[string]interface{}{
+			"pid":    os.Getpid(),
+			"root":   workspaceRoot,
+			"client": clientName,
+			"state":  "active",
+		}
 
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		verboseLog("Hub registration returned unexpected status: %d", resp.StatusCode)
-	} else {
-		verboseLog("Successfully registered workspace with Hub: %s", workspaceRoot)
+		jsonData, _ := json.Marshal(payload)
+		req, err := http.NewRequest(http.MethodPut, hubURL, strings.NewReader(string(jsonData)))
+		if err == nil {
+			req.Header.Set("Content-Type", "application/json")
+			client := &http.Client{Timeout: 2 * time.Second}
+			resp, err := client.Do(req)
+			if err == nil {
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK {
+					verboseLog("Successfully registered workspace with Hub: %s", workspaceRoot)
+					return // Success!
+				}
+				verboseLog("Hub returned error status: %d", resp.StatusCode)
+			} else {
+				verboseLog("Hub registration ping failed: %v", err)
+			}
+		} else {
+			verboseLog("Failed to create registration request: %v", err)
+		}
+
+		verboseLog("Retrying registration in 5 seconds...")
+		time.Sleep(5 * time.Second)
 	}
 }
 
@@ -476,6 +519,53 @@ func getSymbolMapHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
 
 	jsonRes, _ := json.MarshalIndent(result, "", "  ")
 	return mcp.NewToolResultText(string(jsonRes)), nil
+}
+
+// detectClientName attempts to identify the MCP client
+func detectClientName() string {
+	// 1. Check for explicit environment variable
+	if client := os.Getenv("CONTEXT_SHERPA_CLIENT"); client != "" {
+		return client
+	}
+
+	// 2. Check for IDE-specific variables
+	if os.Getenv("VSCODE_PID") != "" || os.Getenv("VSCODE_GIT_IPC_HANDLE") != "" {
+		return "vscode"
+	}
+	if os.Getenv("INTELLIJ_PID") != "" {
+		return "intellij"
+	}
+	if os.Getenv("TERM_PROGRAM") == "vscode" {
+		return "vscode"
+	}
+
+	// 3. Fallback to parent process name
+	ppid := os.Getppid()
+	if ppid > 0 {
+		var cmd *exec.Cmd
+		if runtime.GOOS == "windows" {
+			// On Windows, tasklist or wmic can be used. tasklist is more common.
+			cmd = exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", ppid), "/FO", "CSV", "/NH")
+		} else {
+			cmd = exec.Command("ps", "-p", fmt.Sprintf("%d", ppid), "-o", "comm=")
+		}
+
+		if output, err := cmd.Output(); err == nil {
+			name := strings.TrimSpace(string(output))
+			if runtime.GOOS == "windows" {
+				// CSV format: "exe name","pid","session name","session#","mem"
+				parts := strings.Split(name, ",")
+				if len(parts) > 0 {
+					name = strings.Trim(parts[0], "\"")
+				}
+			}
+			if name != "" {
+				return name
+			}
+		}
+	}
+
+	return "unknown"
 }
 
 func listSymbolsInFileHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

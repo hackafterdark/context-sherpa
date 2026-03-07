@@ -27,6 +27,7 @@ func main() {
 	verbose := flag.Bool("verbose", false, "Enable verbose logging for debugging")
 	logFile := flag.String("logFile", "", "Path to file where logs will be appended (optional)")
 	astGrepPath := flag.String("astGrepPath", "", "Explicit path to ast-grep binary")
+	clientName := flag.String("client", "", "Name of the MCP client (optional)")
 	
 	// Ignore errors from flag parsing as wails dev uses its own flags sometimes
 	// We parse os.Args manually or use flag.CommandLine.Parse
@@ -52,7 +53,7 @@ func main() {
 			finalWorkspaceRoot = *projectRoot
 		}
 		
-		mcp.Start(finalWorkspaceRoot, *verbose, *logFile, *astGrepPath)
+		mcp.Start(finalWorkspaceRoot, *verbose, *logFile, *astGrepPath, *clientName)
 		return
 	}
 
@@ -72,6 +73,7 @@ func main() {
 		},
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
 		OnStartup:        app.startup,
+		OnShutdown:       app.Shutdown,
 		Bind: []interface{}{
 			app,
 		},
