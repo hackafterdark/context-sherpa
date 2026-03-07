@@ -6,6 +6,10 @@ export function GetAstGrepStatus() {
   return window['go']['main']['App']['GetAstGrepStatus']();
 }
 
+export function GetPreferences() {
+  return window['go']['main']['App']['GetPreferences']();
+}
+
 export function GetScipIndexerStatus(arg1) {
   return window['go']['main']['App']['GetScipIndexerStatus'](arg1);
 }
@@ -28,4 +32,8 @@ export function OpenBinDir() {
 
 export function OpenWorkspace(arg1) {
   return window['go']['main']['App']['OpenWorkspace'](arg1);
+}
+
+export function SavePreferences(arg1) {
+  return window['go']['main']['App']['SavePreferences'](arg1);
 }

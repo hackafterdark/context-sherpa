@@ -4,6 +4,8 @@ import {main} from '../models';
 
 export function GetAstGrepStatus():Promise<Record<string, any>>;
 
+export function GetPreferences():Promise<main.UserPreferences>;
+
 export function GetScipIndexerStatus(arg1:string):Promise<Record<string, any>>;
 
 export function GetWorkspaces():Promise<Array<main.Workspace>>;
@@ -15,3 +17,5 @@ export function InstallScipIndexer(arg1:string):Promise<string>;
 export function OpenBinDir():Promise<void>;
 
 export function OpenWorkspace(arg1:string):Promise<void>;
+
+export function SavePreferences(arg1:main.UserPreferences):Promise<void>;

@@ -30,6 +30,11 @@ type Workspace struct {
 	LastSeen time.Time `json:"lastSeen"`
 }
 
+// UserPreferences represents persistent user settings
+type UserPreferences struct {
+	Theme string `json:"theme"`
+}
+
 // App struct
 type App struct {
 	ctx        context.Context
@@ -257,6 +262,72 @@ func getSherpaBinDir() (string, error) {
 		binDir = filepath.Join(homeDir, ".context-sherpa", "bin")
 	}
 	return binDir, nil
+}
+
+// getSherpaConfigDir returns the platform-specific path to the global Context-Sherpa config directory
+func getSherpaConfigDir() (string, error) {
+	var baseDir string
+	if runtime.GOOS == "windows" {
+		baseDir = os.Getenv("LOCALAPPDATA")
+		if baseDir == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return "", err
+			}
+			baseDir = home
+		}
+	} else {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		baseDir = home
+	}
+
+	dir := filepath.Join(baseDir, "context-sherpa")
+	if runtime.GOOS != "windows" {
+		dir = filepath.Join(baseDir, ".context-sherpa")
+	}
+
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// GetPreferences returns the stored user preferences
+func (a *App) GetPreferences() UserPreferences {
+	prefs := UserPreferences{
+		Theme: "dracula", // Default
+	}
+
+	configDir, err := getSherpaConfigDir()
+	if err != nil {
+		return prefs
+	}
+
+	prefsPath := filepath.Join(configDir, "preferences.json")
+	if data, err := os.ReadFile(prefsPath); err == nil {
+		json.Unmarshal(data, &prefs)
+	}
+
+	return prefs
+}
+
+// SavePreferences saves user preferences to the global config directory
+func (a *App) SavePreferences(prefs UserPreferences) error {
+	configDir, err := getSherpaConfigDir()
+	if err != nil {
+		return err
+	}
+
+	prefsPath := filepath.Join(configDir, "preferences.json")
+	data, err := json.MarshalIndent(prefs, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(prefsPath, data, 0644)
 }
 
 // OpenBinDir opens the Context-Sherpa bin directory in the OS file explorer
