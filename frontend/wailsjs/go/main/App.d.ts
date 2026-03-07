@@ -23,6 +23,8 @@ export function ListLocalModels():Promise<Array<inference.ModelInfo>>;
 
 export function OpenBinDir():Promise<void>;
 
+export function OpenConfigDir():Promise<void>;
+
 export function OpenWorkspace(arg1:string):Promise<void>;
 
 export function RunInference(arg1:string,arg2:string):Promise<string>;

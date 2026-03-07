@@ -42,6 +42,10 @@ export function OpenBinDir() {
   return window['go']['main']['App']['OpenBinDir']();
 }
 
+export function OpenConfigDir() {
+  return window['go']['main']['App']['OpenConfigDir']();
+}
+
 export function OpenWorkspace(arg1) {
   return window['go']['main']['App']['OpenWorkspace'](arg1);
 }

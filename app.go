@@ -291,8 +291,10 @@ func (a *App) GetAstGrepStatus() map[string]interface{} {
 		result["path"] = targetPath
 
 		cmd := exec.Command(targetPath, "--version")
-		if output, err := cmd.Output(); err == nil {
-			result["version"] = strings.TrimSpace(string(output))
+		if output, err := cmd.CombinedOutput(); err == nil {
+			// Take the first line and trim
+			v := strings.Split(strings.TrimSpace(string(output)), "\n")[0]
+			result["version"] = v
 		}
 	} else {
 		// Fallback to checking system PATH
@@ -301,8 +303,9 @@ func (a *App) GetAstGrepStatus() map[string]interface{} {
 			result["path"] = path
 
 			cmd := exec.Command(path, "--version")
-			if output, err := cmd.Output(); err == nil {
-				result["version"] = strings.TrimSpace(string(output))
+			if output, err := cmd.CombinedOutput(); err == nil {
+				v := strings.Split(strings.TrimSpace(string(output)), "\n")[0]
+				result["version"] = v
 			}
 		}
 	}
@@ -400,6 +403,31 @@ func (a *App) SavePreferences(prefs UserPreferences) error {
 	return os.WriteFile(prefsPath, data, 0644)
 }
 
+// OpenConfigDir opens the Context-Sherpa root config directory in the OS file explorer
+func (a *App) OpenConfigDir() error {
+	path, err := getSherpaConfigDir()
+	if err != nil {
+		return err
+	}
+
+	// Ensure it exists
+	if err := os.MkdirAll(path, 0755); err != nil {
+		return err
+	}
+
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("explorer", path)
+	case "darwin":
+		cmd = exec.Command("open", path)
+	default: // linux
+		cmd = exec.Command("xdg-open", path)
+	}
+
+	return cmd.Start()
+}
+
 // OpenBinDir opens the Context-Sherpa bin directory in the OS file explorer
 func (a *App) OpenBinDir() error {
 	path, err := getSherpaBinDir()
@@ -462,8 +490,10 @@ func (a *App) GetScipIndexerStatus(language string) map[string]interface{} {
 	if result["installed"].(bool) {
 		// Try to get version
 		cmd := exec.Command(result["path"].(string), "--version")
-		if output, err := cmd.Output(); err == nil {
-			result["version"] = strings.TrimSpace(string(output))
+		if output, err := cmd.CombinedOutput(); err == nil {
+			// Use the first line and trim
+			v := strings.Split(strings.TrimSpace(string(output)), "\n")[0]
+			result["version"] = v
 		}
 	} else {
 		// Fallback to system PATH
@@ -471,8 +501,9 @@ func (a *App) GetScipIndexerStatus(language string) map[string]interface{} {
 			result["installed"] = true
 			result["path"] = path
 			cmd := exec.Command(path, "--version")
-			if output, err := cmd.Output(); err == nil {
-				result["version"] = strings.TrimSpace(string(output))
+			if output, err := cmd.CombinedOutput(); err == nil {
+				v := strings.Split(strings.TrimSpace(string(output)), "\n")[0]
+				result["version"] = v
 			}
 		}
 	}

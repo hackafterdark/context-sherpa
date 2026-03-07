@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { InstallAstGrep, GetAstGrepStatus, InstallScipIndexer, GetScipIndexerStatus, OpenBinDir, ListLocalModels, DownloadModel, GetDownloadProgress } from '../wailsjs/go/main/App';
+import { InstallAstGrep, GetAstGrepStatus, InstallScipIndexer, GetScipIndexerStatus, OpenConfigDir, ListLocalModels, DownloadModel, GetDownloadProgress } from '../wailsjs/go/main/App';
 import { Icon } from '@iconify/react';
 
 type SettingsProps = {
@@ -25,7 +25,7 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
     const [downloadingModels, setDownloadingModels] = useState<Record<string, number>>({});
     const [curatedModels] = useState([
         { id: 'smollm2-135m', name: 'SmolLM2-135M (GGUF)', type: 'Tiny', size: '145MB', url: 'https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q8_0.gguf' },
-        { id: 'qwen2.5-coder-0.5b', name: 'Qwen2.5-Coder-0.5B', type: 'Standard', size: '380MB', url: 'https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf' },
+        { id: 'qwen2.5-coder-0.5b', name: 'Qwen2.5-Coder-0.5B (GGUF)', type: 'Standard', size: '380MB', url: 'https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf' },
     ]);
 
     const loadStatus = async () => {
@@ -204,17 +204,16 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                         </h2>
                         <button
                             className="btn btn-ghost btn-sm gap-2 text-base-content/60 hover:text-base-content"
-                            onClick={() => OpenBinDir()}
-                            title="Open the managed binaries directory in file explorer"
+                            onClick={() => OpenConfigDir()}
+                            title="Open the toolchain root directory in file explorer"
                         >
                             <Icon icon="lucide:folder-open" />
-                            Browse Binaries
+                            Browse Toolchain
                         </button>
                     </div>
 
-                    <p className="text-base-content/70 text-sm -mt-4">
-                        Context-Sherpa manages a dedicated toolchain in your `~/.context-sherpa/bin` directory to enable advanced code intelligence features.
-                    </p>
+                    Context-Sherpa manages a dedicated toolchain and workspace data in your `~/.context-sherpa` directory.
+
 
                     {/* Structural Analysis (ast-grep) */}
                     <div className="flex flex-col gap-3">
