@@ -1,0 +1,45 @@
+#version 450
+
+// Fused Add + RMSNorm: eliminates barrier between the two ops.
+// sum_data[i] = a_data[i] + b_data[i]      (residual kept for later use)
+// norm_data[i] = w_data[i] * sum_data[i] / rms(sum)
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) buffer OutNorm { float norm_data[]; };
+layout(set = 0, binding = 1) buffer OutSum { float sum_data[]; };
+layout(set = 0, binding = 2) readonly buffer A { float a_data[]; };
+layout(set = 0, binding = 3) readonly buffer B { float b_data[]; };
+layout(set = 0, binding = 4) readonly buffer W { float w_data[]; };
+
+layout(push_constant) uniform Params {
+    int n;
+    float eps;
+};
+
+shared float partial_sums[256];
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+
+    float ss = 0.0;
+    for (int i = int(tid); i < n; i += 256) {
+        float v = a_data[i] + b_data[i];
+        sum_data[i] = v;
+        ss += v * v;
+    }
+
+    partial_sums[tid] = ss;
+    barrier();
+
+    for (uint s = 128u; s > 0u; s >>= 1u) {
+        if (tid < s) partial_sums[tid] += partial_sums[tid + s];
+        barrier();
+    }
+
+    float rms = 1.0 / sqrt(partial_sums[0] / float(n) + eps);
+
+    for (int i = int(tid); i < n; i += 256) {
+        norm_data[i] = w_data[i] * sum_data[i] * rms;
+    }
+}

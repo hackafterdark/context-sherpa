@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hackafterdark/context-sherpa/pkg/inference"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	scip "github.com/sourcegraph/scip/bindings/go/scip"
@@ -132,6 +133,24 @@ func Start(workspaceRoot string, verbose bool, logFilePath string, astGrepPath s
 		"1.0.0",
 		server.WithToolCapabilities(false),
 	)
+
+	// Little Brain Tools
+	s.AddTool(mcp.NewTool("list_local_models",
+		mcp.WithDescription("List available local SLMs and their status."),
+	), listLocalModelsHandler)
+
+	s.AddTool(mcp.NewTool("switch_local_model",
+		mcp.WithDescription("Changes the active model in the Hub."),
+		mcp.WithString("modelId", mcp.Required(), mcp.Description("ID of the model to activate.")),
+	), switchLocalModelHandler)
+
+	s.AddTool(mcp.NewTool("ask_little_brain",
+		mcp.WithDescription("Sends a prompt to the local SLM for private, low-latency semantic tasks."),
+		mcp.WithString("prompt", mcp.Required(), mcp.Description("The question or instruction for the SLM.")),
+		mcp.WithString("modelId", mcp.Description("Optional model ID to use. Defaults to currently active.")),
+		mcp.WithNumber("max_tokens", mcp.Description("Optional maximum number of tokens to generate. Defaults to 512.")),
+		mcp.WithNumber("temperature", mcp.Description("Optional sampling temperature (0.0 to 1.0). Defaults to 0.1.")),
+	), askLittleBrainHandler)
 
 	// --- Workspace Initialization ---
 	// Attempt to resolve workspace root early for local state and registration
@@ -1418,6 +1437,31 @@ Please ensure ast-grep is available in one of these ways:
    context-sherpa --astGrepPath="/path/to/ast-grep"`)
 }
 
+// getSherpaModelsDir returns the platform-specific path to the models directory
+func getSherpaModelsDir() (string, error) {
+	var homeDir string
+	var err error
+	if runtime.GOOS == "windows" {
+		homeDir = os.Getenv("LOCALAPPDATA")
+		if homeDir == "" {
+			homeDir, err = os.UserHomeDir()
+		}
+	} else {
+		homeDir, err = os.UserHomeDir()
+	}
+
+	if err != nil {
+		return "", err
+	}
+
+	modelsDir := filepath.Join(homeDir, "context-sherpa", "models")
+	if runtime.GOOS != "windows" {
+		modelsDir = filepath.Join(homeDir, ".context-sherpa", "models")
+	}
+	_ = os.MkdirAll(modelsDir, 0755)
+	return modelsDir, nil
+}
+
 // getRuleDir determines the directory where rules should be stored by searching
 // for sgconfig.yml in the current and parent directories.
 func getRuleDir() (string, error) {
@@ -1922,3 +1966,82 @@ func validateAstGrepRule(yamlContent string) error {
 
 	return nil
 }
+
+func listLocalModelsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	modelsDir, err := getSherpaModelsDir()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error finding models directory: %v", err)), nil
+	}
+
+	entries, err := os.ReadDir(modelsDir)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error reading models directory: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Available Local Models (GGUF):\n")
+	found := false
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			sb.WriteString(fmt.Sprintf("- %s\n", entry.Name()))
+			found = true
+		}
+	}
+
+	if !found {
+		sb.WriteString("(No models found. Please download them from the Dashboard.)\n")
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func switchLocalModelHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// In one-shot mode, we don't 'switch' models in the backend. 
+	// The client just provides the modelId in the inference request.
+	modelID, _ := request.RequireString("modelId")
+	return mcp.NewToolResultText(fmt.Sprintf("Model selection for one-shot tasks updated: %s. Use this ID in your next ask_little_brain call.", modelID)), nil
+}
+
+func askLittleBrainHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	prompt, err := request.RequireString("prompt")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("prompt is required: %v", err)), nil
+	}
+
+	modelID := ""
+	maxTokens := 0
+	temperature := float32(0)
+
+	if args, ok := request.Params.Arguments.(map[string]interface{}); ok {
+		if m, ok := args["modelId"].(string); ok {
+			modelID = m
+		}
+		if mt, ok := args["max_tokens"].(float64); ok {
+			maxTokens = int(mt)
+		}
+		if temp, ok := args["temperature"].(float64); ok {
+			temperature = float32(temp)
+		}
+	}
+
+	modelsDir, err := getSherpaModelsDir()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error finding models directory: %v", err)), nil
+	}
+
+	svc := inference.NewInferenceService(modelsDir)
+	res, err := svc.Execute(ctx, inference.InferenceRequest{
+		ModelID:     modelID,
+		Prompt:      prompt,
+		MaxTokens:   maxTokens,
+		Temperature: temperature,
+	})
+
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Inference failed: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(res.Text), nil
+}
+
+

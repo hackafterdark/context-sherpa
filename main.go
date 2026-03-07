@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"flag"
 	"log"
 	"os"
+	"path/filepath"
 
+	"github.com/hackafterdark/context-sherpa/pkg/inference"
 	"github.com/hackafterdark/context-sherpa/pkg/mcp"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -28,6 +31,11 @@ func main() {
 	logFile := flag.String("logFile", "", "Path to file where logs will be appended (optional)")
 	astGrepPath := flag.String("astGrepPath", "", "Explicit path to ast-grep binary")
 	clientName := flag.String("client", "", "Name of the MCP client (optional)")
+	
+	// Little Brain CLI Flags
+	downloadModel := flag.String("download-model", "", "Download a model from the specified URL")
+	listModels := flag.Bool("list-models", false, "List all locally downloaded models")
+	modelID := flag.String("model-id", "", "ID for the model being downloaded (default: filename)")
 	
 	// Ignore errors from flag parsing as wails dev uses its own flags sometimes
 	// We parse os.Args manually or use flag.CommandLine.Parse
@@ -53,6 +61,40 @@ func main() {
 			finalWorkspaceRoot = *projectRoot
 		}
 		
+		// 2.5 Handle Little Brain CLI commands if in MCP mode (Headless)
+		if *listModels || *downloadModel != "" {
+			lockPath := mcp.GetHubLockPath() // Using this to find base dir
+			// mcp.GetHubLockPath returns the path to hub.lock, we want the directory
+			baseDir := filepath.Dir(lockPath)
+			modelsDir := filepath.Join(baseDir, "models")
+
+			if *listModels {
+				files, _ := os.ReadDir(modelsDir)
+				log.Printf("Locally downloaded models in %s:\n", modelsDir)
+				for _, f := range files {
+					if !f.IsDir() {
+						log.Printf("- %s\n", f.Name())
+					}
+				}
+				return
+			}
+
+			if *downloadModel != "" {
+				id := *modelID
+				if id == "" {
+					id = filepath.Base(*downloadModel)
+				}
+				log.Printf("Downloading model %s from %s...\n", id, *downloadModel)
+				dl := inference.NewDownloader(modelsDir)
+				err := dl.DownloadModel(context.Background(), id, *downloadModel)
+				if err != nil {
+					log.Fatalf("Download failed: %v\n", err)
+				}
+				log.Println("Download complete.")
+				return
+			}
+		}
+
 		mcp.Start(finalWorkspaceRoot, *verbose, *logFile, *astGrepPath, *clientName)
 		return
 	}

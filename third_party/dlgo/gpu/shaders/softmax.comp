@@ -1,0 +1,53 @@
+#version 450
+
+// In-place softmax: buf[i] = exp(buf[i] - max) / sum(exp)
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) buffer Data { float data[]; };
+
+layout(push_constant) uniform Params {
+    int n;
+};
+
+shared float sdata[256];
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+
+    // Find max
+    float mx = -1.0e30;
+    for (int i = int(tid); i < n; i += 256) {
+        mx = max(mx, data[i]);
+    }
+    sdata[tid] = mx;
+    barrier();
+    for (uint s = 128; s > 0; s >>= 1) {
+        if (tid < s) sdata[tid] = max(sdata[tid], sdata[tid + s]);
+        barrier();
+    }
+    float max_val = sdata[0];
+    barrier();
+
+    // Compute exp and sum
+    float sum = 0.0;
+    for (int i = int(tid); i < n; i += 256) {
+        float e = exp(data[i] - max_val);
+        data[i] = e;
+        sum += e;
+    }
+    sdata[tid] = sum;
+    barrier();
+    for (uint s = 128; s > 0; s >>= 1) {
+        if (tid < s) sdata[tid] += sdata[tid + s];
+        barrier();
+    }
+    float total = sdata[0];
+    barrier();
+
+    // Normalize
+    float inv_sum = 1.0 / total;
+    for (int i = int(tid); i < n; i += 256) {
+        data[i] *= inv_sum;
+    }
+}

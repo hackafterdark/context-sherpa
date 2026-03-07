@@ -1,0 +1,44 @@
+#version 450
+
+// RMSNorm: out[i] = (x[i] / rms) * weight[i]
+// where rms = sqrt(mean(x^2) + eps)
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) buffer Out { float out_data[]; };
+layout(set = 0, binding = 1) buffer X { float x_data[]; };
+layout(set = 0, binding = 2) buffer Weight { float w_data[]; };
+
+layout(push_constant) uniform Params {
+    int n;
+    float eps;
+};
+
+shared float sdata[256];
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+
+    // Compute sum of squares
+    float ss = 0.0;
+    for (int i = int(tid); i < n; i += 256) {
+        ss += x_data[i] * x_data[i];
+    }
+    sdata[tid] = ss;
+    barrier();
+
+    for (uint s = 128; s > 0; s >>= 1) {
+        if (tid < s) sdata[tid] += sdata[tid + s];
+        barrier();
+    }
+
+    float rms = sqrt(sdata[0] / float(n) + eps);
+    float inv_rms = 1.0 / rms;
+
+    barrier();
+
+    // Apply normalization
+    for (int i = int(tid); i < n; i += 256) {
+        out_data[i] = x_data[i] * inv_rms * w_data[i];
+    }
+}

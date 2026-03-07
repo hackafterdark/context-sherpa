@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hackafterdark/context-sherpa/pkg/inference"
 	"github.com/hackafterdark/context-sherpa/pkg/mcp"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -40,6 +41,8 @@ type App struct {
 	ctx        context.Context
 	workspaces []Workspace
 	isHub      bool
+	downloader *inference.Downloader
+	inference  *inference.InferenceService
 }
 
 // NewApp creates a new App application struct
@@ -56,6 +59,13 @@ func (a *App) startup(ctx context.Context) {
 	if a.tryAcquireHubLock() {
 		a.isHub = true
 		fmt.Println("Hub: Successfully acquired hub.lock. Starting as Master Hub.")
+		
+		// Initialize Inference services
+		configDir, _ := getSherpaConfigDir()
+		modelsDir := filepath.Join(configDir, "models")
+		a.downloader = inference.NewDownloader(modelsDir)
+		a.inference = inference.NewInferenceService(modelsDir)
+
 		// Start the Hub's registration server on a background goroutine
 		go a.startHubServer()
 		go a.startSweeper()
@@ -170,6 +180,66 @@ func (a *App) startHubServer() {
 
 		// Emit event to frontend for real-time updates
 		wailsRuntime.EventsEmit(a.ctx, "workspace-updated", a.workspaces)
+
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	http.HandleFunc("/api/v1/inference", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req inference.InferenceRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid payload", http.StatusBadRequest)
+			return
+		}
+		res, err := a.inference.Execute(r.Context(), req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(res)
+	})
+
+	http.HandleFunc("/api/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		models, err := a.ListLocalModels()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(models)
+	})
+
+	http.HandleFunc("/api/v1/models/load", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			ModelID string `json:"modelId"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid payload", http.StatusBadRequest)
+			return
+		}
+		
+		// Trigger model load by calling Execute with empty prompt (or a dedicated Load method if we add it)
+		// For now, Execute handles loading if modelID is provided.
+		_, err := a.inference.Execute(r.Context(), inference.InferenceRequest{
+			ModelID: req.ModelID,
+			Prompt:  "", // Empty prompt just triggers load/switch
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -410,6 +480,8 @@ func (a *App) GetScipIndexerStatus(language string) map[string]interface{} {
 	return result
 }
 
+
+
 // InstallScipIndexer downloads and installs a SCIP indexer for a specific language
 func (a *App) InstallScipIndexer(language string) (string, error) {
 	binDir, err := getSherpaBinDir()
@@ -604,6 +676,50 @@ func (a *App) InstallAstGrep() (string, error) {
 	return fmt.Sprintf("Latest ast-grep installed successfully to %s", targetPath), nil
 }
 
+
+
+// extractAllZip extracts every file in a zip archive to the target directory
+func extractAllZip(zipPath, targetDir string) error {
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	for _, f := range r.File {
+		fpath := filepath.Join(targetDir, f.Name)
+
+		if f.FileInfo().IsDir() {
+			os.MkdirAll(fpath, os.ModePerm)
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(fpath), os.ModePerm); err != nil {
+			return err
+		}
+
+		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		if err != nil {
+			return err
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			outFile.Close()
+			return err
+		}
+
+		_, err = io.Copy(outFile, rc)
+		outFile.Close()
+		rc.Close()
+
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // GetWorkspaces returns the list of registered workspaces
 func (a *App) GetWorkspaces() []Workspace {
 	if a.isHub {
@@ -795,3 +911,117 @@ func (a *App) updateHubLock() {
 	data, _ := json.MarshalIndent(lock, "", "  ")
 	_ = os.WriteFile(lockPath, data, 0644)
 }
+
+// ListLocalModels returns a list of models in the local storage
+func (a *App) ListLocalModels() ([]inference.ModelInfo, error) {
+	configDir, err := getSherpaConfigDir()
+	if err != nil {
+		return nil, err
+	}
+	modelsDir := filepath.Join(configDir, "models")
+	
+	files, err := os.ReadDir(modelsDir)
+	if err != nil {
+		return nil, nil // Return empty list if dir doesn't exist
+	}
+
+	var models []inference.ModelInfo
+	for _, f := range files {
+		if !f.IsDir() && f.Name() != "runner.wasm" && f.Name() != "default.gguf" && !filepath.HasPrefix(f.Name(), ".") {
+			info, _ := f.Info()
+			models = append(models, inference.ModelInfo{
+				ID:         f.Name(),
+				Name:       f.Name(),
+				Size:       info.Size(),
+				Downloaded: true,
+				Path:       filepath.Join(modelsDir, f.Name()),
+			})
+		}
+	}
+	return models, nil
+}
+
+// DownloadModel starts a background download of a model
+func (a *App) DownloadModel(modelID string, url string) error {
+	if !a.isHub {
+		return fmt.Errorf("only the Master Hub can download models")
+	}
+	go func() {
+		err := a.downloader.DownloadModel(context.Background(), modelID, url)
+		if err != nil {
+			fmt.Printf("Hub: Download failed for %s: %v\n", modelID, err)
+			wailsRuntime.EventsEmit(a.ctx, "model-download-failed", map[string]string{
+				"modelId": modelID,
+				"error":   err.Error(),
+			})
+		} else {
+			fmt.Printf("Hub: Download complete for %s\n", modelID)
+			wailsRuntime.EventsEmit(a.ctx, "model-download-complete", modelID)
+		}
+	}()
+	return nil
+}
+
+// GetDownloadProgress returns the progress of a model download
+func (a *App) GetDownloadProgress(modelID string) float64 {
+	if a.downloader == nil {
+		return 0
+	}
+	p, exists := a.downloader.GetProgress(modelID)
+	if !exists {
+		// Check if it already exists on disk
+		configDir, _ := getSherpaConfigDir()
+		path := filepath.Join(configDir, "models", modelID)
+		if _, err := os.Stat(path); err == nil {
+			return 1.0
+		}
+		return 0
+	}
+	return p
+}
+
+// RunInference executes a prompt using a local model
+func (a *App) RunInference(modelID string, prompt string) (string, error) {
+	req := inference.InferenceRequest{
+		ModelID: modelID,
+		Prompt:  prompt,
+	}
+
+	if !a.isHub {
+		// Forward to the Master Hub
+		lockPath := mcp.GetHubLockPath()
+		data, err := os.ReadFile(lockPath)
+		if err != nil {
+			return "", fmt.Errorf("could not find Master Hub: %w", err)
+		}
+		var lock mcp.HubLock
+		if err := json.Unmarshal(data, &lock); err != nil {
+			return "", fmt.Errorf("invalid hub.lock: %w", err)
+		}
+
+		url := fmt.Sprintf("http://127.0.0.1:%d/api/v1/inference", lock.Port)
+		jsonData, _ := json.Marshal(req)
+		resp, err := http.Post(url, "application/json", strings.NewReader(string(jsonData)))
+		if err != nil {
+			return "", fmt.Errorf("failed to forward inference to Hub: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("hub returned error: %d", resp.StatusCode)
+		}
+
+		var res inference.InferenceResponse
+		if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+			return "", fmt.Errorf("failed to decode hub response: %w", err)
+		}
+		return res.Text, nil
+	}
+
+	res, err := a.inference.Execute(context.Background(), req)
+	if err != nil {
+		return "", err
+	}
+	return res.Text, nil
+}
+

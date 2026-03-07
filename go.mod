@@ -3,6 +3,7 @@ module github.com/hackafterdark/context-sherpa
 go 1.25.0
 
 require (
+	github.com/computerex/dlgo v0.0.0-20260307104002-f4ceb55e9093
 	github.com/sourcegraph/scip/bindings/go/scip v0.0.0-20260226120010-b469379fcb42
 	github.com/wailsapp/wails/v2 v2.10.2
 	google.golang.org/protobuf v1.36.6
@@ -50,11 +51,13 @@ require (
 	github.com/wailsapp/go-webview2 v1.0.21 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
 	golang.org/x/crypto v0.41.0 // indirect
-	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
+	golang.org/x/exp v0.0.0-20260112195511-716be5621a96 // indirect
 	golang.org/x/net v0.43.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
-	golang.org/x/text v0.28.0 // indirect
+	golang.org/x/text v0.33.0 // indirect
 	modernc.org/libc v1.67.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+replace github.com/computerex/dlgo => ./third_party/dlgo

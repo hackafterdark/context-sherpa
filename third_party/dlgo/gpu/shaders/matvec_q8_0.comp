@@ -1,0 +1,63 @@
+#version 450
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_scalar_block_layout : require
+
+// 4 rows per workgroup, 2 subgroups per row for higher SM utilization.
+// Each pair of subgroups splits blocks_per_row, then reduce via shared mem.
+
+layout(local_size_x = 256) in;
+
+struct block_q8_0 {
+    float16_t d;
+    int8_t qs[32];
+};
+
+layout(set = 0, binding = 0) buffer Out { float out_data[]; };
+layout(scalar, set = 0, binding = 1) readonly buffer Weights { block_q8_0 blocks[]; };
+layout(set = 0, binding = 2) readonly buffer X { float x_data[]; };
+
+layout(push_constant) uniform Params {
+    int rows;
+    int cols;
+};
+
+shared float partial[8];
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    uint sub_id = tid >> 5;
+    uint sub_tid = tid & 31u;
+    uint row_local = sub_id >> 1;
+    uint sh = sub_id & 1u;
+    uint row = gl_WorkGroupID.x * 4u + row_local;
+
+    if (row >= uint(rows)) return;
+
+    int bpr = cols >> 5;
+    uint rbpr = row * uint(bpr);
+    int st = int(sub_tid);
+
+    int half_bpr = bpr >> 1;
+    int b_start = int(sh) * half_bpr;
+    int b_end = (sh == 0u) ? half_bpr : bpr;
+
+    float acc = 0.0;
+    for (int b = b_start; b < b_end; b++) {
+        uint bi = rbpr + uint(b);
+        acc += float(blocks[bi].d) * float(blocks[bi].qs[st]) * x_data[(b << 5) + st];
+    }
+
+    acc = subgroupAdd(acc);
+
+    if (sub_tid == 0u) {
+        partial[sub_id] = acc;
+    }
+    barrier();
+
+    if (sub_tid == 0u && sh == 0u) {
+        out_data[row] = partial[sub_id] + partial[sub_id + 1u];
+    }
+}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { InstallAstGrep, GetAstGrepStatus, InstallScipIndexer, GetScipIndexerStatus, OpenBinDir } from '../wailsjs/go/main/App';
+import { InstallAstGrep, GetAstGrepStatus, InstallScipIndexer, GetScipIndexerStatus, OpenBinDir, ListLocalModels, DownloadModel, GetDownloadProgress } from '../wailsjs/go/main/App';
 import { Icon } from '@iconify/react';
 
 type SettingsProps = {
@@ -21,6 +21,13 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
     const [isScipTsInstalling, setIsScipTsInstalling] = useState(false);
     const [isScipPyInstalling, setIsScipPyInstalling] = useState(false);
 
+    const [localModels, setLocalModels] = useState<any[]>([]);
+    const [downloadingModels, setDownloadingModels] = useState<Record<string, number>>({});
+    const [curatedModels] = useState([
+        { id: 'smollm2-135m', name: 'SmolLM2-135M (GGUF)', type: 'Tiny', size: '145MB', url: 'https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q8_0.gguf' },
+        { id: 'qwen2.5-coder-0.5b', name: 'Qwen2.5-Coder-0.5B', type: 'Standard', size: '380MB', url: 'https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf' },
+    ]);
+
     const loadStatus = async () => {
         try {
             const status = await GetAstGrepStatus();
@@ -34,6 +41,11 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
 
             const pyStatus = await GetScipIndexerStatus('python');
             setScipPyInfo(pyStatus as any);
+
+            const models = await ListLocalModels();
+            setLocalModels(models || []);
+
+
         } catch (e) {
             console.error("Error fetching tool status:", e);
         }
@@ -85,6 +97,78 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
             else setIsScipPyInstalling(false);
         }
     };
+
+
+
+    const handleModelDownload = async (model: any) => {
+        try {
+            await DownloadModel(model.id, model.url);
+            setDownloadingModels(prev => ({ ...prev, [model.id]: 0.1 })); // Start tracking
+        } catch (e) {
+            console.error("Failed to start download:", e);
+        }
+    };
+
+    useEffect(() => {
+        // Listen for completion events from backend
+        // Use window.runtime or window.Wails if available
+        const runtime = (window as any).runtime;
+        if (!runtime) return;
+
+        const unlistenComplete = runtime.EventsOn("model-download-complete", (id: string) => {
+            setDownloadingModels(prev => {
+                const next = { ...prev };
+                delete next[id];
+                return next;
+            });
+            loadStatus();
+        });
+
+        const unlistenFailed = runtime.EventsOn("model-download-failed", (data: { modelId: string, error: string }) => {
+            setDownloadingModels(prev => {
+                const next = { ...prev };
+                delete next[data.modelId];
+                return next;
+            });
+            alert(`Download failed for ${data.modelId}: ${data.error}`);
+        });
+
+        return () => {
+            unlistenComplete();
+            unlistenFailed();
+        };
+    }, []);
+
+    useEffect(() => {
+        const activeDownloads = Object.keys(downloadingModels);
+        if (activeDownloads.length === 0) return;
+
+        const interval = setInterval(async () => {
+            const newProgress: Record<string, number> = { ...downloadingModels };
+            let changed = false;
+
+            for (const id of activeDownloads) {
+                try {
+                    const p = await GetDownloadProgress(id);
+                    if (p > 0 && p < 1 && p !== downloadingModels[id]) {
+                        newProgress[id] = p;
+                        changed = true;
+                    }
+                    if (p >= 1) {
+                        delete newProgress[id];
+                        changed = true;
+                        loadStatus();
+                    }
+                } catch (e) {
+                    console.error("Failed to fetch progress", e);
+                }
+            }
+
+            if (changed) setDownloadingModels(newProgress);
+        }, 1000);
+
+        return () => clearInterval(interval);
+    }, [downloadingModels]);
 
     return (
         <div className="flex flex-col gap-6 animate-in fade-in duration-300">
@@ -246,8 +330,62 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                             ))}
                         </div>
                     </div>
+
+                    <div className="divider my-0 opacity-20"></div>
+
+
+
+                    {/* Little Brain (Local SLM) */}
+                    <div className="flex flex-col gap-3">
+                        <div className="flex items-center gap-2">
+                            <Icon icon="lucide:brain" className="text-accent w-5 h-5" />
+                            <h3 className="font-bold text-lg">Little Brain (Local SLM)</h3>
+                        </div>
+                        <p className="text-base-content/60 text-sm">
+                            Sandboxed local models for semantic tasks like summarization and intent routing.
+                        </p>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+                            {curatedModels.map((model) => {
+                                const isDownloaded = localModels.some(m => m.id === model.id);
+                                const progress = downloadingModels[model.id];
+
+                                return (
+                                    <div key={model.id} className="border border-base-200 rounded-lg p-4 bg-base-200/30 flex flex-col gap-3">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex flex-col">
+                                                <span className="font-semibold text-sm">{model.name}</span>
+                                                <span className="text-[10px] opacity-60">{model.type} • {model.size}</span>
+                                            </div>
+                                            {isDownloaded ? (
+                                                <div className="badge badge-accent badge-sm py-2">Downloaded</div>
+                                            ) : progress !== undefined ? (
+                                                <div className="badge badge-ghost badge-sm py-2 animate-pulse">Downloading...</div>
+                                            ) : (
+                                                <div className="badge badge-ghost badge-sm py-2 opacity-50">Not Present</div>
+                                            )}
+                                        </div>
+
+                                        {progress !== undefined && (
+                                            <progress className="progress progress-accent w-full" value={progress * 100} max="100"></progress>
+                                        )}
+
+                                        <div className="mt-auto pt-2 border-t border-base-200/50">
+                                            <button
+                                                className={`btn btn-xs w-full ${isDownloaded ? 'btn-ghost' : 'btn-outline btn-accent'} ${progress !== undefined ? 'btn-disabled' : ''}`}
+                                                onClick={() => handleModelDownload(model)}
+                                            >
+                                                {isDownloaded ? 'Installed' : progress !== undefined ? 'Downloading...' : 'Download Model'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
     );
 }
+

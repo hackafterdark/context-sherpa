@@ -28,6 +28,8 @@ frontend/node_modules
 
 # Output of the go coverage tool
 *.out
+coverage
+coverage.txt
 
 # IDE and editor files
 .vscode/
