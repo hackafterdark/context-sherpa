@@ -427,7 +427,7 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                             <h3 className="font-bold text-lg">Semantic Reasoning (Local SLM)</h3>
                         </div>
                         <p className="text-base-content/60 text-sm">
-                            Sandboxed local models for semantic tasks like summarization and intent routing.
+                            Sandboxed local small language models for semantic tasks like summarization and intent routing.
                         </p>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
