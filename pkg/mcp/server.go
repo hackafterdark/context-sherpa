@@ -144,13 +144,39 @@ func Start(workspaceRoot string, verbose bool, logFilePath string, astGrepPath s
 		mcp.WithString("modelId", mcp.Required(), mcp.Description("ID of the model to activate.")),
 	), switchLocalModelHandler)
 
-	s.AddTool(mcp.NewTool("ask_little_brain",
-		mcp.WithDescription("Sends a prompt to the local SLM for private, low-latency semantic tasks."),
-		mcp.WithString("prompt", mcp.Required(), mcp.Description("The question or instruction for the SLM.")),
+	s.AddTool(mcp.NewTool("query_local_reasoning",
+		mcp.WithDescription("(The Fallback) A catch-all tool for asking any open-ended semantic question about a code snippet that doesn't fit a specific template."),
+		mcp.WithString("prompt", mcp.Required(), mcp.Description("The question or instruction for the local SLM to reason about.")),
 		mcp.WithString("modelId", mcp.Description("Optional model ID to use. Defaults to currently active.")),
 		mcp.WithNumber("max_tokens", mcp.Description("Optional maximum number of tokens to generate. Defaults to 512.")),
 		mcp.WithNumber("temperature", mcp.Description("Optional sampling temperature (0.0 to 1.0). Defaults to 0.1.")),
-	), askLittleBrainHandler)
+	), queryLocalReasoningHandler)
+
+	s.AddTool(mcp.NewTool("classify_repo_intent",
+		mcp.WithDescription("(The Router) Determines which Sherpa tool (Symbolic, Structural, or Semantic) is best suited for a user's high-level query."),
+		mcp.WithString("query", mcp.Required(), mcp.Description("The high-level user query to classify.")),
+	), classifyRepoIntentHandler)
+
+	s.AddTool(mcp.NewTool("summarize_code_intent",
+		mcp.WithDescription("Distills raw code into a 3-sentence functional summary (Inputs, Outputs, Side-effects)."),
+		mcp.WithString("code", mcp.Required(), mcp.Description("The raw code string to summarize.")),
+	), summarizeCodeIntentHandler)
+
+	s.AddTool(mcp.NewTool("generate_structural_pattern",
+		mcp.WithDescription("Translates natural language into a valid ast-grep S-expression or pattern."),
+		mcp.WithString("query", mcp.Required(), mcp.Description("Natural language description of the structural pattern to generate.")),
+	), generateStructuralPatternHandler)
+
+	s.AddTool(mcp.NewTool("analyze_impact_triage",
+		mcp.WithDescription("Scans a list of SCIP references to identify which call sites are most likely to be affected by a change."),
+		mcp.WithString("references", mcp.Required(), mcp.Description("The list of SCIP references to triage by risk level.")),
+	), analyzeImpactTriageHandler)
+
+	s.AddTool(mcp.NewTool("check_rule_compliance",
+		mcp.WithDescription("Validates a code snippet against the project-specific rules/ directory."),
+		mcp.WithString("code", mcp.Required(), mcp.Description("The code snippet to validate.")),
+		mcp.WithString("rule_id", mcp.Required(), mcp.Description("The specific Rule ID to verify compliance against.")),
+	), checkRuleComplianceHandler)
 
 	// --- Workspace Initialization ---
 	// Attempt to resolve workspace root early for local state and registration
@@ -1996,15 +2022,10 @@ func switchLocalModelHandler(ctx context.Context, request mcp.CallToolRequest) (
 	return mcp.NewToolResultText(fmt.Sprintf("Model selection for one-shot tasks updated: %s. Use this ID in your next ask_little_brain call.", modelID)), nil
 }
 
-func askLittleBrainHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	prompt, err := request.RequireString("prompt")
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("prompt is required: %v", err)), nil
-	}
-
+func runSLM(ctx context.Context, request mcp.CallToolRequest, prompt string) (*mcp.CallToolResult, error) {
 	modelID := ""
-	maxTokens := 0
-	temperature := float32(0)
+	maxTokens := 512
+	temperature := float32(0.1)
 
 	if args, ok := request.Params.Arguments.(map[string]interface{}); ok {
 		if m, ok := args["modelId"].(string); ok {
@@ -2036,6 +2057,63 @@ func askLittleBrainHandler(ctx context.Context, request mcp.CallToolRequest) (*m
 	}
 
 	return mcp.NewToolResultText(res.Text), nil
+}
+
+func queryLocalReasoningHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	prompt, err := request.RequireString("prompt")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("prompt is required: %v", err)), nil
+	}
+	return runSLM(ctx, request, prompt)
+}
+
+func classifyRepoIntentHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	query, err := request.RequireString("query")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("query is required: %v", err)), nil
+	}
+	prompt := fmt.Sprintf("Is the user asking for a symbol, a structural pattern, or logic analysis?\nQuery: %s", query)
+	return runSLM(ctx, request, prompt)
+}
+
+func summarizeCodeIntentHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	code, err := request.RequireString("code")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("code is required: %v", err)), nil
+	}
+	prompt := fmt.Sprintf("Provide a high-density functional distillation (Inputs, Outputs, Side-effects) in 3 sentences for the following code:\n%s", code)
+	return runSLM(ctx, request, prompt)
+}
+
+func generateStructuralPatternHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	query, err := request.RequireString("query")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("query is required: %v", err)), nil
+	}
+	prompt := fmt.Sprintf("Translate the following natural language into a valid ast-grep S-expression or pattern. Use few-shot examples of structural syntax if known.\nQuery: %s", query)
+	return runSLM(ctx, request, prompt)
+}
+
+func analyzeImpactTriageHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	references, err := request.RequireString("references")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("references is required: %v", err)), nil
+	}
+	prompt := fmt.Sprintf("Triage these references by risk level. Identify which call sites are most likely to be affected by a change:\n%s", references)
+	return runSLM(ctx, request, prompt)
+}
+
+func checkRuleComplianceHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	code, err := request.RequireString("code")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("code is required: %v", err)), nil
+	}
+	ruleID, err := request.RequireString("rule_id")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("rule_id is required: %v", err)), nil
+	}
+	prompt := fmt.Sprintf("Verify compliance with rule [%s] for the following code snippet:\n%s", ruleID, code)
+	return runSLM(ctx, request, prompt)
 }
 
 // loadSCIPIndexes loads all index-*.scip (and index.scip) files found in .context-sherpa directories

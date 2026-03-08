@@ -22,7 +22,7 @@ func safeGetText(res *mcp.CallToolResult) string {
 	switch c := res.Content[0].(type) {
 	case mcp.TextContent:
 		return c.Text
-	// Remove invalid case for map[string]interface{} since Content is an interface
+		// Remove invalid case for map[string]interface{} since Content is an interface
 	}
 	// Fallback to json marshaling/unmarshaling if it's not a known type
 	data, _ := json.Marshal(res.Content[0])
@@ -61,7 +61,7 @@ func createTestSCIPIndex(t *testing.T, workspaceRoot string, index *scip.Index) 
 func TestListSymbolsInFileHandler(t *testing.T) {
 	// Reset global override for tests
 	workspaceRootOverride = ""
-	
+
 	tempDir, err := os.MkdirTemp("", "scip-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -146,7 +146,7 @@ func TestListSymbolsInFileHandler(t *testing.T) {
 func TestSearchDefinitionsHandler(t *testing.T) {
 	// Reset global override for tests
 	workspaceRootOverride = ""
-	
+
 	tempDir, err := os.MkdirTemp("", "scip-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -214,7 +214,7 @@ func TestSearchDefinitionsHandler(t *testing.T) {
 func TestGetSymbolMapHandler(t *testing.T) {
 	// Reset global override for tests
 	workspaceRootOverride = ""
-	
+
 	tempDir, err := os.MkdirTemp("", "scip-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -285,7 +285,7 @@ func TestGetSymbolMapHandler(t *testing.T) {
 func TestInitializeScipHandler(t *testing.T) {
 	// Reset global override for tests
 	workspaceRootOverride = ""
-	
+
 	tempDir, err := os.MkdirTemp("", "scip-init-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -320,11 +320,11 @@ func TestInitializeScipHandler(t *testing.T) {
 
 	text := safeGetText(res)
 	t.Logf("Response text: %s", text)
-	
-	if !strings.Contains(text, "Workspace indexed successfully") && 
-	   !strings.Contains(text, "Indexer for go not found") && 
-	   !strings.Contains(text, "Indexing failed") && 
-	   !strings.Contains(text, "indexer for go not found") {
+
+	if !strings.Contains(text, "Workspace indexed successfully") &&
+		!strings.Contains(text, "Indexer for go not found") &&
+		!strings.Contains(text, "Indexing failed") &&
+		!strings.Contains(text, "indexer for go not found") {
 		t.Errorf("Unexpected result text: %s", text)
 	}
 }

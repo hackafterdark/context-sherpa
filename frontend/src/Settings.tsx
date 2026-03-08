@@ -280,8 +280,8 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
 
                     {/* Structural Analysis (ast-grep) */}
                     <div className="flex flex-col gap-3">
-                        <div className="flex items-center justify-between">
-                            <div className="flex flex-col gap-1">
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="flex flex-col gap-1 min-w-0">
                                 <div className="flex items-center gap-2">
                                     <Icon icon="lucide:layout-template" className="text-primary w-5 h-5" />
                                     <h3 className="font-bold text-lg">Structural Analysis (ast-grep)</h3>
@@ -291,17 +291,17 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                                 </p>
                             </div>
                             {astGrepInfo?.installed ? (
-                                <div className="badge badge-success badge-sm gap-1 py-2">
+                                <div className="badge badge-success badge-sm gap-1 py-2 flex-shrink-0">
                                     <Icon icon="lucide:check" className="w-3 h-3" />
                                     Ready
                                 </div>
                             ) : (
-                                <div className="badge badge-ghost badge-sm py-2 opacity-50">Not Installed</div>
+                                <div className="badge badge-ghost badge-sm py-2 opacity-50 flex-shrink-0">Not Installed</div>
                             )}
                         </div>
 
                         {astGrepInfo?.installed && (
-                            <div className="flex flex-col gap-1 opacity-70">
+                            <div className="flex flex-col gap-1 opacity-70 min-w-0">
                                 <span className="text-[10px] font-mono truncate">{astGrepInfo.version || 'v0.0.0'}</span>
                                 <span className="text-[10px] font-mono truncate opacity-60 cursor-help" title={astGrepInfo.path}>{astGrepInfo.path}</span>
                             </div>
@@ -360,20 +360,20 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                                 { id: 'python', label: 'Python (NPM)', info: scipPyInfo, status: scipPyStatus, isInstalling: isScipPyInstalling }
                             ].map((lang) => (
                                 <div key={lang.id} className="border border-base-200 rounded-lg p-4 bg-base-200/30 flex flex-col gap-3">
-                                    <div className="flex items-center justify-between">
+                                    <div className="flex items-center justify-between gap-2">
                                         <span className="font-semibold text-sm capitalize">{lang.id}</span>
                                         {lang.info?.installed ? (
-                                            <div className="badge badge-success badge-sm gap-1 py-2">
+                                            <div className="badge badge-success badge-sm gap-1 py-2 flex-shrink-0">
                                                 <Icon icon="lucide:check" className="w-3 h-3" />
                                                 Ready
                                             </div>
                                         ) : (
-                                            <div className="badge badge-ghost badge-sm py-2 opacity-50">Not Installed</div>
+                                            <div className="badge badge-ghost badge-sm py-2 opacity-50 flex-shrink-0">Not Installed</div>
                                         )}
                                     </div>
-
+                                    ...
                                     {lang.info?.installed && (
-                                        <div className="flex flex-col gap-1 opacity-70">
+                                        <div className="flex flex-col gap-1 opacity-70 min-w-0">
                                             <span className="text-[10px] font-mono truncate">{lang.info.version || 'v0.0.0'}</span>
                                             <span className="text-[10px] font-mono truncate opacity-60 cursor-help" title={lang.info.path}>{lang.info.path}</span>
                                         </div>
@@ -439,8 +439,8 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                                 return (
                                     <div key={model.id} className="border border-base-200 rounded-lg p-4 bg-base-200/30 flex flex-col gap-3">
                                         <div className="flex items-center justify-between">
-                                            <div className="flex flex-col gap-0.5">
-                                                <span className="font-semibold text-sm">{model.name}</span>
+                                            <div className="flex flex-col gap-0.5 min-w-0">
+                                                <span className="font-semibold text-sm truncate">{model.name}</span>
                                                 <span className="text-[10px] opacity-60">{model.type} • {model.size}</span>
                                                 {localInfo?.path && (
                                                     <span className="text-[10px] font-mono truncate opacity-60 cursor-help mt-1" title={localInfo.path}>
@@ -449,14 +449,14 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                                                 )}
                                             </div>
                                             {isDownloaded ? (
-                                                <div className="badge badge-success badge-sm gap-1 py-2">
+                                                <div className="badge badge-success badge-sm gap-1 py-2 flex-shrink-0">
                                                     <Icon icon="lucide:check" className="w-3 h-3" />
                                                     Downloaded
                                                 </div>
                                             ) : progress !== undefined ? (
-                                                <div className="badge badge-ghost badge-sm py-2 animate-pulse">Downloading...</div>
+                                                <div className="badge badge-ghost badge-sm py-2 animate-pulse flex-shrink-0">Downloading...</div>
                                             ) : (
-                                                <div className="badge badge-ghost badge-sm py-2 opacity-50">Not Present</div>
+                                                <div className="badge badge-ghost badge-sm py-2 opacity-50 flex-shrink-0">Not Present</div>
                                             )}
                                         </div>
 

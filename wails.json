@@ -7,7 +7,6 @@
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
   "author": {
-    "name": "Hack After Dark",
-    "email": ""
+    "name": "Hack After Dark"
   }
 }

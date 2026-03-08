@@ -15,16 +15,16 @@ func TestIsSymbolMatch(t *testing.T) {
 		{"scip-go gomod github.com/user/project `NewApp`().", "NewApp", true},
 		{"scip-go gomod github.com/user/project `App`#workspaces.", "App", true},
 		{"scip-go gomod github.com/user/project `GetWorkspaces`().", "GetWorkspaces", true},
-		
+
 		// Suffixes
 		{"github.com/user/project/App#", "App", true},
 		{"github.com/user/project/NewApp().", "NewApp", true},
-		
+
 		// Separators
 		{"github.com/user/project/App", "App", true},
 		{"github.com/user/project.App", "App", true},
 		{"github.com/user/project App", "App", true},
-		
+
 		// Negative cases
 		{"github.com/user/project/MyApp", "App", false},
 		{"github.com/user/project/Apple", "App", false},
