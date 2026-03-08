@@ -458,12 +458,8 @@ func getSymbolMapHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
 		return mcp.NewToolResultError(fmt.Sprintf("symbolName is required: %v", err)), nil
 	}
 
-	language := ""
 	workspaceRootArg := ""
 	if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
-		if lang, ok := args["language"].(string); ok && lang != "" {
-			language = strings.ToLower(lang)
-		}
 		if wr, ok := args["workspaceRoot"].(string); ok && wr != "" {
 			workspaceRootArg = wr
 		}
@@ -474,65 +470,36 @@ func getSymbolMapHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to resolve workspace root: %v", err)), nil
 	}
 
-	sherpaDir := filepath.Join(workspaceRoot, ".context-sherpa")
-	scipPath := filepath.Join(sherpaDir, "index.scip")
-
-	// Ensure .context-sherpa exists
-	if err := os.MkdirAll(sherpaDir, 0755); err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to create .context-sherpa directory: %v", err)), nil
-	}
-
-	// Trigger indexing if needed (for now, always try to update if it's older than 1 hour or missing)
-	shouldIndex := false
-	if info, err := os.Stat(scipPath); os.IsNotExist(err) {
-		shouldIndex = true
-	} else if time.Since(info.ModTime()) > 1*time.Hour {
-		shouldIndex = true
-	}
-
-	if shouldIndex {
-		verboseLog("Indexing workspace: %s", workspaceRoot)
-		if err := indexWorkspace(workspaceRoot, language); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to index workspace: %v. If it is a non-Go project, please install the appropriate indexer in the Dashboard.", err)), nil
-		}
-	}
-
-	// Parse SCIP index
-	data, err := os.ReadFile(scipPath)
+	indexes, err := loadSCIPIndexes(workspaceRoot)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to read SCIP index: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to load SCIP indexes: %v", err)), nil
+	}
+	if len(indexes) == 0 {
+		return mcp.NewToolResultError("SCIP index not found. Please index the workspace first via the Dashboard."), nil
 	}
 
-	var index scip.Index
-	if err := proto.Unmarshal(data, &index); err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to parse SCIP index: %v", err)), nil
-	}
-
-	// Search for symbol
+	// Search for symbol across all indexes
 	result := map[string]interface{}{
 		"symbol":     symbolName,
 		"definition": nil,
 		"references": []map[string]interface{}{},
 	}
 
-	// Symbols in SCIP are often formatted like "scip-go gomodule ... github.com/user/project/pkg/ SymbolName#"
-	// We'll look for occurrences that match our symbol name
-	for _, doc := range index.Documents {
-		for _, occ := range doc.Occurrences {
-			// Check if this occurrence is the symbol we're looking for
-			if isSymbolMatch(occ.Symbol, symbolName) {
-				loc := map[string]interface{}{
-					"file": doc.RelativePath,
-					"line": occ.Range[0] + 1, // 0-indexed to 1-indexed
-				}
-
-				// Check roles:
-				// Definitions are marked with Role 1 (Definition role).
-				isDef := occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0
-				if isDef && result["definition"] == nil {
-					result["definition"] = loc
-				} else {
-					result["references"] = append(result["references"].([]map[string]interface{}), loc)
+	for _, index := range indexes {
+		for _, doc := range index.Documents {
+			rel := filepath.ToSlash(doc.RelativePath)
+			for _, occ := range doc.Occurrences {
+				if isSymbolMatch(occ.Symbol, symbolName) {
+					loc := map[string]interface{}{
+						"file": rel,
+						"line": occ.Range[0] + 1,
+					}
+					isDef := occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0
+					if isDef && result["definition"] == nil {
+						result["definition"] = loc
+					} else {
+						result["references"] = append(result["references"].([]map[string]interface{}), loc)
+					}
 				}
 			}
 		}
@@ -607,50 +574,40 @@ func listSymbolsInFileHandler(ctx context.Context, req mcp.CallToolRequest) (*mc
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to resolve workspace root: %v", err)), nil
 	}
 
-	sherpaDir := filepath.Join(workspaceRoot, ".context-sherpa")
-	scipPath := filepath.Join(sherpaDir, "index.scip")
-	verboseLog("listSymbolsInFileHandler: using workspaceRoot: '%s', scipPath: '%s'", workspaceRoot, scipPath)
-
-	if _, err := os.Stat(scipPath); os.IsNotExist(err) {
+	indexes, err := loadSCIPIndexes(workspaceRoot)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to load SCIP indexes: %v", err)), nil
+	}
+	if len(indexes) == 0 {
 		return mcp.NewToolResultError("SCIP index not found. Please index the workspace first via the Dashboard."), nil
 	}
+	verboseLog("listSymbolsInFileHandler: loaded %d indexes", len(indexes))
 
-	data, err := os.ReadFile(scipPath)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to read SCIP index: %v", err)), nil
-	}
-
-	var index scip.Index
-	if err := proto.Unmarshal(data, &index); err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to parse SCIP index: %v", err)), nil
-	}
-	verboseLog("listSymbolsInFileHandler: unmarshaled index, documents: %d", len(index.Documents))
-
-	// Normalize input path to match SCIP's internal format (native separators)
-	inputPath := filepath.FromSlash(filePath)
-	verboseLog("listSymbolsInFileHandler: searching for '%s' (inputPath), filePath: '%s'", inputPath, filePath)
+	// Normalize input path to match SCIP's internal format (use forward slashes consistently)
+	inputPath := filepath.ToSlash(filePath)
+	verboseLog("listSymbolsInFileHandler: searching for '%s' (inputPath), original: '%s'", inputPath, filePath)
 	
 	var symbols []map[string]interface{}
-	for i, doc := range index.Documents {
-		rel := doc.RelativePath 
-		if i < 10 { // Log more documents for debugging
-			verboseLog("listSymbolsInFileHandler: doc[%d] = '%s'", i, rel)
-		}
-		if rel == inputPath {
-			verboseLog("listSymbolsInFileHandler: matched file '%s'", rel)
-			for _, occ := range doc.Occurrences {
-				// Only include definitions (Role 1)
-				isDef := occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0
-				
-				if isDef {
-					symbolInfo := map[string]interface{}{
-						"symbol": occ.Symbol,
-						"line":   occ.Range[0] + 1,
+	for idxNum, index := range indexes {
+		verboseLog("Searching index %d, documents: %d", idxNum, len(index.Documents))
+		for _, doc := range index.Documents {
+			rel := filepath.ToSlash(doc.RelativePath)
+			if rel == inputPath {
+				verboseLog("listSymbolsInFileHandler: matched file '%s' in index %d", rel, idxNum)
+				for _, occ := range doc.Occurrences {
+					// Only include definitions (Role 1)
+					isDef := occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0
+					
+					if isDef {
+						symbolInfo := map[string]interface{}{
+							"symbol": occ.Symbol,
+							"line":   occ.Range[0] + 1,
+						}
+						symbols = append(symbols, symbolInfo)
 					}
-					symbols = append(symbols, symbolInfo)
 				}
+				break
 			}
-			break
 		}
 	}
 
@@ -680,41 +637,35 @@ func searchDefinitionsHandler(ctx context.Context, req mcp.CallToolRequest) (*mc
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to resolve workspace root: %v", err)), nil
 	}
 
-	sherpaDir := filepath.Join(workspaceRoot, ".context-sherpa")
-	scipPath := filepath.Join(sherpaDir, "index.scip")
-
-	if _, err := os.Stat(scipPath); os.IsNotExist(err) {
+	indexes, err := loadSCIPIndexes(workspaceRoot)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to load SCIP indexes: %v", err)), nil
+	}
+	if len(indexes) == 0 {
 		return mcp.NewToolResultError("SCIP index not found. Please index the workspace first via the Dashboard."), nil
 	}
 
-	data, err := os.ReadFile(scipPath)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to read SCIP index: %v", err)), nil
-	}
-
-	var index scip.Index
-	if err := proto.Unmarshal(data, &index); err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to parse SCIP index: %v", err)), nil
-	}
-
 	var definitions []map[string]interface{}
-	for _, doc := range index.Documents {
-		for _, occ := range doc.Occurrences {
-			if isSymbolMatch(occ.Symbol, query) {
-				isDef := occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0
-				if isDef {
-					definitions = append(definitions, map[string]interface{}{
-						"symbol": occ.Symbol,
-						"file":   doc.RelativePath,
-						"line":   occ.Range[0] + 1,
-					})
+	for _, index := range indexes {
+		for _, doc := range index.Documents {
+			rel := filepath.ToSlash(doc.RelativePath)
+			for _, occ := range doc.Occurrences {
+				if isSymbolMatch(occ.Symbol, query) {
+					isDef := occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0
+					if isDef {
+						definitions = append(definitions, map[string]interface{}{
+							"symbol": occ.Symbol,
+							"file":   rel,
+							"line":   occ.Range[0] + 1,
+						})
+					}
 				}
 			}
 		}
 	}
 
 	if len(definitions) == 0 {
-		return mcp.NewToolResultText(fmt.Sprintf("No definitions found for query: %s", query)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("No definitions found for query: %s (Loaded %d indexes)", query, len(indexes))), nil
 	}
 
 	jsonRes, _ := json.MarshalIndent(definitions, "", "  ")
@@ -729,9 +680,23 @@ func initializeScipHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 		}
 	}
 
-	workspaceRoot, err := findWorkspaceRoot(workspaceRootArg)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to resolve workspace root: %v", err)), nil
+	workspaceRoot := ""
+	if workspaceRootArg == "" {
+		wr, err := findWorkspaceRoot("")
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to resolve workspace root: %v", err)), nil
+		}
+		workspaceRoot = wr
+	} else {
+		// Normalize explicit path
+		if abs, err := filepath.Abs(workspaceRootArg); err == nil {
+			workspaceRoot = abs
+		} else {
+			workspaceRoot = workspaceRootArg
+		}
+		if runtime.GOOS == "windows" && len(workspaceRoot) > 1 && workspaceRoot[1] == ':' {
+			workspaceRoot = strings.ToUpper(string(workspaceRoot[0])) + workspaceRoot[1:]
+		}
 	}
 
 	language := ""
@@ -758,8 +723,7 @@ func initializeScipHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 		return mcp.NewToolResultError("Could not auto-detect project language. Please specify 'language' parameter."), nil
 	}
 
-	err = indexWorkspace(workspaceRoot, language)
-	if err != nil {
+	if err := indexWorkspace(workspaceRoot, language); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Indexing failed: %v", err)), nil
 	}
 
@@ -767,15 +731,19 @@ func initializeScipHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 }
 
 func indexWorkspace(workspaceRoot string, language string) error {
-	// 0. Use canonical absolute path to avoid Windows drive letter case issues
-	if abs, err := filepath.EvalSymlinks(workspaceRoot); err == nil {
-		workspaceRoot = abs
-	} else if abs, err := filepath.Abs(workspaceRoot); err == nil {
+	// 0. Use canonical absolute path
+	if abs, err := filepath.Abs(workspaceRoot); err == nil {
 		workspaceRoot = abs
 	}
-	// Normalize Windows drive letter to uppercase explicitly just to be safe
+	// Normalization: use uppercase drive letter on Windows for consistency
 	if runtime.GOOS == "windows" && len(workspaceRoot) > 1 && workspaceRoot[1] == ':' {
 		workspaceRoot = strings.ToUpper(string(workspaceRoot[0])) + workspaceRoot[1:]
+	}
+	verboseLog("indexWorkspace: entry for %s at %s", language, workspaceRoot)
+
+	// Ensure .context-sherpa directory exists
+	if err := initLocalState(workspaceRoot); err != nil {
+		return err
 	}
 
 	// 1. Detect language if not provided
@@ -821,35 +789,56 @@ func indexWorkspace(workspaceRoot string, language string) error {
 			indexerPath = localBin
 		}
 
-		absOutput := filepath.Join(workspaceRoot, ".context-sherpa", "index.scip")
+		absOutput := filepath.Join(workspaceRoot, ".context-sherpa", fmt.Sprintf("index-%s.scip", language))
 		cmd = exec.Command(indexerPath, "--project-root", workspaceRoot, "--repository-root", workspaceRoot, "--output", absOutput)
 		cmd.Dir = workspaceRoot
 	} else {
 		// Try to find managed indexer for other languages
 		indexerName := "scip-" + language
+		
+		// Priority paths
+		var pathsToTry []string
 		if runtime.GOOS == "windows" {
-			indexerName += ".exe"
+			// Local bin might have .exe (e.g. if we compiled it)
+			pathsToTry = append(pathsToTry, filepath.Join(binDir, indexerName+".exe"))
+			// NPM bin usually has .cmd or .ps1
+			pathsToTry = append(pathsToTry, filepath.Join(binDir, "node_modules", ".bin", indexerName+".cmd"))
+			pathsToTry = append(pathsToTry, filepath.Join(binDir, "node_modules", ".bin", indexerName+".ps1"))
+		} else {
+			pathsToTry = append(pathsToTry, filepath.Join(binDir, indexerName))
+			pathsToTry = append(pathsToTry, filepath.Join(binDir, "node_modules", ".bin", indexerName))
 		}
 
-		localBin := filepath.Join(binDir, indexerName)
-		npmBin := filepath.Join(binDir, "node_modules", ".bin", indexerName)
-
 		indexPath := ""
-		if _, err := os.Stat(localBin); err == nil {
-			indexPath = localBin
-		} else if _, err := os.Stat(npmBin); err == nil {
-			indexPath = npmBin
-		} else if path, err := exec.LookPath(indexerName); err == nil {
-			indexPath = path
+		for _, p := range pathsToTry {
+			if _, err := os.Stat(p); err == nil {
+				indexPath = p
+				break
+			}
+		}
+
+		if indexPath == "" {
+			if path, err := exec.LookPath(indexerName); err == nil {
+				indexPath = path
+			}
 		}
 
 		if indexPath == "" {
 			return fmt.Errorf("indexer for %s not found. Please install it via the Context-Sherpa Dashboard", language)
 		}
 
-		absOutput := filepath.Join(workspaceRoot, ".context-sherpa", "index.scip")
-		cmd = exec.Command(indexPath, "index", "--output", absOutput)
+		absOutput := filepath.Join(workspaceRoot, ".context-sherpa", fmt.Sprintf("index-%s.scip", language))
+		
+		// On Windows, if we are running a .cmd or .ps1, we might need to invoke it via cmd /c
+		if runtime.GOOS == "windows" && (strings.HasSuffix(indexPath, ".cmd") || strings.HasSuffix(indexPath, ".ps1")) {
+			verboseLog("Running indexer via cmd /c: %s index --output %s", indexPath, absOutput)
+			cmd = exec.Command("cmd", "/c", indexPath, "index", "--output", absOutput)
+		} else {
+			verboseLog("Running indexer: %s index --output %s", indexPath, absOutput)
+			cmd = exec.Command(indexPath, "index", "--output", absOutput)
+		}
 		cmd.Dir = workspaceRoot
+
 	}
 
 	if output, err := cmd.CombinedOutput(); err != nil {
@@ -894,19 +883,19 @@ func isSymbolMatch(scipSymbol string, symbolName string) bool {
 	// - TS/Py: .../SymbolName
 
 	// Check for suffixes
-	suffixes := []string{"#", ".", "().", "()"}
+	suffixes := []string{"#", ".", "().", "()", ":"}
 	for _, s := range suffixes {
 		if strings.HasSuffix(scipSymbol, symbolName+s) {
 			// Ensure it's preceded by a separator to avoid partial matches (e.g., "MyApp" matching "App")
 			prefix := strings.TrimSuffix(scipSymbol, symbolName+s)
-			if prefix == "" || strings.HasSuffix(prefix, "/") || strings.HasSuffix(prefix, " ") || strings.HasSuffix(prefix, ".") || strings.HasSuffix(prefix, "#") {
+			if prefix == "" || strings.HasSuffix(prefix, "/") || strings.HasSuffix(prefix, " ") || strings.HasSuffix(prefix, ".") || strings.HasSuffix(prefix, "#") || strings.HasSuffix(prefix, ":") {
 				return true
 			}
 		}
 	}
 
 	// Check if it ends exactly with the symbol name preceded by a separator
-	separators := []string{"/", " ", ".", "#"}
+	separators := []string{"/", " ", ".", "#", ":"}
 	for _, s := range separators {
 		if strings.HasSuffix(scipSymbol, s+symbolName) {
 			return true
@@ -1287,37 +1276,42 @@ func addOrUpdateRuleHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 // or .git in the requested directory and its parent directories.
 func findWorkspaceRoot(startPath string) (string, error) {
 	var dir string
-	var err error
 
 	if workspaceRootOverride != "" {
-		// Use the absolute path of the override if possible
-		if abs, err := filepath.Abs(workspaceRootOverride); err == nil {
-			dir = abs
-		} else {
-			dir = workspaceRootOverride
-		}
-		verboseLog("Using custom workspace root override: %s", dir)
+		dir = workspaceRootOverride
 	} else if startPath != "" {
-		absPath, err := filepath.Abs(startPath)
-		if err == nil {
-			if info, err := os.Stat(absPath); err == nil && !info.IsDir() {
-				dir = filepath.Dir(absPath)
-			} else {
-				dir = absPath
-			}
-		} else {
-			dir, _ = os.Getwd()
-		}
+		dir = startPath
 	} else {
-		// Fall back to current behavior
-		dir, err = os.Getwd()
-		if err != nil {
-			return "", fmt.Errorf("could not get current directory: %v", err)
+		dir, _ = os.Getwd()
+	}
+
+	// Normalize path (especially drive letter on Windows)
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	if runtime.GOOS == "windows" && len(dir) > 1 && dir[1] == ':' {
+		dir = strings.ToUpper(string(dir[0])) + dir[1:]
+	}
+
+	// 0. Search for .context-sherpa (our own metadata folder)
+	tempDir := dir
+	for {
+		sherpaPath := filepath.Join(tempDir, ".context-sherpa")
+		verboseLog("Checking for SCIP index at: %s", sherpaPath)
+		if info, err := os.Stat(sherpaPath); err == nil && info.IsDir() {
+			verboseLog("Found workspace root with .context-sherpa: %s", tempDir)
+			return tempDir, nil
 		}
+
+		parentDir := filepath.Dir(tempDir)
+		if parentDir == tempDir {
+			break
+		}
+		tempDir = parentDir
 	}
 
 	// 1. Search for sgconfig.yml (ast-grep workspace)
-	tempDir := dir
+	tempDir = dir
 	for {
 		configPath := filepath.Join(tempDir, "sgconfig.yml")
 		if _, err := os.Stat(configPath); err == nil {
@@ -2045,3 +2039,57 @@ func askLittleBrainHandler(ctx context.Context, request mcp.CallToolRequest) (*m
 }
 
 
+// loadSCIPIndexes loads all index-*.scip (and index.scip) files found in .context-sherpa directories
+// within the workspaceRoot or its first-level subdirectories.
+func loadSCIPIndexes(workspaceRoot string) ([]*scip.Index, error) {
+	var indexes []*scip.Index
+	var searchDirs []string
+
+	// 1. Check root .context-sherpa
+	rootSherpa := filepath.Join(workspaceRoot, ".context-sherpa")
+	if _, err := os.Stat(rootSherpa); err == nil {
+		searchDirs = append(searchDirs, rootSherpa)
+	}
+
+	// 2. Check first-level subdirectories for .context-sherpa
+	entries, err := os.ReadDir(workspaceRoot)
+	if err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+				subSherpa := filepath.Join(workspaceRoot, entry.Name(), ".context-sherpa")
+				if _, err := os.Stat(subSherpa); err == nil {
+					searchDirs = append(searchDirs, subSherpa)
+				}
+			}
+		}
+	}
+
+	for _, sherpaDir := range searchDirs {
+		verboseLog("Searching for indexes in: %s", sherpaDir)
+		files, err := os.ReadDir(sherpaDir)
+		if err != nil {
+			continue
+		}
+
+		for _, file := range files {
+			if !file.IsDir() && (strings.HasPrefix(file.Name(), "index-") && strings.HasSuffix(file.Name(), ".scip") || file.Name() == "index.scip") {
+				scipPath := filepath.Join(sherpaDir, file.Name())
+				verboseLog("Loading SCIP index: %s", scipPath)
+				data, err := os.ReadFile(scipPath)
+				if err != nil {
+					verboseLog("Warning: failed to read index %s: %v", scipPath, err)
+					continue
+				}
+
+				var index scip.Index
+				if err := proto.Unmarshal(data, &index); err != nil {
+					verboseLog("Warning: failed to parse index %s: %v", scipPath, err)
+					continue
+				}
+				indexes = append(indexes, &index)
+			}
+		}
+	}
+
+	return indexes, nil
+}

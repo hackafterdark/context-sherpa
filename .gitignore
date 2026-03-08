@@ -11,6 +11,7 @@ ast-grep
 sg
 .context-sherpa
 symbols_dump.txt
+*.scip
 
 # Dependencies
 node_modules
