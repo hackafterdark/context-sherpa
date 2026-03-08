@@ -689,7 +689,7 @@ func (a *App) InstallAstGrep() (string, error) {
 		return "", fmt.Errorf("failed to download ast-grep: HTTP %d", resp.StatusCode)
 	}
 
-	// Save to temp file
+	// ast-grep always uses .zip as verified on GitHub
 	tmpFile, err := os.CreateTemp("", "ast-grep-dl-*.zip")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp archive: %w", err)
@@ -880,7 +880,7 @@ func extractZip(zipPath, targetPath, targetFileName string) error {
 	defer r.Close()
 
 	for _, f := range r.File {
-		if f.Name == targetFileName {
+		if filepath.Base(f.Name) == targetFileName {
 			rc, err := f.Open()
 			if err != nil {
 				return err

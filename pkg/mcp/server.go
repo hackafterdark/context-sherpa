@@ -34,11 +34,19 @@ func GetHubLockPath() string {
 	var baseDir string
 	if runtime.GOOS == "windows" {
 		baseDir = os.Getenv("LOCALAPPDATA")
+		if baseDir == "" {
+			home, _ := os.UserHomeDir()
+			baseDir = home
+		}
 	} else {
-		home, _ := os.UserHomeDir()
-		baseDir = filepath.Join(home, ".local", "share") // Standard for Linux/macOS
+		baseDir, _ = os.UserHomeDir()
 	}
+
 	dir := filepath.Join(baseDir, "context-sherpa")
+	if runtime.GOOS != "windows" {
+		dir = filepath.Join(baseDir, ".context-sherpa")
+	}
+
 	_ = os.MkdirAll(dir, 0755)
 	return filepath.Join(dir, "hub.lock")
 }
@@ -1459,24 +1467,27 @@ Please ensure ast-grep is available in one of these ways:
 
 // getSherpaModelsDir returns the platform-specific path to the models directory
 func getSherpaModelsDir() (string, error) {
-	var homeDir string
-	var err error
+	var baseDir string
 	if runtime.GOOS == "windows" {
-		homeDir = os.Getenv("LOCALAPPDATA")
-		if homeDir == "" {
-			homeDir, err = os.UserHomeDir()
+		baseDir = os.Getenv("LOCALAPPDATA")
+		if baseDir == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return "", err
+			}
+			baseDir = home
 		}
 	} else {
-		homeDir, err = os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		baseDir = home
 	}
 
-	if err != nil {
-		return "", err
-	}
-
-	modelsDir := filepath.Join(homeDir, "context-sherpa", "models")
+	modelsDir := filepath.Join(baseDir, "context-sherpa", "models")
 	if runtime.GOOS != "windows" {
-		modelsDir = filepath.Join(homeDir, ".context-sherpa", "models")
+		modelsDir = filepath.Join(baseDir, ".context-sherpa", "models")
 	}
 	_ = os.MkdirAll(modelsDir, 0755)
 	return modelsDir, nil
