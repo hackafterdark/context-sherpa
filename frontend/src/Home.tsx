@@ -101,7 +101,7 @@ export default function Home() {
                     </div>
                 </div>
 
-                <div className="card bg-base-100 shadow-sm border border-base-200">
+                {/* <div className="card bg-base-100 shadow-sm border border-base-200">
                     <div className="card-body">
                         <h2 className="card-title text-lg flex items-center gap-2">
                             <Icon icon="lucide:database" className="text-primary" />
@@ -111,7 +111,7 @@ export default function Home() {
                             `sherpa.db` state tracking and task history are stored within each workspace root.
                         </p>
                     </div>
-                </div>
+                </div> */}
             </div>
         </div>
     );
