@@ -1,10 +1,49 @@
 import { useEffect, useState } from 'react';
-import { InstallAstGrep, GetAstGrepStatus, InstallScipIndexer, GetScipIndexerStatus, OpenConfigDir, ListLocalModels, DownloadModel, GetDownloadProgress } from '../wailsjs/go/main/App';
+import { InstallAstGrep, GetAstGrepStatus, InstallScipIndexer, GetScipIndexerStatus, OpenConfigDir, ListLocalModels, DownloadModel, GetDownloadProgress, DeleteModel, DeleteAstGrep, DeleteScipIndexer } from '../wailsjs/go/main/App';
 import { Icon } from '@iconify/react';
 
 type SettingsProps = {
     theme: string;
     setTheme: (theme: string) => void;
+};
+
+const DeleteAction = ({
+    id,
+    confirmDelete,
+    onDelete,
+    label = "Delete",
+    className = "",
+    size = "btn-sm"
+}: {
+    id: string;
+    confirmDelete: string | null;
+    onDelete: (id: string) => void;
+    label?: string;
+    className?: string;
+    size?: "btn-sm" | "btn-xs";
+}) => {
+    const isConfirming = confirmDelete === id;
+    const fixedWidth = "120px";
+
+    return (
+        <button
+            className={`btn ${size} btn-ghost transition-all duration-200 justify-center flex items-center hover:bg-error/10 ${isConfirming
+                ? 'text-error !opacity-100 animate-pulse'
+                : 'text-error/50 hover:text-error'
+                } ${className}`}
+            onClick={() => onDelete(id)}
+            style={{ width: fixedWidth }}
+        >
+            {isConfirming ? (
+                'Confirm?'
+            ) : (
+                <>
+                    <Icon icon="lucide:trash-2" className="w-4 h-4" />
+                    {label && <span className="ml-1">{label}</span>}
+                </>
+            )}
+        </button>
+    );
 };
 
 export default function Settings({ theme, setTheme }: SettingsProps) {
@@ -19,6 +58,7 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
     const [scipPyStatus, setScipPyStatus] = useState<string>('');
     const [isScipInstalling, setIsScipInstalling] = useState(false);
     const [isScipTsInstalling, setIsScipTsInstalling] = useState(false);
+    const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
     const [isScipPyInstalling, setIsScipPyInstalling] = useState(false);
 
     const [localModels, setLocalModels] = useState<any[]>([]);
@@ -106,6 +146,29 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
             setDownloadingModels(prev => ({ ...prev, [model.id]: 0.1 })); // Start tracking
         } catch (e) {
             console.error("Failed to start download:", e);
+        }
+    };
+
+    const handleToolDelete = async (type: 'ast-grep' | 'scip-go' | 'scip-typescript' | 'scip-python' | string) => {
+        if (confirmDelete !== type) {
+            setConfirmDelete(type);
+            setTimeout(() => setConfirmDelete(null), 3000); // Reset after 3s
+            return;
+        }
+
+        setConfirmDelete(null);
+        try {
+            if (type === 'ast-grep') {
+                await DeleteAstGrep();
+            } else if (type.startsWith('scip-')) {
+                await DeleteScipIndexer(type.replace('scip-', ''));
+            } else {
+                await DeleteModel(type);
+            }
+            await loadStatus();
+        } catch (e) {
+            console.error("Failed to delete:", e);
+            alert("Deletion failed: " + e);
         }
     };
 
@@ -217,30 +280,36 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
 
                     {/* Structural Analysis (ast-grep) */}
                     <div className="flex flex-col gap-3">
-                        <div className="flex items-center gap-2">
-                            <Icon icon="lucide:layout-template" className="text-primary w-5 h-5" />
-                            <h3 className="font-bold text-lg">Structural Analysis (ast-grep)</h3>
+                        <div className="flex items-center justify-between">
+                            <div className="flex flex-col gap-1">
+                                <div className="flex items-center gap-2">
+                                    <Icon icon="lucide:layout-template" className="text-primary w-5 h-5" />
+                                    <h3 className="font-bold text-lg">Structural Analysis (ast-grep)</h3>
+                                </div>
+                                <p className="text-base-content/60 text-sm">
+                                    Structural code scanning to enforce correctness and security standards.
+                                </p>
+                            </div>
+                            {astGrepInfo?.installed ? (
+                                <div className="badge badge-success badge-sm gap-1 py-2">
+                                    <Icon icon="lucide:check" className="w-3 h-3" />
+                                    Ready
+                                </div>
+                            ) : (
+                                <div className="badge badge-ghost badge-sm py-2 opacity-50">Not Installed</div>
+                            )}
                         </div>
-                        <p className="text-base-content/60 text-sm">
-                            Structural code scanning to enforce correctness, security vulnerabilities, and coding standards.
-                        </p>
 
                         {astGrepInfo?.installed && (
-                            <div className="alert alert-success bg-success/10 text-success border-success/20 py-2 flex gap-3">
-                                <Icon icon="lucide:check-circle-2" className="w-4 h-4 shrink-0" />
-                                <div className="flex flex-col">
-                                    <span className="font-semibold text-xs">ast-grep is installed and ready.</span>
-                                    <div className="flex gap-4 mt-0.5 opacity-80 font-mono text-[10px]">
-                                        <span>{astGrepInfo.version || 'v0.0.0'}</span>
-                                        <span className="truncate max-w-xs">{astGrepInfo.path}</span>
-                                    </div>
-                                </div>
+                            <div className="flex flex-col gap-1 opacity-70">
+                                <span className="text-[10px] font-mono truncate">{astGrepInfo.version || 'v0.0.0'}</span>
+                                <span className="text-[10px] font-mono truncate opacity-60 cursor-help" title={astGrepInfo.path}>{astGrepInfo.path}</span>
                             </div>
                         )}
 
                         <div className="flex items-center gap-4">
                             <button
-                                className={`btn btn-sm btn-primary ${isInstalling ? 'btn-disabled' : ''}`}
+                                className={`btn btn-sm ${astGrepInfo?.installed ? 'btn-ghost' : 'btn-primary'} ${isInstalling ? 'btn-disabled' : ''}`}
                                 onClick={handleInstall}
                             >
                                 {isInstalling ? (
@@ -250,11 +319,19 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                                     </>
                                 ) : (
                                     <>
-                                        <Icon icon="lucide:download" />
-                                        Install ast-grep
+                                        <Icon icon="lucide:download" className="w-4 h-4" />
+                                        {astGrepInfo?.installed ? 'Update' : 'Install ast-grep'}
                                     </>
                                 )}
                             </button>
+
+                            {astGrepInfo?.installed && (
+                                <DeleteAction
+                                    id="ast-grep"
+                                    confirmDelete={confirmDelete}
+                                    onDelete={handleToolDelete}
+                                />
+                            )}
 
                             {installStatus && (
                                 <div className={`text-xs ${installStatus.startsWith('Error') ? 'text-error' : 'text-success'}`}>
@@ -298,13 +375,13 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                                     {lang.info?.installed && (
                                         <div className="flex flex-col gap-1 opacity-70">
                                             <span className="text-[10px] font-mono truncate">{lang.info.version || 'v0.0.0'}</span>
-                                            <span className="text-[10px] font-mono truncate opacity-60">{lang.info.path}</span>
+                                            <span className="text-[10px] font-mono truncate opacity-60 cursor-help" title={lang.info.path}>{lang.info.path}</span>
                                         </div>
                                     )}
 
-                                    <div className="mt-auto pt-2 border-t border-base-200/50 flex flex-col gap-2">
+                                    <div className="mt-auto pt-2 border-t border-base-200/50 flex items-center gap-2">
                                         <button
-                                            className={`btn btn-xs ${lang.info?.installed ? 'btn-ghost' : 'btn-outline btn-secondary'} ${lang.isInstalling ? 'btn-disabled' : ''}`}
+                                            className={`btn btn-sm flex-1 ${lang.info?.installed ? 'btn-ghost' : 'btn-outline btn-secondary'} ${lang.isInstalling ? 'btn-disabled' : ''}`}
                                             onClick={() => handleScipInstall(lang.id as any)}
                                         >
                                             {lang.isInstalling ? (
@@ -314,17 +391,26 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                                                 </>
                                             ) : (
                                                 <>
-                                                    <Icon icon="lucide:download" className="w-3 h-3" />
-                                                    {lang.info?.installed ? 'Update' : `Install ${lang.label}`}
+                                                    <Icon icon="lucide:download" className="w-4 h-4" />
+                                                    {lang.info?.installed ? 'Update' : `Install`}
                                                 </>
                                             )}
                                         </button>
-                                        {lang.status && (
-                                            <div className={`text-[10px] ${lang.status.startsWith('Error') ? 'text-error' : 'text-success'} truncate`} title={lang.status}>
-                                                {lang.status}
-                                            </div>
+
+                                        {lang.info?.installed && (
+                                            <DeleteAction
+                                                id={`scip-${lang.id}`}
+                                                confirmDelete={confirmDelete}
+                                                onDelete={handleToolDelete}
+                                                label="Delete"
+                                            />
                                         )}
                                     </div>
+                                    {lang.status && (
+                                        <div className={`text-[10px] ${lang.status.startsWith('Error') ? 'text-error' : 'text-success'} truncate mt-1`} title={lang.status}>
+                                            {lang.status}
+                                        </div>
+                                    )}
                                 </div>
                             ))}
                         </div>
@@ -334,11 +420,11 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
 
 
 
-                    {/* Little Brain (Local SLM) */}
+                    {/* Semantic Reasoning (Local SLM) */}
                     <div className="flex flex-col gap-3">
                         <div className="flex items-center gap-2">
                             <Icon icon="lucide:brain" className="text-accent w-5 h-5" />
-                            <h3 className="font-bold text-lg">Little Brain (Local SLM)</h3>
+                            <h3 className="font-bold text-lg">Semantic Reasoning (Local SLM)</h3>
                         </div>
                         <p className="text-base-content/60 text-sm">
                             Sandboxed local models for semantic tasks like summarization and intent routing.
@@ -346,18 +432,27 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
                             {curatedModels.map((model) => {
-                                const isDownloaded = localModels.some(m => m.id === model.id);
+                                const localInfo = localModels.find(m => m.id === model.id);
+                                const isDownloaded = !!localInfo;
                                 const progress = downloadingModels[model.id];
 
                                 return (
                                     <div key={model.id} className="border border-base-200 rounded-lg p-4 bg-base-200/30 flex flex-col gap-3">
                                         <div className="flex items-center justify-between">
-                                            <div className="flex flex-col">
+                                            <div className="flex flex-col gap-0.5">
                                                 <span className="font-semibold text-sm">{model.name}</span>
                                                 <span className="text-[10px] opacity-60">{model.type} • {model.size}</span>
+                                                {localInfo?.path && (
+                                                    <span className="text-[10px] font-mono truncate opacity-60 cursor-help mt-1" title={localInfo.path}>
+                                                        {localInfo.path}
+                                                    </span>
+                                                )}
                                             </div>
                                             {isDownloaded ? (
-                                                <div className="badge badge-accent badge-sm py-2">Downloaded</div>
+                                                <div className="badge badge-success badge-sm gap-1 py-2">
+                                                    <Icon icon="lucide:check" className="w-3 h-3" />
+                                                    Downloaded
+                                                </div>
                                             ) : progress !== undefined ? (
                                                 <div className="badge badge-ghost badge-sm py-2 animate-pulse">Downloading...</div>
                                             ) : (
@@ -370,12 +465,32 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                                         )}
 
                                         <div className="mt-auto pt-2 border-t border-base-200/50">
-                                            <button
-                                                className={`btn btn-xs w-full ${isDownloaded ? 'btn-ghost' : 'btn-outline btn-accent'} ${progress !== undefined ? 'btn-disabled' : ''}`}
-                                                onClick={() => handleModelDownload(model)}
-                                            >
-                                                {isDownloaded ? 'Installed' : progress !== undefined ? 'Downloading...' : 'Download Model'}
-                                            </button>
+                                            {isDownloaded ? (
+                                                <DeleteAction
+                                                    id={model.id}
+                                                    confirmDelete={confirmDelete}
+                                                    onDelete={handleToolDelete}
+                                                    label="Delete"
+                                                    className="w-full"
+                                                />
+                                            ) : (
+                                                <button
+                                                    className={`btn btn-sm w-full ${progress !== undefined ? 'btn-disabled' : 'btn-outline btn-accent'}`}
+                                                    onClick={() => handleModelDownload(model)}
+                                                >
+                                                    {progress !== undefined ? (
+                                                        <>
+                                                            <span className="loading loading-spinner loading-xs"></span>
+                                                            Downloading...
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <Icon icon="lucide:download" className="w-4 h-4" />
+                                                            Download Model
+                                                        </>
+                                                    )}
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
                                 );

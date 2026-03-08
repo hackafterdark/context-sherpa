@@ -466,25 +466,48 @@ func (a *App) GetScipIndexerStatus(language string) map[string]interface{} {
 		binName = "scip-go"
 	}
 
-	if runtime.GOOS == "windows" {
-		binName += ".exe"
-	}
-
 	binDir, err := getSherpaBinDir()
 	if err != nil {
 		return result
 	}
 
-	targetPath := filepath.Join(binDir, binName)
-	// For npm-installed tools, they might be in node_modules/.bin
-	npmBinPath := filepath.Join(binDir, "node_modules", ".bin", binName)
+	// Priority extensions on Windows
+	extensions := []string{""}
+	if runtime.GOOS == "windows" {
+		extensions = []string{".exe", ".cmd", ".ps1", ".bat"}
+	}
 
-	if _, err := os.Stat(targetPath); err == nil {
-		result["installed"] = true
-		result["path"] = targetPath
-	} else if _, err := os.Stat(npmBinPath); err == nil {
-		result["installed"] = true
-		result["path"] = npmBinPath
+	// Places to look:
+	// 1. In sherpa bin directory
+	// 2. In sherpa bin/node_modules/.bin
+	// 3. In system PATH
+
+	checkPath := func(p string) bool {
+		for _, ext := range extensions {
+			fullPath := p + ext
+			if _, err := os.Stat(fullPath); err == nil {
+				result["installed"] = true
+				result["path"] = fullPath
+				return true
+			}
+		}
+		return false
+	}
+
+	// 1 & 2: Local sherpa bin
+	if !checkPath(filepath.Join(binDir, binName)) {
+		checkPath(filepath.Join(binDir, "node_modules", ".bin", binName))
+	}
+
+	// 3: System PATH
+	if !result["installed"].(bool) {
+		for _, ext := range extensions {
+			if path, err := exec.LookPath(binName + ext); err == nil {
+				result["installed"] = true
+				result["path"] = path
+				break
+			}
+		}
 	}
 
 	if result["installed"].(bool) {
@@ -494,17 +517,6 @@ func (a *App) GetScipIndexerStatus(language string) map[string]interface{} {
 			// Use the first line and trim
 			v := strings.Split(strings.TrimSpace(string(output)), "\n")[0]
 			result["version"] = v
-		}
-	} else {
-		// Fallback to system PATH
-		if path, err := exec.LookPath(binName); err == nil {
-			result["installed"] = true
-			result["path"] = path
-			cmd := exec.Command(path, "--version")
-			if output, err := cmd.CombinedOutput(); err == nil {
-				v := strings.Split(strings.TrimSpace(string(output)), "\n")[0]
-				result["version"] = v
-			}
 		}
 	}
 
@@ -705,6 +717,67 @@ func (a *App) InstallAstGrep() (string, error) {
 	}
 
 	return fmt.Sprintf("Latest ast-grep installed successfully to %s", targetPath), nil
+}
+
+// DeleteAstGrep removes the ast-grep binary from the local toolchain
+func (a *App) DeleteAstGrep() error {
+	binDir, err := getSherpaBinDir()
+	if err != nil {
+		return err
+	}
+	binName := "ast-grep"
+	if runtime.GOOS == "windows" {
+		binName = "ast-grep.exe"
+	}
+	targetPath := filepath.Join(binDir, binName)
+	if _, err := os.Stat(targetPath); err == nil {
+		return os.Remove(targetPath)
+	}
+	return nil
+}
+
+// DeleteScipIndexer uninstalls a SCIP indexer for a specific language
+func (a *App) DeleteScipIndexer(language string) error {
+	binDir, err := getSherpaBinDir()
+	if err != nil {
+		return err
+	}
+
+	// For NPM-based indexers, try to uninstall properly
+	if language == "typescript" || language == "python" {
+		npmPkg := "@sourcegraph/scip-" + language
+		if _, err := exec.LookPath("npm"); err == nil {
+			// Uninstall from our local prefix
+			cmd := exec.Command("npm", "uninstall", "--prefix", binDir, npmPkg)
+			cmd.Run()
+		}
+	}
+
+	// Direct binary cleanup (Go or leftover NPM shims)
+	binName := "scip-" + language
+	if language == "go" {
+		binName = "scip-go"
+	}
+
+	extensions := []string{""}
+	if runtime.GOOS == "windows" {
+		extensions = []string{".exe", ".cmd", ".ps1", ".bat"}
+	}
+
+	for _, ext := range extensions {
+		// 1. Root bin dir
+		targetPath := filepath.Join(binDir, binName+ext)
+		if _, err := os.Stat(targetPath); err == nil {
+			os.Remove(targetPath)
+		}
+		// 2. node_modules/.bin
+		npmBinPath := filepath.Join(binDir, "node_modules", ".bin", binName+ext)
+		if _, err := os.Stat(npmBinPath); err == nil {
+			os.Remove(npmBinPath)
+		}
+	}
+
+	return nil
 }
 
 
@@ -970,6 +1043,21 @@ func (a *App) ListLocalModels() ([]inference.ModelInfo, error) {
 		}
 	}
 	return models, nil
+}
+
+// DeleteModel removes a downloaded model file from disk
+func (a *App) DeleteModel(modelID string) error {
+	configDir, err := getSherpaConfigDir()
+	if err != nil {
+		return err
+	}
+	modelPath := filepath.Join(configDir, "models", modelID)
+	
+	if _, err := os.Stat(modelPath); os.IsNotExist(err) {
+		return nil // Already gone
+	}
+	
+	return os.Remove(modelPath)
 }
 
 // DownloadModel starts a background download of a model

@@ -134,7 +134,7 @@ func Start(workspaceRoot string, verbose bool, logFilePath string, astGrepPath s
 		server.WithToolCapabilities(false),
 	)
 
-	// Little Brain Tools
+	// Semantic Reasoning Tools
 	s.AddTool(mcp.NewTool("list_local_models",
 		mcp.WithDescription("List available local SLMs and their status."),
 	), listLocalModelsHandler)
@@ -586,7 +586,7 @@ func listSymbolsInFileHandler(ctx context.Context, req mcp.CallToolRequest) (*mc
 	// Normalize input path to match SCIP's internal format (use forward slashes consistently)
 	inputPath := filepath.ToSlash(filePath)
 	verboseLog("listSymbolsInFileHandler: searching for '%s' (inputPath), original: '%s'", inputPath, filePath)
-	
+
 	var symbols []map[string]interface{}
 	for idxNum, index := range indexes {
 		verboseLog("Searching index %d, documents: %d", idxNum, len(index.Documents))
@@ -597,7 +597,7 @@ func listSymbolsInFileHandler(ctx context.Context, req mcp.CallToolRequest) (*mc
 				for _, occ := range doc.Occurrences {
 					// Only include definitions (Role 1)
 					isDef := occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0
-					
+
 					if isDef {
 						symbolInfo := map[string]interface{}{
 							"symbol": occ.Symbol,
@@ -795,7 +795,7 @@ func indexWorkspace(workspaceRoot string, language string) error {
 	} else {
 		// Try to find managed indexer for other languages
 		indexerName := "scip-" + language
-		
+
 		// Priority paths
 		var pathsToTry []string
 		if runtime.GOOS == "windows" {
@@ -828,7 +828,7 @@ func indexWorkspace(workspaceRoot string, language string) error {
 		}
 
 		absOutput := filepath.Join(workspaceRoot, ".context-sherpa", fmt.Sprintf("index-%s.scip", language))
-		
+
 		// On Windows, if we are running a .cmd or .ps1, we might need to invoke it via cmd /c
 		if runtime.GOOS == "windows" && (strings.HasSuffix(indexPath, ".cmd") || strings.HasSuffix(indexPath, ".ps1")) {
 			verboseLog("Running indexer via cmd /c: %s index --output %s", indexPath, absOutput)
@@ -1990,7 +1990,7 @@ func listLocalModelsHandler(ctx context.Context, request mcp.CallToolRequest) (*
 }
 
 func switchLocalModelHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// In one-shot mode, we don't 'switch' models in the backend. 
+	// In one-shot mode, we don't 'switch' models in the backend.
 	// The client just provides the modelId in the inference request.
 	modelID, _ := request.RequireString("modelId")
 	return mcp.NewToolResultText(fmt.Sprintf("Model selection for one-shot tasks updated: %s. Use this ID in your next ask_little_brain call.", modelID)), nil
@@ -2037,7 +2037,6 @@ func askLittleBrainHandler(ctx context.Context, request mcp.CallToolRequest) (*m
 
 	return mcp.NewToolResultText(res.Text), nil
 }
-
 
 // loadSCIPIndexes loads all index-*.scip (and index.scip) files found in .context-sherpa directories
 // within the workspaceRoot or its first-level subdirectories.

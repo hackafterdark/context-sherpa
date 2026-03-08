@@ -23,7 +23,7 @@ func main() {
 	// 1. Smart Entry Point: Check for Headless / MCP mode
 	isMCPMode := false
 	mcpFlag := flag.Bool("mcp", false, "Run in headless MCP server mode")
-	
+
 	// Also parse legacy flags from cmd/context-sherpa/main.go
 	workspaceRoot := flag.String("workspaceRoot", "", "Workspace root directory (defaults to current working directory)")
 	projectRoot := flag.String("projectRoot", "", "Workspace root directory (legacy alias for workspaceRoot)")
@@ -31,12 +31,12 @@ func main() {
 	logFile := flag.String("logFile", "", "Path to file where logs will be appended (optional)")
 	astGrepPath := flag.String("astGrepPath", "", "Explicit path to ast-grep binary")
 	clientName := flag.String("client", "", "Name of the MCP client (optional)")
-	
-	// Little Brain CLI Flags
+
+	// Local SLM CLI Flags
 	downloadModel := flag.String("download-model", "", "Download a model from the specified URL")
 	listModels := flag.Bool("list-models", false, "List all locally downloaded models")
 	modelID := flag.String("model-id", "", "ID for the model being downloaded (default: filename)")
-	
+
 	// Ignore errors from flag parsing as wails dev uses its own flags sometimes
 	// We parse os.Args manually or use flag.CommandLine.Parse
 	_ = flag.CommandLine.Parse(os.Args[1:])
@@ -54,14 +54,14 @@ func main() {
 	// 2. Dispatch
 	if isMCPMode {
 		log.Println("Starting Context-Sherpa in Headless (MCP) Mode...")
-		
+
 		// Use workspaceRoot if provided, otherwise fallback to projectRoot for backward compatibility
 		finalWorkspaceRoot := *workspaceRoot
 		if finalWorkspaceRoot == "" {
 			finalWorkspaceRoot = *projectRoot
 		}
-		
-		// 2.5 Handle Little Brain CLI commands if in MCP mode (Headless)
+
+		// 2.5 Handle Local SLM CLI commands if in MCP mode (Headless)
 		if *listModels || *downloadModel != "" {
 			lockPath := mcp.GetHubLockPath() // Using this to find base dir
 			// mcp.GetHubLockPath returns the path to hub.lock, we want the directory
@@ -101,7 +101,7 @@ func main() {
 
 	// 3. GUI Mode
 	log.Println("Starting Context-Sherpa in GUI (Wails) Mode...")
-	
+
 	// Create an instance of the app structure
 	app := NewApp()
 

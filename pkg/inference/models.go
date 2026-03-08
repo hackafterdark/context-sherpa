@@ -16,7 +16,7 @@ type ModelInfo struct {
 	LastUsed    time.Time `json:"lastUsed"`
 }
 
-// InferenceRequest represents a request to the Little Brain
+// InferenceRequest represents a request to the Local SLM
 type InferenceRequest struct {
 	ModelID     string  `json:"modelId"`
 	Prompt      string  `json:"prompt"`
@@ -25,8 +25,8 @@ type InferenceRequest struct {
 	Temperature float32 `json:"temperature"`
 }
 
-// InferenceResponse represents the distilled output from Little Brain
+// InferenceResponse represents the distilled output from Local SLM
 type InferenceResponse struct {
-	Text string `json:"text"`
+	Text  string `json:"text"`
 	Error string `json:"error,omitempty"`
 }

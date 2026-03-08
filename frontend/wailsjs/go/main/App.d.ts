@@ -3,6 +3,12 @@
 import {main} from '../models';
 import {inference} from '../models';
 
+export function DeleteAstGrep():Promise<void>;
+
+export function DeleteModel(arg1:string):Promise<void>;
+
+export function DeleteScipIndexer(arg1:string):Promise<void>;
+
 export function DownloadModel(arg1:string,arg2:string):Promise<void>;
 
 export function GetAstGrepStatus():Promise<Record<string, any>>;
