@@ -111,12 +111,10 @@ func getCommunityRulesRepoURL() string {
 // Start initializes and starts the MCP server.
 func Start(workspaceRoot string, verbose bool, logFilePath string, astGrepPath string, clientName string) {
 	if workspaceRoot == "" {
-		// Attempt to auto-discover workspace root from executable location
-		if exePath, err := os.Executable(); err == nil {
-			if root, err := findWorkspaceRoot(filepath.Dir(exePath)); err == nil {
-				workspaceRoot = root
-				verboseLog("Auto-discovered workspace root: %s", workspaceRoot)
-			}
+		// Attempt to auto-discover workspace root starting from current working directory
+		if root, err := findWorkspaceRoot(""); err == nil {
+			workspaceRoot = root
+			verboseLog("Auto-discovered workspace root: %s", workspaceRoot)
 		}
 	}
 
