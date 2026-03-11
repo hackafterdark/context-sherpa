@@ -118,17 +118,21 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                                 links: data.links,
                                 categories: data.categories, // Used for force layout clustering
                                 roam: true,
+                                roamDetail: {
+                                    zoomLimit: { min: 0.1, max: 10 }
+                                },
                                 edgeSymbol: ['none', 'arrow'],
                                 edgeSymbolSize: [0, 8],
                                 edgeLabel: { show: false }, // Remove clutter
-                                label: {
-                                    position: 'right',
-                                    formatter: '{b}',
-                                    show: true,
-                                    fontSize: 9,
-                                    color: 'rgba(255,255,255,0.4)',
-                                    minMargin: 5
-                                },
+                                    label: {
+                                        position: 'right',
+                                        formatter: '{b}',
+                                        show: true,
+                                        fontSize: 9,
+                                        color: 'rgba(255,255,255,0.4)',
+                                        minMargin: 5,
+                                        silent: true // Prevents labels from blocking drag/pan
+                                    },
                                 lineStyle: {
                                     color: 'source',
                                     curveness: 0.1,
@@ -167,6 +171,34 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
         }
     }, [selectedIndex]);
 
+    const handleZoomIn = () => {
+        if (!chartInstance.current) return;
+        const currentZoom = (chartInstance.current.getOption() as any).series[0].zoom || 1;
+        chartInstance.current.setOption({
+            series: [{ zoom: currentZoom * 1.5 }]
+        });
+    };
+
+    const handleZoomOut = () => {
+        if (!chartInstance.current) return;
+        const currentZoom = (chartInstance.current.getOption() as any).series[0].zoom || 1;
+        chartInstance.current.setOption({
+            series: [{ zoom: currentZoom / 1.5 }]
+        });
+    };
+
+    const handleReset = () => {
+        if (!chartInstance.current) return;
+        chartInstance.current.setOption({
+            series: [{ 
+                center: null, 
+                zoom: 1 
+            }]
+        });
+        setSelectedNode(null);
+        setSelectedEdge(null);
+    };
+
     const focusSymbol = (query: string) => {
         if (!chartInstance.current) return;
         
@@ -182,8 +214,6 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
         if (idx !== -1) {
             const node = nodes[idx];
             
-            // Critical fix: Get current layout coordinates from the chart model
-            // instead of the raw data object (which might have undefined x/y)
             try {
                 const graphData = (chart as any).getModel().getSeriesByIndex(0).getData();
                 const layout = graphData.getItemLayout(idx);
@@ -192,8 +222,7 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                     chart.setOption({
                         series: [{
                             center: [layout[0], layout[1]],
-                            zoom: 2.5,
-                            data: nodes // Ensure data persists
+                            zoom: 2.5
                         }]
                     });
 
@@ -233,7 +262,7 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                 </div>
             </div>
 
-            <div className="flex flex-1 gap-6 px-6 pb-6 overflow-hidden min-min-h-0">
+            <div className="flex flex-1 gap-6 px-6 pb-6 overflow-hidden min-h-0">
                 {/* Fixed Sidebar: SCIP Files & Search */}
                 <div className="w-80 flex flex-col gap-8 shrink-0 border-r border-base-200 pr-6 overflow-y-auto scrollbar-hide">
                     <div className="flex flex-col gap-4">
@@ -292,9 +321,37 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                     )}
                     <div ref={chartRef} className="flex-1 w-full" />
                     
-                    {/* Graph Legend Overlay */}
-                    <div className="absolute left-6 bottom-6 pointer-events-auto z-10">
-                        <div className="bg-base-100/90 backdrop-blur-xl border border-base-300/50 rounded-xl p-4 shadow-xl ring-1 ring-black/5">
+                    {/* Legend & Controls Overlay */}
+                    <div className="absolute left-6 bottom-6 flex flex-col gap-4 pointer-events-none z-10">
+                        {/* Control Bar */}
+                        <div className="flex items-center gap-1 bg-base-100/90 backdrop-blur-xl border border-base-300/50 rounded-xl p-1.5 shadow-xl ring-1 ring-black/5 pointer-events-auto w-fit">
+                            <button 
+                                onClick={handleZoomIn}
+                                className="btn btn-ghost btn-sm btn-square hover:bg-primary/10 hover:text-primary transition-colors text-base-content/60"
+                                title="Zoom In"
+                            >
+                                <Icon icon="lucide:zoom-in" className="w-4 h-4" />
+                            </button>
+                            <button 
+                                onClick={handleZoomOut}
+                                className="btn btn-ghost btn-sm btn-square hover:bg-primary/10 hover:text-primary transition-colors text-base-content/60"
+                                title="Zoom Out"
+                            >
+                                <Icon icon="lucide:zoom-out" className="w-4 h-4" />
+                            </button>
+                            <div className="w-px h-4 bg-base-content/10 mx-0.5" />
+                            <button 
+                                onClick={handleReset}
+                                className="btn btn-ghost btn-sm px-3 gap-2 hover:bg-primary/10 hover:text-primary transition-colors text-base-content/60 text-[10px] font-black uppercase tracking-wider"
+                                title="Reset View"
+                            >
+                                <Icon icon="lucide:refresh-cw" className="w-3.5 h-3.5" />
+                                Reset
+                            </button>
+                        </div>
+
+                        {/* Legend */}
+                        <div className="bg-base-100/90 backdrop-blur-xl border border-base-300/50 rounded-xl p-4 shadow-xl ring-1 ring-black/5 pointer-events-auto">
                             <div className="text-[9px] font-black uppercase tracking-[0.2em] opacity-30 mb-3 ml-1">Symbol Legend</div>
                             <div className="grid grid-cols-2 gap-x-6 gap-y-3">
                                 <div className="flex items-center gap-2.5">
