@@ -10,7 +10,7 @@ type Workspace = {
     state: string;
 };
 
-export default function Home() {
+export default function Home({ onVisualize }: { onVisualize: (root: string) => void }) {
     const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
 
     useEffect(() => {
@@ -83,6 +83,13 @@ export default function Home() {
                                                 <td className="opacity-50 text-xs">{ws.pid}</td>
                                                 <td className="text-right whitespace-nowrap">
                                                     <div className="flex justify-end gap-1">
+                                                        <button
+                                                            onClick={() => onVisualize(ws.root)}
+                                                            className="btn btn-ghost btn-xs btn-square tooltip tooltip-left text-accent hover:bg-accent/10"
+                                                            data-tip="Visualize Codebase"
+                                                        >
+                                                            <Icon icon="lucide:network" className="w-4 h-4" />
+                                                        </button>
                                                         <button
                                                             onClick={() => OpenWorkspace(ws.root)}
                                                             className="btn btn-ghost btn-xs btn-square tooltip tooltip-left text-primary hover:bg-primary/10"

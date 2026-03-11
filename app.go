@@ -19,7 +19,9 @@ import (
 
 	"github.com/hackafterdark/context-sherpa/pkg/inference"
 	"github.com/hackafterdark/context-sherpa/pkg/mcp"
+	scip "github.com/sourcegraph/scip/bindings/go/scip"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"google.golang.org/protobuf/proto"
 )
 
 // Workspace represents a detected workspace from a Node
@@ -1142,5 +1144,313 @@ func (a *App) RunInference(modelID string, prompt string) (string, error) {
 		return "", err
 	}
 	return res.Text, nil
+}
+
+// SearchForIndexes recursively finds .scip files in the workspace
+func (a *App) SearchForIndexes(rootPath string) ([]string, error) {
+	var scipFiles []string
+	err := filepath.Walk(rootPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // Skip errors
+		}
+		if !info.IsDir() && (strings.HasSuffix(path, ".scip")) {
+			scipFiles = append(scipFiles, path)
+		}
+		return nil
+	})
+	return scipFiles, err
+}
+
+// GraphNode represents an ECharts graph node
+type GraphNode struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Value     int       `json:"value"`
+	Category  int       `json:"category"`
+	Path      string    `json:"path"`
+	Kind      string    `json:"kind"`
+	Docstring string    `json:"docstring"`
+	Members   []Member  `json:"members"`
+	Loc       int       `json:"loc"`
+}
+
+// Member represents a sub-component of a node (e.g., field or method)
+type Member struct {
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+}
+
+// GraphLink represents an ECharts graph link
+type GraphLink struct {
+	Source string `json:"source"`
+	Target string `json:"target"`
+	Label  string `json:"label"`
+}
+
+// GraphCategory represents an ECharts graph category
+type GraphCategory struct {
+	Name string `json:"name"`
+}
+
+// GraphData representing the response for ECharts
+type GraphData struct {
+	Nodes      []GraphNode     `json:"nodes"`
+	Links      []GraphLink     `json:"links"`
+	Categories []GraphCategory `json:"categories"`
+}
+
+// GetGraphData transforms SCIP data into ECharts JSON with "Hotpath" sizing and spatial clustering
+func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
+	data, err := os.ReadFile(scipPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var index scip.Index
+	if err := proto.Unmarshal(data, &index); err != nil {
+		return nil, fmt.Errorf("failed to parse SCIP index: %w", err)
+	}
+
+	nodes := make([]GraphNode, 0)
+	links := make([]GraphLink, 0)
+	seenNodes := make(map[string]bool)
+	seenLinks := make(map[string]bool)
+
+	// Custom Categories for Layout/Clustering (Folders)
+	// But Legend will be fixed to Code Kinds.
+	folderToCatID := make(map[string]int)
+	categories := make([]GraphCategory, 0)
+
+	symbolToNodeID := make(map[string]string)
+	symbolToInfo := make(map[string]*scip.SymbolInformation)
+	refCount := make(map[string]int)
+	outboundCalls := make(map[string]int)
+
+	addNode := func(n GraphNode) {
+		if n.ID != "" && !seenNodes[n.ID] {
+			nodes = append(nodes, n)
+			seenNodes[n.ID] = true
+		}
+	}
+
+	addLink := func(l GraphLink) {
+		if l.Source == "" || l.Target == "" || l.Source == l.Target {
+			return
+		}
+		key := fmt.Sprintf("%s-%s-%s", l.Source, l.Target, l.Label)
+		if !seenLinks[key] {
+			links = append(links, l)
+			seenLinks[key] = true
+		}
+	}
+
+	// 1. Pre-map symbol information and identify directories
+	for _, doc := range index.Documents {
+		dir := filepath.Dir(doc.RelativePath)
+		if dir == "." {
+			dir = "root"
+		}
+		if _, exists := folderToCatID[dir]; !exists {
+			folderToCatID[dir] = len(categories)
+			categories = append(categories, GraphCategory{Name: dir})
+		}
+		for _, si := range doc.Symbols {
+			symbolToInfo[si.Symbol] = si
+		}
+	}
+	for _, si := range index.ExternalSymbols {
+		symbolToInfo[si.Symbol] = si
+	}
+
+	// 2. Pass 1: Count references and outbound calls
+	for _, doc := range index.Documents {
+		var currentScope string
+		for _, occ := range doc.Occurrences {
+			if strings.Contains(occ.Symbol, "local") {
+				continue
+			}
+			isDef := occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0
+			if isDef {
+				currentScope = occ.Symbol
+				continue
+			}
+			// It's a reference
+			refCount[occ.Symbol]++
+			if currentScope != "" {
+				outboundCalls[currentScope]++
+			}
+		}
+	}
+
+	// 3. Pass 2: Create Symbol Nodes (No physical folder/file nodes)
+	for _, doc := range index.Documents {
+		dir := filepath.Dir(doc.RelativePath)
+		catID := folderToCatID[dir]
+
+		for _, occ := range doc.Occurrences {
+			if strings.Contains(occ.Symbol, "local") {
+				continue
+			}
+
+			isDef := occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0
+			if isDef {
+				// Filter noise
+				isMember := strings.HasSuffix(occ.Symbol, ".") || (strings.Contains(occ.Symbol, "#") && !strings.HasSuffix(occ.Symbol, "#"))
+				if isMember {
+					continue
+				}
+
+				nodeID := "sym:" + occ.Symbol
+				symbolToNodeID[occ.Symbol] = nodeID
+
+				name := occ.Symbol
+				if lastSlash := strings.LastIndex(name, "/"); lastSlash != -1 {
+					name = name[lastSlash+1:]
+				}
+				name = strings.TrimSuffix(name, "#")
+				name = strings.TrimSuffix(name, "().")
+				if name == "" {
+					name = "unnamed"
+				}
+
+				info := symbolToInfo[occ.Symbol]
+				docstring := ""
+				if info != nil && len(info.Documentation) > 0 {
+					docstring = info.Documentation[0]
+				}
+
+				// Calculate Lines of Code (LOC)
+				loc := 0
+				if len(occ.Range) >= 3 {
+					loc = int(occ.Range[2] - occ.Range[0] + 1)
+				}
+
+				// Calculate "Hotpath" value (Directive Weights)
+				kind := "Function"
+				val := 0
+
+				if strings.HasSuffix(occ.Symbol, "#") {
+					kind = "Struct"
+					// Count members for struct sizing
+					memberCount := 0
+					prefix := occ.Symbol
+					for sym := range symbolToInfo {
+						if strings.HasPrefix(sym, prefix) && sym != occ.Symbol {
+							if !strings.Contains(sym[len(prefix):], ".") {
+								memberCount++
+							}
+						}
+					}
+					// Value = (MemberCount * 5) + (ReferenceCount * 10)
+					val = (memberCount * 5) + (refCount[occ.Symbol] * 10)
+				} else if strings.Contains(occ.Symbol, "interface") {
+					kind = "Interface"
+					val = 15 + (refCount[occ.Symbol] * 5)
+				} else if strings.Contains(occ.Symbol, "var") || strings.Contains(occ.Symbol, "const") {
+					kind = "Variable"
+					val = 5 + (refCount[occ.Symbol] * 2)
+				} else {
+					// Function: Value = (OutboundCalls * 3) + (ReferenceCount * 5)
+					val = (outboundCalls[occ.Symbol] * 3) + (refCount[occ.Symbol] * 5)
+				}
+				
+				// Minimum size floor
+				if val < 5 { val = 5 }
+
+				addNode(GraphNode{
+					ID:        nodeID,
+					Name:      name,
+					Value:     val,
+					Category:  catID, // Spatial clustering by folder
+					Path:      doc.RelativePath,
+					Kind:      kind,
+					Docstring: docstring,
+					Members:   []Member{},
+					Loc:       loc,
+				})
+			}
+		}
+	}
+
+	// 4. Extract members for deep inspection
+	for i := range nodes {
+		if nodes[i].Kind != "Struct" && nodes[i].Kind != "Interface" {
+			continue
+		}
+		originalSymbol := nodes[i].ID[4:]
+		prefix := originalSymbol
+		for sym := range symbolToInfo {
+			if strings.HasPrefix(sym, prefix) && sym != originalSymbol {
+				memberName := sym[len(prefix):]
+				memberName = strings.TrimSuffix(memberName, ".")
+				if memberName != "" && !strings.Contains(memberName, ".") {
+					nodes[i].Members = append(nodes[i].Members, Member{
+						Name: memberName,
+						Kind: "Field/Method",
+					})
+				}
+			}
+		}
+	}
+
+	// 5. Build Links (Symbol to Symbol)
+	for _, doc := range index.Documents {
+		var currentScope string
+		for _, occ := range doc.Occurrences {
+			if strings.Contains(occ.Symbol, "local") {
+				continue
+			}
+			if occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0 {
+				if _, exists := symbolToNodeID[occ.Symbol]; exists {
+					currentScope = occ.Symbol
+				}
+				continue
+			}
+
+			// Reference
+			targetNodeID, exists := symbolToNodeID[occ.Symbol]
+			if exists && currentScope != "" {
+				sourceNodeID := symbolToNodeID[currentScope]
+				if sourceNodeID != "" && sourceNodeID != targetNodeID {
+					label := "CALLS"
+					if strings.HasSuffix(occ.Symbol, "#") {
+						label = "USES"
+					} else if strings.Contains(occ.Symbol, "interface") {
+						label = "IMPLEMENTS"
+					}
+					
+					// Get names/paths for Relationship Mode
+					sourceName := currentScope
+					if lastSlash := strings.LastIndex(sourceName, "/"); lastSlash != -1 {
+						sourceName = sourceName[lastSlash+1:]
+					}
+					targetName := occ.Symbol
+					if lastSlash := strings.LastIndex(targetName, "/"); lastSlash != -1 {
+						targetName = targetName[lastSlash+1:]
+					}
+
+					addLink(GraphLink{
+						Source: sourceNodeID,
+						Target: targetNodeID,
+						Label:  fmt.Sprintf("%s -> %s (%s)", sourceName, targetName, label),
+					})
+				}
+			}
+		}
+	}
+
+	// 6. Final Sweep: Ensure link integrity
+	finalLinks := make([]GraphLink, 0)
+	for _, l := range links {
+		if seenNodes[l.Source] && seenNodes[l.Target] {
+			finalLinks = append(finalLinks, l)
+		}
+	}
+
+	return &GraphData{
+		Nodes:      nodes,
+		Links:      finalLinks,
+		Categories: categories,
+	}, nil
 }
 

@@ -15,6 +15,8 @@ export function GetAstGrepStatus():Promise<Record<string, any>>;
 
 export function GetDownloadProgress(arg1:string):Promise<number>;
 
+export function GetGraphData(arg1:string):Promise<main.GraphData>;
+
 export function GetPreferences():Promise<main.UserPreferences>;
 
 export function GetScipIndexerStatus(arg1:string):Promise<Record<string, any>>;
@@ -36,3 +38,5 @@ export function OpenWorkspace(arg1:string):Promise<void>;
 export function RunInference(arg1:string,arg2:string):Promise<string>;
 
 export function SavePreferences(arg1:main.UserPreferences):Promise<void>;
+
+export function SearchForIndexes(arg1:string):Promise<Array<string>>;

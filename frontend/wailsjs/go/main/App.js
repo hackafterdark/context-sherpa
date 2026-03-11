@@ -26,6 +26,10 @@ export function GetDownloadProgress(arg1) {
   return window['go']['main']['App']['GetDownloadProgress'](arg1);
 }
 
+export function GetGraphData(arg1) {
+  return window['go']['main']['App']['GetGraphData'](arg1);
+}
+
 export function GetPreferences() {
   return window['go']['main']['App']['GetPreferences']();
 }
@@ -68,4 +72,8 @@ export function RunInference(arg1, arg2) {
 
 export function SavePreferences(arg1) {
   return window['go']['main']['App']['SavePreferences'](arg1);
+}
+
+export function SearchForIndexes(arg1) {
+  return window['go']['main']['App']['SearchForIndexes'](arg1);
 }

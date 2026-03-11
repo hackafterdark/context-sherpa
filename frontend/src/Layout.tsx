@@ -31,6 +31,14 @@ export default function Layout({ activeTab, setActiveTab, children }: LayoutProp
                     >
                         <Icon icon="lucide:layout-dashboard" className="text-xl" />
                     </button>
+
+                    <button
+                        className={`btn btn-square btn-ghost w-full transition-colors ${activeTab === 'atlas' ? 'bg-base-100 shadow-sm text-primary' : 'text-base-content/70 hover:bg-base-100 hover:text-base-content'} tooltip tooltip-right`}
+                        data-tip="Code Atlas"
+                        onClick={() => setActiveTab('atlas')}
+                    >
+                        <Icon icon="lucide:network" className="text-xl" />
+                    </button>
                 </div>
 
                 {/* Bottom Menu Items */}
@@ -46,8 +54,8 @@ export default function Layout({ activeTab, setActiveTab, children }: LayoutProp
             </div>
 
             {/* Main Content Area */}
-            <div className="flex-1 overflow-y-auto relative">
-                <div className="p-8 max-w-6xl mx-auto">
+            <div className="flex-1 overflow-hidden relative bg-base-200">
+                <div className={`p-8 ${activeTab === 'atlas' ? 'max-w-none w-full' : 'max-w-6xl mx-auto'} h-full flex flex-col`}>
                     {children}
                 </div>
             </div>
