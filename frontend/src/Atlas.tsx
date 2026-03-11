@@ -169,7 +169,9 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
 
     const focusSymbol = (query: string) => {
         if (!chartInstance.current) return;
-        const option = chartInstance.current.getOption() as any;
+        
+        const chart = chartInstance.current;
+        const option = chart.getOption() as any;
         const nodes = option.series[0].data;
         
         let idx = nodes.findIndex((n: any) => n.name === query || (n.id && n.id === "sym:" + query));
@@ -179,198 +181,194 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
 
         if (idx !== -1) {
             const node = nodes[idx];
-            // Zoom and center
-            chartInstance.current.setOption({
-                series: [{
-                    center: [node.x, node.y],
-                    zoom: 2,
-                    data: nodes // Keep existing data
-                }]
-            });
+            
+            // Critical fix: Get current layout coordinates from the chart model
+            // instead of the raw data object (which might have undefined x/y)
+            try {
+                const graphData = (chart as any).getModel().getSeriesByIndex(0).getData();
+                const layout = graphData.getItemLayout(idx);
+                
+                if (layout) {
+                    chart.setOption({
+                        series: [{
+                            center: [layout[0], layout[1]],
+                            zoom: 2.5,
+                            data: nodes // Ensure data persists
+                        }]
+                    });
 
-            chartInstance.current.dispatchAction({
-                type: 'focusNodeAdjacency',
-                seriesIndex: 0,
-                dataIndex: idx
-            });
-            chartInstance.current.dispatchAction({
-                type: 'select',
-                seriesIndex: 0,
-                dataIndex: idx
-            });
-            setSelectedNode(node);
+                    chart.dispatchAction({
+                        type: 'focusNodeAdjacency',
+                        seriesIndex: 0,
+                        dataIndex: idx
+                    });
+                    
+                    chart.dispatchAction({
+                        type: 'select',
+                        seriesIndex: 0,
+                        dataIndex: idx
+                    });
+
+                    setSelectedNode(node);
+                }
+            } catch (err) {
+                console.error("Failed to get layout coordinates:", err);
+            }
         }
     };
 
     const handleSearch = (e: React.FormEvent) => {
         e.preventDefault();
-        if (chartInstance.current && searchTerm) {
-            const option = chartInstance.current.getOption() as any;
-            const nodes = option.series[0].data;
-            const targetIdx = nodes.findIndex((n: any) => 
-                n.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                (n.path && n.path.toLowerCase().includes(searchTerm.toLowerCase()))
-            );
-
-            if (targetIdx !== -1) {
-                const node = nodes[targetIdx];
-                // Zoom and center
-                chartInstance.current.setOption({
-                    series: [{
-                        center: [node.x, node.y],
-                        zoom: 2,
-                        data: nodes
-                    }]
-                });
-
-                chartInstance.current.dispatchAction({
-                    type: 'focusNodeAdjacency',
-                    seriesIndex: 0,
-                    dataIndex: targetIdx
-                });
-                chartInstance.current.dispatchAction({
-                    type: 'select',
-                    seriesIndex: 0,
-                    dataIndex: targetIdx
-                });
-                setSelectedNode(node);
-            }
+        if (searchTerm) {
+            focusSymbol(searchTerm);
         }
     };
 
     return (
-        <div className="flex flex-col flex-1 h-full w-full gap-4 animate-in fade-in duration-300 relative">
-            <div className="flex justify-between items-center px-2">
+        <div className="flex flex-col flex-1 h-full w-full gap-4 animate-in fade-in duration-300 bg-base-100">
+            <div className="flex justify-between items-center px-6 pt-4 shrink-0">
                 <div className="flex items-center gap-3">
-                    <h1 className="text-3xl font-bold font-sans tracking-tight">Code Atlas</h1>
-                    <div className="badge badge-outline badge-sm opacity-50 font-mono">{workspaceRoot}</div>
+                    <h1 className="text-3xl font-bold font-sans tracking-tight text-base-content/90">Code Atlas</h1>
+                    <div className="badge badge-outline badge-sm opacity-40 font-mono border-base-content/20">{workspaceRoot}</div>
                 </div>
-
-                <form onSubmit={handleSearch} className="relative">
-                    <input
-                        type="text"
-                        placeholder="Search symbols..."
-                        className="input input-sm input-bordered w-64 pr-8 focus:input-primary transition-all bg-base-100"
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                    />
-                    <Icon icon="lucide:search" className="absolute right-2 top-1/2 -translate-y-1/2 opacity-50" />
-                </form>
             </div>
 
-            <div className="flex flex-1 gap-4 overflow-hidden min-h-0">
-                {/* Sidebar: SCIP Files */}
-                <div className="w-64 flex flex-col gap-2 overflow-y-auto pr-2 border-r border-base-content/5 flex-shrink-0 lg:flex-shrink">
-                    <h3 className="text-xs font-bold uppercase tracking-wider opacity-50 mb-2 px-2">Symbolic Indexes</h3>
-                    {indexFiles.length === 0 ? (
-                        <div className="p-4 text-sm opacity-50 italic">No .scip files found in this workspace.</div>
-                    ) : (
-                        indexFiles.map((file) => (
-                            <button
-                                key={file}
-                                onClick={() => setSelectedIndex(file)}
-                                className={`text-left p-2 rounded-lg text-xs transition-colors truncate ${
-                                    selectedIndex === file 
-                                    ? 'bg-primary text-primary-content shadow-md' 
-                                    : 'hover:bg-base-300 opacity-70 hover:opacity-100'
-                                }`}
-                                title={file}
-                            >
-                                <Icon icon="lucide:file-code" className="inline mr-2" />
-                                {file.split(/[\\/]/).pop()}
-                            </button>
-                        ))
-                    )}
+            <div className="flex flex-1 gap-6 px-6 pb-6 overflow-hidden min-min-h-0">
+                {/* Fixed Sidebar: SCIP Files & Search */}
+                <div className="w-80 flex flex-col gap-8 shrink-0 border-r border-base-200 pr-6 overflow-y-auto scrollbar-hide">
+                    <div className="flex flex-col gap-4">
+                        <div className="text-[10px] uppercase tracking-[0.2em] opacity-40 font-black px-1">Symbol Search</div>
+                        <form onSubmit={handleSearch} className="relative">
+                            <input
+                                type="text"
+                                placeholder="Search definitions..."
+                                className="input input-bordered w-full bg-base-200/40 focus:bg-base-200 transition-all shadow-sm pl-10 h-10 border-base-300 rounded-lg text-sm"
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                            />
+                            <Icon icon="lucide:search" className="absolute left-3.5 top-1/2 -translate-y-1/2 opacity-30 w-4 h-4" />
+                        </form>
+                    </div>
+                    
+                    <div className="flex flex-col gap-4">
+                        <div className="flex items-center justify-between px-1">
+                            <div className="text-[10px] uppercase tracking-[0.2em] opacity-50 font-black">Symbolic Indexes</div>
+                            <span className="badge badge-ghost badge-sm opacity-40 font-mono scale-90">{indexFiles.length}</span>
+                        </div>
+                        
+                        <div className="flex flex-col gap-2">
+                            {indexFiles.length === 0 ? (
+                                <div className="p-8 border border-dashed border-base-300 rounded-lg text-center opacity-30 text-xs">
+                                    No indexes found
+                                </div>
+                            ) : (
+                                indexFiles.map((file) => (
+                                    <button
+                                        key={file}
+                                        onClick={() => setSelectedIndex(file)}
+                                        className={`btn btn-sm justify-start gap-3 border-none shadow-sm h-12 normal-case font-bold ${
+                                            selectedIndex === file 
+                                                ? 'btn-primary bg-primary text-primary-content ring-1 ring-primary/40' 
+                                                : 'bg-base-200/60 hover:bg-base-300 border border-base-300/40'
+                                        } transition-all duration-150 rounded-lg group`}
+                                    >
+                                        <Icon icon="lucide:file-code" className={`w-4 h-4 ${selectedIndex === file ? 'opacity-100' : 'opacity-30 group-hover:opacity-100'} transition-opacity`} />
+                                        <div className="flex flex-col items-start min-w-0">
+                                            <span className="truncate max-w-[180px] font-mono text-[11px] tracking-tight">{file.split(/[\\/]/).pop()}</span>
+                                        </div>
+                                    </button>
+                                ))
+                            )}
+                        </div>
+                    </div>
                 </div>
 
-                {/* Main Canvas */}
-                <div className="flex-1 relative bg-base-100 rounded-2xl border border-base-200 overflow-hidden shadow-inner flex flex-col min-w-0">
+                {/* Main Visualization Area */}
+                <div className="flex-1 relative bg-base-100/50 rounded-xl border border-base-200 overflow-hidden shadow-sm flex flex-col min-w-0">
                     {loading && (
-                        <div className="absolute inset-0 z-10 flex items-center justify-center bg-base-100/50 backdrop-blur-sm">
+                        <div className="absolute inset-0 z-50 flex items-center justify-center bg-base-100/50 backdrop-blur-sm">
                             <span className="loading loading-spinner loading-lg text-primary"></span>
                         </div>
                     )}
                     <div ref={chartRef} className="flex-1 w-full" />
                     
-                    {/* Floating Legend Overlay */}
-                    <div className="absolute left-6 bottom-6 bg-base-200/80 backdrop-blur-md border border-base-300 rounded-xl p-3 shadow-lg pointer-events-none flex flex-col gap-2 z-10 transition-all hover:bg-base-200">
-                        <div className="text-[9px] font-bold uppercase tracking-widest opacity-40 mb-1">Code Atlas Legend</div>
-                        <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-                            <div className="flex items-center gap-2">
-                                <div className="w-2 h-2 rounded-full bg-[#f59e0b]"></div>
-                                <span className="text-[10px] font-medium opacity-80">Structs</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <div className="w-2 h-2 rounded-full bg-[#10b981]"></div>
-                                <span className="text-[10px] font-medium opacity-80">Interfaces</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <div className="w-2 h-2 rounded-full bg-[#3b82f6]"></div>
-                                <span className="text-[10px] font-medium opacity-80">Functions</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <div className="w-2 h-2 rounded-full bg-[#6b7280]"></div>
-                                <span className="text-[10px] font-medium opacity-80">Variables</span>
+                    {/* Graph Legend Overlay */}
+                    <div className="absolute left-6 bottom-6 pointer-events-auto z-10">
+                        <div className="bg-base-100/90 backdrop-blur-xl border border-base-300/50 rounded-xl p-4 shadow-xl ring-1 ring-black/5">
+                            <div className="text-[9px] font-black uppercase tracking-[0.2em] opacity-30 mb-3 ml-1">Symbol Legend</div>
+                            <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+                                <div className="flex items-center gap-2.5">
+                                    <div className="w-2.5 h-2.5 rounded-full bg-[#f59e0b] shadow-sm"></div>
+                                    <span className="text-[10px] font-bold opacity-70 tracking-tight">Structs</span>
+                                </div>
+                                <div className="flex items-center gap-2.5">
+                                    <div className="w-2.5 h-2.5 rounded-full bg-[#10b981] shadow-sm"></div>
+                                    <span className="text-[10px] font-bold opacity-70 tracking-tight">Interfaces</span>
+                                </div>
+                                <div className="flex items-center gap-2.5">
+                                    <div className="w-2.5 h-2.5 rounded-full bg-[#3b82f6] shadow-sm"></div>
+                                    <span className="text-[10px] font-bold opacity-70 tracking-tight">Functions</span>
+                                </div>
+                                <div className="flex items-center gap-2.5">
+                                    <div className="w-2.5 h-2.5 rounded-full bg-[#6b7280] shadow-sm"></div>
+                                    <span className="text-[10px] font-bold opacity-70 tracking-tight">Variables</span>
+                                </div>
                             </div>
                         </div>
                     </div>
-                    
+
                     {!selectedIndex && indexFiles.length > 0 && (
                         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                            <div className="text-center opacity-30">
-                                <Icon icon="lucide:network" className="text-6xl mx-auto mb-2" />
-                                <p>Select an index to visualize</p>
+                            <div className="text-center opacity-10">
+                                <Icon icon="lucide:network" className="text-8xl mx-auto mb-4" />
+                                <p className="text-xl font-black">Select an index to explore</p>
                             </div>
                         </div>
                     )}
 
-                    {/* Info Drawer (Selected Node or Edge) */}
+                    {/* Info Drawer Overlay */}
                     {(selectedNode || selectedEdge) && (
-                        <div className="absolute right-4 top-4 bottom-4 w-96 bg-base-200/95 backdrop-blur-xl rounded-2xl border border-base-300 shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-300 z-20">
+                        <div className="absolute right-6 top-6 bottom-6 w-[380px] bg-base-200 border border-base-300 shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-300 z-40 rounded-xl p-0.5">
+                            <div className="flex flex-col h-full bg-base-100 rounded-[10px] overflow-hidden">
                             {selectedNode ? (
                                 <>
-                                    <div className="p-5 border-b border-base-300 flex justify-between items-start bg-base-300/30">
+                                    <div className="p-6 border-b border-base-300/50 flex justify-between items-start bg-base-200/50">
                                         <div className="min-w-0 pr-4">
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <div className="badge badge-ghost badge-outline text-[10px] font-mono px-1 h-4 opacity-50 uppercase tracking-tighter">
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <div className="badge badge-primary badge-outline text-[10px] font-black px-2 h-5 opacity-60 uppercase tracking-widest rounded-md">
                                                     {selectedNode.kind}
                                                 </div>
                                             </div>
-                                            <h2 className="text-xl font-bold leading-none truncate tracking-tight py-1" title={selectedNode.name}>
+                                            <h2 className="text-xl font-black leading-tight tracking-tighter break-words" title={selectedNode.name}>
                                                 {selectedNode.name}
                                             </h2>
-                                            <div className="flex items-center gap-2 mt-2">
-                                                <div className="flex flex-col bg-base-100/50 px-2 py-1 rounded border border-base-300 min-w-[60px]">
-                                                    <span className="text-[7px] uppercase opacity-40 font-bold tracking-tighter leading-none mb-1">Score</span>
-                                                    <span className="text-xs font-mono font-bold leading-none">{selectedNode.value}</span>
+                                            <div className="flex items-center gap-2 mt-4">
+                                                <div className="flex flex-col bg-base-200/80 px-3 py-1.5 rounded-lg border border-base-300/50 min-w-[70px]">
+                                                    <span className="text-[8px] uppercase opacity-40 font-black tracking-widest leading-none mb-1">Impact</span>
+                                                    <span className="text-sm font-mono font-bold leading-none text-primary">{selectedNode.value}</span>
                                                 </div>
-                                                {selectedNode.members && selectedNode.members.length > 0 && (
-                                                    <div className="flex flex-col bg-base-100/50 px-2 py-1 rounded border border-base-300 min-w-[60px]">
-                                                        <span className="text-[7px] uppercase opacity-40 font-bold tracking-tighter leading-none mb-1">Members</span>
-                                                        <span className="text-xs font-mono font-bold leading-none">{selectedNode.members.length}</span>
-                                                    </div>
-                                                )}
                                                 {selectedNode.loc > 0 && (
-                                                    <div className="flex flex-col bg-base-100/50 px-2 py-1 rounded border border-base-300 min-w-[60px]">
-                                                        <span className="text-[7px] uppercase opacity-40 font-bold tracking-tighter leading-none mb-1">Lines</span>
-                                                        <span className="text-xs font-mono font-bold leading-none">{selectedNode.loc}</span>
+                                                    <div className="flex flex-col bg-base-200/80 px-3 py-1.5 rounded-lg border border-base-300/50 min-w-[70px]">
+                                                        <span className="text-[8px] uppercase opacity-40 font-black tracking-widest leading-none mb-1">Lines</span>
+                                                        <span className="text-sm font-mono font-bold leading-none">{selectedNode.loc}</span>
                                                     </div>
                                                 )}
-                                                <div className="text-[10px] font-mono opacity-40 truncate ml-auto" title={selectedNode.path || ''}>
-                                                    {selectedNode.path?.split(/[\\/]/).pop() || 'No Path'}
-                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-2 mt-4 opacity-30">
+                                                <Icon icon="lucide:file-text" className="w-3.5 h-3.5" />
+                                                <span className="text-[10px] font-mono truncate max-w-[200px]">{selectedNode.path || 'Virtual Node'}</span>
                                             </div>
                                         </div>
-                                        <button onClick={() => setSelectedNode(null)} className="btn btn-ghost btn-xs btn-circle shrink-0">
-                                            <Icon icon="lucide:x" />
+                                        <button onClick={() => setSelectedNode(null)} className="btn btn-ghost btn-xs btn-circle shrink-0 hover:bg-error/10 hover:text-error transition-colors">
+                                            <Icon icon="lucide:x" className="w-4 h-4" />
                                         </button>
                                     </div>
                                     
-                                    <div className="flex-1 overflow-y-auto p-5 space-y-6">
+                                    <div className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-hide">
                                         {selectedNode.docstring && (
                                             <section>
-                                                <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-2">Documentation</h3>
-                                                <div className="text-sm opacity-80 bg-base-100/50 p-3 rounded-lg border border-base-300 leading-relaxed font-sans whitespace-pre-wrap selection:bg-primary/30">
+                                                <h3 className="text-[10px] font-black uppercase tracking-widest opacity-30 mb-3 ml-1">Documentation</h3>
+                                                <div className="text-xs opacity-90 bg-base-200/30 p-4 rounded-xl border border-base-300/50 leading-relaxed font-sans whitespace-pre-wrap italic">
                                                     {selectedNode.docstring}
                                                 </div>
                                             </section>
@@ -378,22 +376,22 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
 
                                         {selectedNode.members && selectedNode.members.length > 0 && (
                                             <section>
-                                                <div className="flex items-center justify-between mb-2">
-                                                    <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30">Members</h3>
-                                                    <span className="badge badge-ghost badge-xs opacity-30">{selectedNode.members.length}</span>
+                                                <div className="flex items-center justify-between mb-3 px-1">
+                                                    <h3 className="text-[10px] font-black uppercase tracking-widest opacity-30">Members</h3>
+                                                    <span className="badge badge-ghost badge-sm opacity-30 font-mono font-bold">{selectedNode.members.length}</span>
                                                 </div>
-                                                <div className="flex flex-col gap-1 border border-base-300 rounded-lg overflow-hidden bg-base-100/30">
+                                                <div className="flex flex-col gap-1.5 bg-base-200/20 p-1.5 rounded-xl border border-base-300/50">
                                                     {selectedNode.members.map((m: any, idx: number) => (
                                                         <button 
                                                             key={idx}
                                                             onClick={() => focusSymbol(m.name)}
-                                                            className="flex items-center justify-between p-2.5 hover:bg-primary/10 transition-all text-xs text-left group border-b border-base-300 last:border-0"
+                                                            className="flex items-center justify-between p-3.5 hover:bg-primary hover:text-primary-content rounded-lg transition-all duration-200 text-xs text-left group border border-transparent shadow-sm"
                                                         >
-                                                            <div className="flex items-center gap-2">
-                                                                <Icon icon="lucide:dot" className="opacity-20 group-hover:text-primary group-hover:opacity-100" />
-                                                                <span className="opacity-80 group-hover:text-primary font-medium">{m.name}</span>
+                                                            <div className="flex items-center gap-3">
+                                                                <Icon icon="lucide:layers" className="opacity-20 group-hover:opacity-100 w-3.5 h-3.5" />
+                                                                <span className="font-bold opacity-80 group-hover:opacity-100">{m.name}</span>
                                                             </div>
-                                                            <span className="opacity-30 text-[9px] uppercase font-mono bg-base-300/50 px-1 rounded">{m.kind}</span>
+                                                            <span className="opacity-30 text-[9px] uppercase font-mono bg-base-300/50 px-2 py-0.5 rounded group-hover:bg-primary-focus group-hover:opacity-100">{m.kind}</span>
                                                         </button>
                                                     ))}
                                                 </div>
@@ -401,73 +399,75 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                                         )}
                                     </div>
                                     
-                                    <div className="p-4 bg-base-300/20 border-t border-base-300 flex justify-center">
+                                    <div className="p-6 bg-base-200/50 border-t border-base-300/50">
                                         <button 
                                             onClick={() => focusSymbol(selectedNode.name)}
-                                            className="btn btn-primary btn-xs btn-outline w-full gap-2 border-dashed"
+                                            className="btn btn-primary w-full h-12 gap-3 shadow-lg shadow-primary/20 rounded-xl text-sm font-bold"
                                         >
-                                            <Icon icon="lucide:target" />
-                                            Recenter Node
+                                            <Icon icon="lucide:target" className="w-4 h-4" />
+                                            Pinpoint Logic
                                         </button>
                                     </div>
                                 </>
                             ) : (
                                 <>
-                                    <div className="p-5 border-b border-base-300 flex justify-between items-start bg-base-300/30">
+                                    <div className="p-6 border-b border-base-300/50 flex justify-between items-start bg-base-200/50">
                                         <div>
-                                            <div className="badge badge-primary badge-outline text-[10px] font-mono px-1 h-4 opacity-50 uppercase tracking-tighter mb-1">Relationship</div>
-                                            <h2 className="text-xl font-bold tracking-tight">Call Logic</h2>
+                                            <div className="badge badge-secondary badge-outline text-[10px] font-black px-2 h-5 opacity-60 uppercase tracking-widest mb-1 rounded-md">Relationship</div>
+                                            <h2 className="text-xl font-black tracking-tighter">Call Pipeline</h2>
                                         </div>
-                                        <button onClick={() => setSelectedEdge(null)} className="btn btn-ghost btn-xs btn-circle shrink-0">
-                                            <Icon icon="lucide:x" />
+                                        <button onClick={() => setSelectedEdge(null)} className="btn btn-ghost btn-xs btn-circle shrink-0 hover:bg-error/10 hover:text-error transition-colors">
+                                            <Icon icon="lucide:x" className="w-4 h-4" />
                                         </button>
                                     </div>
-                                    <div className="flex-1 p-5 space-y-6 overflow-y-auto">
-                                        <section className="bg-base-100/50 rounded-xl border border-base-300 p-4">
-                                            <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-3">Source (Caller)</h3>
-                                            <div className="font-mono text-xs font-bold text-primary truncate" title={selectedEdge.source}>
-                                                {selectedEdge.source.replace('sym:', '')}
+                                    <div className="flex-1 p-6 space-y-6 overflow-y-auto scrollbar-hide">
+                                        <section className="bg-base-200/30 rounded-xl border border-base-300/50 p-5 relative">
+                                            <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-3 ml-1">Origin</h3>
+                                            <div className="font-mono text-xs font-bold text-primary break-all leading-relaxed bg-base-100 p-3 rounded-lg border border-base-300/30 shadow-sm">
+                                                {selectedEdge.source.replace(/^sym:\s*/, '').replace(/^scip-[^\s]+\s+[^\s]+\s+/, '')}
                                             </div>
                                         </section>
                                         
-                                        <div className="flex justify-center -my-3 relative z-10">
-                                            <div className="bg-base-200 p-2 rounded-full border border-base-300 shadow-sm">
-                                                <Icon icon="lucide:arrow-down" className="text-primary animate-bounce-slow" />
+                                        <div className="flex justify-center -my-6 relative z-10">
+                                            <div className="bg-primary p-2.5 rounded-full border-4 border-base-100 shadow-xl">
+                                                <Icon icon="lucide:chevron-down" className="text-primary-content w-4 h-4" />
                                             </div>
                                         </div>
 
-                                        <section className="bg-base-100/50 rounded-xl border border-base-300 p-4">
-                                            <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-3">Target (Callee)</h3>
-                                            <div className="font-mono text-xs font-bold text-success truncate" title={selectedEdge.target}>
-                                                {selectedEdge.target.replace('sym:', '')}
+                                        <section className="bg-base-200/30 rounded-xl border border-base-300/50 p-5 relative">
+                                            <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-3 ml-1">Destination</h3>
+                                            <div className="font-mono text-xs font-bold text-success break-all leading-relaxed bg-base-100 p-3 rounded-lg border border-base-300/30 shadow-sm">
+                                                {selectedEdge.target.replace(/^sym:\s*/, '').replace(/^scip-[^\s]+\s+[^\s]+\s+/, '')}
                                             </div>
                                         </section>
 
                                         <section>
-                                            <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-2">Dependency Type</h3>
-                                            <div className="p-3 bg-primary/5 rounded-lg border border-primary/20 text-sm font-medium italic opacity-80">
-                                                {selectedEdge.label}
+                                            <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-3 px-1">Flow Type</h3>
+                                            <div className="p-4 bg-primary/10 rounded-xl border border-primary/20 text-xs font-black italic text-primary/80 break-words flex items-center gap-3">
+                                                <Icon icon="lucide:git-branch" className="w-4 h-4" />
+                                                {selectedEdge.label.split('(').pop()?.replace(')', '') || 'Direct Link'}
                                             </div>
                                         </section>
                                     </div>
-                                    <div className="p-4 bg-base-300/20 border-t border-base-300 flex flex-col gap-2">
+                                    <div className="p-6 bg-base-200/50 border-t border-base-300/50 flex flex-col gap-3">
                                         <button 
                                             onClick={() => focusSymbol(selectedEdge.source.replace('sym:', ''))}
-                                            className="btn btn-ghost btn-xs w-full gap-2 border border-base-300"
+                                            className="btn btn-outline h-12 rounded-xl gap-3 border-base-300 hover:bg-base-200 transition-all font-bold text-sm"
                                         >
-                                            <Icon icon="lucide:log-out" className="rotate-180" />
-                                            Jump to Caller
+                                            <Icon icon="lucide:arrow-up-left" className="w-4 h-4" />
+                                            Jump to Origin
                                         </button>
                                         <button 
                                             onClick={() => focusSymbol(selectedEdge.target.replace('sym:', ''))}
-                                            className="btn btn-ghost btn-xs w-full gap-2 border border-base-300"
+                                            className="btn btn-outline h-12 rounded-xl gap-3 border-base-300 hover:bg-base-200 transition-all font-bold text-sm"
                                         >
-                                            <Icon icon="lucide:log-in" />
-                                            Jump to Callee
+                                            <Icon icon="lucide:arrow-down-right" className="w-4 h-4" />
+                                            Jump to Destination
                                         </button>
                                     </div>
                                 </>
                             )}
+                            </div>
                         </div>
                     )}
                 </div>

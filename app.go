@@ -1288,30 +1288,52 @@ func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
 		catID := folderToCatID[dir]
 
 		for _, occ := range doc.Occurrences {
-			if strings.Contains(occ.Symbol, "local") {
-				continue
-			}
-
 			isDef := occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0
 			if isDef {
-				// Filter noise
-				isMember := strings.HasSuffix(occ.Symbol, ".") || (strings.Contains(occ.Symbol, "#") && !strings.HasSuffix(occ.Symbol, "#"))
-				if isMember {
+				// Filter noise: skip local symbols
+				if strings.Contains(occ.Symbol, "local") {
 					continue
+				}
+
+				parsed, err := scip.ParseSymbol(occ.Symbol)
+				if err != nil || len(parsed.Descriptors) == 0 {
+					continue // Skip packages or unparseable symbols
+				}
+
+				// The last descriptor is the leaf (Method, Type, Term, etc.)
+				leaf := parsed.Descriptors[len(parsed.Descriptors)-1]
+				
+				// Skip Namespaces (Packages) as definitions - they are architectural noise
+				if leaf.Suffix == scip.Descriptor_Namespace {
+					continue
+				}
+
+				name := leaf.Name
+				kind := "Function"
+				
+				// Map SCIP Descriptor Suffix to our finite categories
+				switch leaf.Suffix {
+				case scip.Descriptor_Type:
+					kind = "Struct"
+				case scip.Descriptor_Term:
+					kind = "Variable"
+				case scip.Descriptor_Method:
+					kind = "Function"
+				case scip.Descriptor_Macro:
+					kind = "Function"
+				case scip.Descriptor_Parameter:
+					continue // Skip parameters for top-level graph
+				case scip.Descriptor_TypeParameter:
+					continue // Skip type parameters
+				}
+
+				// Additional refinement for Interfaces (often labeled as Types in SCIP but contain "interface" in symbol)
+				if kind == "Struct" && strings.Contains(strings.ToLower(occ.Symbol), "interface") {
+					kind = "Interface"
 				}
 
 				nodeID := "sym:" + occ.Symbol
 				symbolToNodeID[occ.Symbol] = nodeID
-
-				name := occ.Symbol
-				if lastSlash := strings.LastIndex(name, "/"); lastSlash != -1 {
-					name = name[lastSlash+1:]
-				}
-				name = strings.TrimSuffix(name, "#")
-				name = strings.TrimSuffix(name, "().")
-				if name == "" {
-					name = "unnamed"
-				}
 
 				info := symbolToInfo[occ.Symbol]
 				docstring := ""
@@ -1326,11 +1348,8 @@ func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
 				}
 
 				// Calculate "Hotpath" value (Directive Weights)
-				kind := "Function"
 				val := 0
-
-				if strings.HasSuffix(occ.Symbol, "#") {
-					kind = "Struct"
+				if kind == "Struct" || kind == "Interface" {
 					// Count members for struct sizing
 					memberCount := 0
 					prefix := occ.Symbol
@@ -1343,11 +1362,7 @@ func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
 					}
 					// Value = (MemberCount * 5) + (ReferenceCount * 10)
 					val = (memberCount * 5) + (refCount[occ.Symbol] * 10)
-				} else if strings.Contains(occ.Symbol, "interface") {
-					kind = "Interface"
-					val = 15 + (refCount[occ.Symbol] * 5)
-				} else if strings.Contains(occ.Symbol, "var") || strings.Contains(occ.Symbol, "const") {
-					kind = "Variable"
+				} else if kind == "Variable" {
 					val = 5 + (refCount[occ.Symbol] * 2)
 				} else {
 					// Function: Value = (OutboundCalls * 3) + (ReferenceCount * 5)
@@ -1421,13 +1436,20 @@ func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
 					
 					// Get names/paths for Relationship Mode
 					sourceName := currentScope
-					if lastSlash := strings.LastIndex(sourceName, "/"); lastSlash != -1 {
+					if parsed, err := scip.ParseSymbol(currentScope); err == nil && len(parsed.Descriptors) > 0 {
+						sourceName = parsed.Descriptors[len(parsed.Descriptors)-1].Name
+					} else if lastSlash := strings.LastIndex(sourceName, "/"); lastSlash != -1 {
 						sourceName = sourceName[lastSlash+1:]
 					}
+					
 					targetName := occ.Symbol
-					if lastSlash := strings.LastIndex(targetName, "/"); lastSlash != -1 {
+					if parsed, err := scip.ParseSymbol(occ.Symbol); err == nil && len(parsed.Descriptors) > 0 {
+						targetName = parsed.Descriptors[len(parsed.Descriptors)-1].Name
+					} else if lastSlash := strings.LastIndex(targetName, "/"); lastSlash != -1 {
 						targetName = targetName[lastSlash+1:]
 					}
+					sourceName = strings.TrimSuffix(strings.TrimSuffix(sourceName, "#"), "().")
+					targetName = strings.TrimSuffix(strings.TrimSuffix(targetName, "#"), "().")
 
 					addLink(GraphLink{
 						Source: sourceNodeID,
