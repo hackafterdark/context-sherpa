@@ -23,6 +23,9 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
     const [selectedNode, setSelectedNode] = useState<any>(null);
     const [selectedEdge, setSelectedEdge] = useState<any>(null);
     const [language, setLanguage] = useState<string>('Go');
+    const [searchResults, setSearchResults] = useState<any[]>([]);
+    const [showSearchResults, setShowSearchResults] = useState(false);
+    const searchRef = useRef<HTMLDivElement>(null);
 
     const getKindLabel = (kind: string, plural = false) => {
         if (kind === 'Struct') {
@@ -33,6 +36,16 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
         if (plural) return kind + 's';
         return kind;
     };
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+                setShowSearchResults(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     useEffect(() => {
         if (workspaceRoot) {
@@ -330,9 +343,49 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
         }
     };
 
+    const handleSearchChange = (val: string) => {
+        setSearchTerm(val);
+        if (!val.trim() || !cyRef.current) {
+            setSearchResults([]);
+            setShowSearchResults(false);
+            return;
+        }
+
+        const cy = cyRef.current;
+        const allNodes = cy.nodes().filter((n: any) => n.data('kind') !== 'Folder');
+        const query = val.toLowerCase();
+
+        const filtered = allNodes.map((n: any) => n.data())
+            .filter((data: any) => data.name.toLowerCase().includes(query))
+            .sort((a: any, b: any) => {
+                const aName = a.name.toLowerCase();
+                const bName = b.name.toLowerCase();
+                
+                // Exact match first
+                if (aName === query && bName !== query) return -1;
+                if (bName === query && aName !== query) return 1;
+                
+                // Prefix match next
+                const aPrefix = aName.startsWith(query);
+                const bPrefix = bName.startsWith(query);
+                if (aPrefix && !bPrefix) return -1;
+                if (bPrefix && !aPrefix) return 1;
+                
+                return aName.localeCompare(bName);
+            })
+            .slice(0, 15);
+
+        setSearchResults(filtered);
+        setShowSearchResults(filtered.length > 0);
+    };
+
     const handleSearch = (e: React.FormEvent) => {
         e.preventDefault();
-        if (searchTerm) {
+        if (searchResults.length > 0) {
+            const top = searchResults[0];
+            focusSymbol(top.id);
+            setShowSearchResults(false);
+        } else if (searchTerm) {
             focusSymbol(searchTerm);
         }
     };
@@ -348,7 +401,7 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
 
             <div className="flex flex-1 gap-6 px-6 pb-6 overflow-hidden min-h-0">
                 <div className="w-80 flex flex-col gap-8 shrink-0 border-r border-base-200 pr-6 overflow-y-auto scrollbar-hide">
-                    <div className="flex flex-col gap-4">
+                    <div className="flex flex-col gap-4 relative" ref={searchRef}>
                         <div className="text-[10px] uppercase tracking-[0.2em] opacity-40 font-black px-1">Symbol Search</div>
                         <form onSubmit={handleSearch} className="relative">
                             <input
@@ -356,10 +409,39 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                                 placeholder="Search definitions..."
                                 className="input input-bordered w-full bg-base-200/40 focus:bg-base-200 transition-all shadow-sm pl-10 h-10 border-base-300 rounded-lg text-sm"
                                 value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
+                                onChange={(e) => handleSearchChange(e.target.value)}
+                                onFocus={() => searchTerm && setShowSearchResults(true)}
                             />
                             <Icon icon="lucide:search" className="absolute left-3.5 top-1/2 -translate-y-1/2 opacity-30 w-4 h-4" />
                         </form>
+
+                        {showSearchResults && searchResults.length > 0 && (
+                            <div className="absolute top-[calc(100%+8px)] left-0 right-0 bg-base-100 border border-base-300 rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                                <div className="max-h-80 overflow-y-auto scrollbar-hide py-1">
+                                    {searchResults.map((res: any) => (
+                                        <button
+                                            key={res.id}
+                                            onClick={() => {
+                                                focusSymbol(res.id);
+                                                setShowSearchResults(false);
+                                            }}
+                                            className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-primary hover:text-primary-content transition-colors group text-left"
+                                        >
+                                            <div className="flex items-center gap-3 min-w-0">
+                                                <Icon 
+                                                    icon={res.kind === 'Struct' ? 'lucide:box' : res.kind === 'Function' ? 'lucide:zap' : 'lucide:hash'} 
+                                                    className="opacity-40 group-hover:opacity-100 w-3.5 h-3.5 shrink-0" 
+                                                />
+                                                <span className="text-xs font-bold truncate">{res.name}</span>
+                                            </div>
+                                            <span className="text-[9px] uppercase font-black opacity-30 group-hover:opacity-100 bg-base-200/50 group-hover:bg-primary-focus px-1.5 py-0.5 rounded ml-2 shrink-0">
+                                                {getKindLabel(res.kind)}
+                                            </span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     <div className="flex flex-col gap-4">
