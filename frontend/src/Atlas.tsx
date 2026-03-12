@@ -45,9 +45,9 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                             'background-color': (node: any) => {
                                 const kind = node.data('kind');
                                 return kind === 'Struct' ? '#f59e0b' :
-                                       kind === 'Interface' ? '#10b981' :
-                                       kind === 'Function' ? '#3b82f6' : 
-                                       kind === 'Variable' ? '#6b7280' : '#222';
+                                    kind === 'Interface' ? '#10b981' :
+                                        kind === 'Function' ? '#3b82f6' :
+                                            kind === 'Variable' ? '#6b7280' : '#222';
                             },
                             'label': 'data(name)',
                             'font-size': '8px',
@@ -75,7 +75,7 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                     {
                         selector: 'node:selected',
                         style: {
-                            'border-width': 3,
+                            'border-width': 0,
                             'border-color': '#fff',
                             'overlay-color': '#fff',
                             'overlay-padding': 4,
@@ -114,7 +114,7 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                     {
                         selector: 'node.highlighted',
                         style: {
-                            'border-width': 3,
+                            'border-width': 0,
                             'border-color': '#fff',
                             'opacity': 1,
                             'text-opacity': 1,
@@ -144,7 +144,7 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                     const currentPos = { x: evt.renderedPosition.x, y: evt.renderedPosition.y };
                     const dx = currentPos.x - lastPos.x;
                     const dy = currentPos.y - lastPos.y;
-                    
+
                     if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
                         cyRef.current?.panBy({ x: dx, y: dy });
                         lastPos = currentPos;
@@ -164,7 +164,7 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
             cyRef.current.on('tap', 'node', (evt) => {
                 // Ignore taps if we were just panning
                 if (cyRef.current?.container()?.classList.contains('panning')) return;
-                
+
                 const node = evt.target;
                 setSelectedEdge(null);
                 setSelectedNode(node.data());
@@ -189,7 +189,7 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                 const nh = node.closedNeighborhood(); // Current node + neighbors + edges
                 // Plus edges between neighbors
                 const neighborhood = nh.add(nh.edgesWith(nh));
-                
+
                 // Dim EVERYTHING EXCEPT folders and the neighborhood
                 cyRef.current?.elements().not('node[kind="Folder"]').addClass('dimmed');
                 neighborhood.removeClass('dimmed').addClass('highlighted');
@@ -224,7 +224,7 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                 if (data && cyRef.current) {
                     const cy = cyRef.current;
                     cy.elements().remove();
-                    
+
                     const elements = data.elements.map((el: any) => {
                         if (el.group === 'nodes' && el.data.kind !== 'Folder') {
                             return {
@@ -236,7 +236,7 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                             };
                         }
                         if (el.group === 'nodes' && el.data.kind === 'Folder') {
-                             return {
+                            return {
                                 ...el,
                                 data: {
                                     ...el.data,
@@ -290,14 +290,14 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
     const focusSymbol = (query: string) => {
         if (!cyRef.current) return;
         const cy = cyRef.current;
-        
-        let target = cy.nodes().filter((n: any) => 
-            n.data('name') === query || 
+
+        let target = cy.nodes().filter((n: any) =>
+            n.data('name') === query ||
             (n.data('id') && n.data('id') === "sym:" + query)
         );
 
         if (target.empty()) {
-            target = cy.nodes().filter((n: any) => 
+            target = cy.nodes().filter((n: any) =>
                 n.data('name').toLowerCase().includes(query.toLowerCase())
             );
         }
