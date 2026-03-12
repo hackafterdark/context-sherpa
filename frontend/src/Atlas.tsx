@@ -95,9 +95,10 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                         }
                     },
                     {
-                        selector: '.dimmed',
+                        selector: 'node.dimmed, edge.dimmed',
                         style: {
-                            'opacity': 0.1
+                            'opacity': 0.1,
+                            'text-opacity': 0.1
                         }
                     },
                     {
@@ -185,11 +186,12 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
             // High-speed hovering
             cyRef.current.on('mouseover', 'node', (evt) => {
                 const node = evt.target;
-                const nh = node.neighborhood().add(node);
-                // Include edges between neighbors for a complete local subgraph
+                const nh = node.closedNeighborhood(); // Current node + neighbors + edges
+                // Plus edges between neighbors
                 const neighborhood = nh.add(nh.edgesWith(nh));
                 
-                cyRef.current?.elements().addClass('dimmed');
+                // Dim EVERYTHING EXCEPT folders and the neighborhood
+                cyRef.current?.elements().not('node[kind="Folder"]').addClass('dimmed');
                 neighborhood.removeClass('dimmed').addClass('highlighted');
             });
 
