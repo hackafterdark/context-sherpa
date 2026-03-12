@@ -477,7 +477,7 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
         <div className="flex flex-col flex-1 h-full w-full gap-4 animate-in fade-in duration-300 bg-base-100">
             <div className="flex justify-between items-center px-6 pt-5 shrink-0">
                 <div className="flex items-center gap-4">
-                    <h1 className="text-3xl font-black font-sans tracking-tighter text-base-content/90">Code Atlas</h1>
+                    <h1 className="text-3xl font-bold font-sans tracking-tight">Code Atlas</h1>
                     <div className="dropdown dropdown-bottom">
                         <div tabIndex={0} role="button" className="badge badge-outline badge-md opacity-60 font-mono border-base-content/10 cursor-pointer hover:bg-base-300 transition-all flex items-center gap-2 pr-1.5 h-7 rounded-lg group">
                             <span className="truncate max-w-[200px] text-[10px] font-bold">{workspaceRoot}</span>
