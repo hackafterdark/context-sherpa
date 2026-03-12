@@ -90,7 +90,7 @@ export default function Home({ onVisualize }: { onVisualize: (root: string) => v
     };
 
     return (
-        <div className="flex flex-col gap-6 animate-in fade-in duration-300">
+        <div className="flex flex-col gap-6 animate-in fade-in duration-300 max-w-5xl">
             <div className="flex justify-between items-center">
                 <h1 className="text-3xl font-bold font-sans tracking-tight">Dashboard</h1>
                 <button 
@@ -102,8 +102,8 @@ export default function Home({ onVisualize }: { onVisualize: (root: string) => v
                 </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <div className="card bg-base-100 shadow-sm border border-base-200 col-span-1 md:col-span-2">
+            <div className="flex flex-col gap-6">
+                <div className="card bg-base-100 shadow-sm border border-base-200">
                     <div className="card-body">
                         <div className="flex justify-between items-center mb-4">
                             <h2 className="card-title text-xl flex items-center gap-2">

@@ -28,11 +28,12 @@ import (
 
 // Workspace represents a detected workspace from a Node
 type Workspace struct {
-	PID      int       `json:"pid"`
-	Root     string    `json:"root"`
-	Client   string    `json:"client"`
-	State    string    `json:"state"`
-	LastSeen time.Time `json:"lastSeen"`
+	PID       int       `json:"pid"`
+	Root      string    `json:"root"`
+	Client    string    `json:"client"`
+	State     string    `json:"state"`
+	LastSeen  time.Time `json:"lastSeen"`
+	IsManaged bool      `json:"isManaged"`
 }
 
 // UserPreferences represents persistent user settings
@@ -64,7 +65,7 @@ func (a *App) startup(ctx context.Context) {
 	if a.tryAcquireHubLock() {
 		a.isHub = true
 		fmt.Println("Hub: Successfully acquired hub.lock. Starting as Master Hub.")
-		
+
 		// Initialize Inference services
 		configDir, _ := getSherpaConfigDir()
 		modelsDir := filepath.Join(configDir, "models")
@@ -166,14 +167,16 @@ func (a *App) initDatabase() {
 	}
 
 	// Load existing workspaces into memory
-	rows, err := a.db.Query("SELECT root, client, last_seen FROM workspaces")
+	rows, err := a.db.Query("SELECT root, client, last_seen, is_managed FROM workspaces")
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
 			var ws Workspace
 			var lastSeen string
-			if err := rows.Scan(&ws.Root, &ws.Client, &lastSeen); err == nil {
+			var isManaged int
+			if err := rows.Scan(&ws.Root, &ws.Client, &lastSeen, &isManaged); err == nil {
 				ws.LastSeen, _ = time.Parse(time.RFC3339, lastSeen)
+				ws.IsManaged = isManaged == 1
 				ws.State = "offline"
 				a.workspaces = append(a.workspaces, ws)
 			}
@@ -222,16 +225,18 @@ func (a *App) RegisterWorkspace(path string) error {
 	for i, ws := range a.workspaces {
 		if ws.Root == absPath {
 			a.workspaces[i].LastSeen = time.Now()
+			a.workspaces[i].IsManaged = true
 			found = true
 			break
 		}
 	}
 	if !found {
 		a.workspaces = append(a.workspaces, Workspace{
-			Root:     absPath,
-			Client:   "manual",
-			State:    "offline",
-			LastSeen: time.Now(),
+			Root:      absPath,
+			Client:    "manual",
+			State:     "offline",
+			LastSeen:  time.Now(),
+			IsManaged: true,
 		})
 	}
 
@@ -279,7 +284,7 @@ func (a *App) RunIndexingTask(workspacePath string) error {
 			scipFilename := fmt.Sprintf("index-%s.scip", target.Lang)
 			scipRelPath := filepath.Join(".context-sherpa", scipFilename)
 			scipAbsPath := filepath.Join(target.Path, scipRelPath)
-			
+
 			_ = os.MkdirAll(filepath.Join(target.Path, ".context-sherpa"), 0755)
 
 			var cmd *exec.Cmd
@@ -294,7 +299,7 @@ func (a *App) RunIndexingTask(workspacePath string) error {
 				}
 			}
 			cmd.Dir = target.Path
-			
+
 			// Log the actual command being run
 			actualCmd := cmd.Path
 			if len(cmd.Args) > 1 {
@@ -415,7 +420,7 @@ func (a *App) discoverIndexTargets(root string) []IndexTarget {
 		// - AND (If P is Weak (Strength=1), NO descendant of P has a Strong signal for L).
 		for _, candidate := range candidates {
 			keep := true
-			
+
 			// Check ancestors
 			parent := filepath.Dir(candidate.path)
 			for {
@@ -546,8 +551,8 @@ func (a *App) startHubServer() {
 		// Persist to database
 		if a.db != nil {
 			_, err := a.db.Exec(`
-				INSERT INTO workspaces (root, client, last_seen)
-				VALUES (?, ?, ?)
+				INSERT INTO workspaces (root, client, last_seen, is_managed)
+				VALUES (?, ?, ?, 0)
 				ON CONFLICT(root) DO UPDATE SET
 					client = excluded.client,
 					last_seen = excluded.last_seen
@@ -610,7 +615,7 @@ func (a *App) startHubServer() {
 			http.Error(w, "Invalid payload", http.StatusBadRequest)
 			return
 		}
-		
+
 		// Trigger model load by calling Execute with empty prompt (or a dedicated Load method if we add it)
 		// For now, Execute handles loading if modelID is provided.
 		_, err := a.inference.Execute(r.Context(), inference.InferenceRequest{
@@ -904,8 +909,6 @@ func (a *App) GetScipIndexerStatus(language string) map[string]interface{} {
 	return result
 }
 
-
-
 // InstallScipIndexer downloads and installs a SCIP indexer for a specific language
 func (a *App) InstallScipIndexer(language string) (string, error) {
 	binDir, err := getSherpaBinDir()
@@ -1161,8 +1164,6 @@ func (a *App) DeleteScipIndexer(language string) error {
 	return nil
 }
 
-
-
 // extractAllZip extracts every file in a zip archive to the target directory
 func extractAllZip(zipPath, targetDir string) error {
 	r, err := zip.OpenReader(zipPath)
@@ -1359,9 +1360,9 @@ func (a *App) startSweeper() {
 		newWorkspaces := make([]Workspace, 0)
 
 		for _, ws := range a.workspaces {
-			// Stage 2: Remove entirely after 2 minutes of silence
-			if time.Since(ws.LastSeen) > 120*time.Second {
-				fmt.Printf("Hub: Sweeper removing dead workspace: %s (PID: %d)\n", ws.Root, ws.PID)
+			// Stage 2: Remove dead dynamic nodes after 2 minutes of silence
+			if !ws.IsManaged && time.Since(ws.LastSeen) > 120*time.Second {
+				fmt.Printf("Hub: Sweeper removing dead dynamic workspace: %s (PID: %d)\n", ws.Root, ws.PID)
 				updated = true
 				continue
 			}
@@ -1404,7 +1405,7 @@ func (a *App) ListLocalModels() ([]inference.ModelInfo, error) {
 		return nil, err
 	}
 	modelsDir := filepath.Join(configDir, "models")
-	
+
 	files, err := os.ReadDir(modelsDir)
 	if err != nil {
 		return nil, nil // Return empty list if dir doesn't exist
@@ -1433,11 +1434,11 @@ func (a *App) DeleteModel(modelID string) error {
 		return err
 	}
 	modelPath := filepath.Join(configDir, "models", modelID)
-	
+
 	if _, err := os.Stat(modelPath); os.IsNotExist(err) {
 		return nil // Already gone
 	}
-	
+
 	return os.Remove(modelPath)
 }
 
@@ -1542,16 +1543,16 @@ func (a *App) SearchForIndexes(rootPath string) ([]string, error) {
 
 // GraphNode represents an ECharts graph node
 type GraphNode struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Value     int       `json:"value"`
-	Category  int       `json:"category"`
-	Path      string    `json:"path"`
-	Kind      string    `json:"kind"`
-	Docstring string    `json:"docstring"`
-	Members   []Member  `json:"members"`
-	Loc       int       `json:"loc"`
-	Parent    string    `json:"parent,omitempty"`
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Value     int      `json:"value"`
+	Category  int      `json:"category"`
+	Path      string   `json:"path"`
+	Kind      string   `json:"kind"`
+	Docstring string   `json:"docstring"`
+	Members   []Member `json:"members"`
+	Loc       int      `json:"loc"`
+	Parent    string   `json:"parent,omitempty"`
 }
 
 // Member represents a sub-component of a node (e.g., field or method)
@@ -1689,7 +1690,7 @@ func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
 
 				// The last descriptor is the leaf (Method, Type, Term, etc.)
 				leaf := parsed.Descriptors[len(parsed.Descriptors)-1]
-				
+
 				// Skip Namespaces (Packages) as definitions - they are architectural noise
 				if leaf.Suffix == scip.Descriptor_Namespace {
 					continue
@@ -1697,7 +1698,7 @@ func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
 
 				name := leaf.Name
 				kind := "Function"
-				
+
 				// Map SCIP Descriptor Suffix to our finite categories
 				switch leaf.Suffix {
 				case scip.Descriptor_Type:
@@ -1755,9 +1756,11 @@ func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
 					// Function: Value = (OutboundCalls * 3) + (ReferenceCount * 5)
 					val = (outboundCalls[occ.Symbol] * 3) + (refCount[occ.Symbol] * 5)
 				}
-				
+
 				// Minimum size floor
-				if val < 5 { val = 5 }
+				if val < 5 {
+					val = 5
+				}
 
 				parentID := ""
 				if dir != "" && dir != "." {
@@ -1787,7 +1790,7 @@ func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
 		}
 		// Nodes[i].ID is "sym:" + symbol
 		originalSymbol := nodes[i].ID[4:]
-		
+
 		for sym := range symbolToInfo {
 			if strings.HasPrefix(sym, originalSymbol) && sym != originalSymbol {
 				parsed, err := scip.ParseSymbol(sym)
@@ -1803,8 +1806,8 @@ func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
 				if len(parsed.Descriptors) == len(parentParsed.Descriptors)+1 {
 					isChild = true
 					for j := 0; j < len(parentParsed.Descriptors); j++ {
-						if parsed.Descriptors[j].Name != parentParsed.Descriptors[j].Name || 
-						   parsed.Descriptors[j].Suffix != parentParsed.Descriptors[j].Suffix {
+						if parsed.Descriptors[j].Name != parentParsed.Descriptors[j].Name ||
+							parsed.Descriptors[j].Suffix != parentParsed.Descriptors[j].Suffix {
 							isChild = false
 							break
 						}
@@ -1853,7 +1856,7 @@ func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
 					} else if strings.Contains(occ.Symbol, "interface") {
 						label = "IMPLEMENTS"
 					}
-					
+
 					// Get names/paths for Relationship Mode
 					sourceName := currentScope
 					if parsed, err := scip.ParseSymbol(currentScope); err == nil && len(parsed.Descriptors) > 0 {
@@ -1861,7 +1864,7 @@ func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
 					} else if lastSlash := strings.LastIndex(sourceName, "/"); lastSlash != -1 {
 						sourceName = sourceName[lastSlash+1:]
 					}
-					
+
 					targetName := occ.Symbol
 					if parsed, err := scip.ParseSymbol(occ.Symbol); err == nil && len(parsed.Descriptors) > 0 {
 						targetName = parsed.Descriptors[len(parsed.Descriptors)-1].Name
@@ -1883,14 +1886,14 @@ func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
 
 	// 6. Final Sweep: Construct Cytoscape Elements
 	elements := make([]CyElement, 0)
-	
+
 	// Add Folder Nodes (Compound Nodes)
 	seenFolders := make(map[string]bool)
 	for dir := range folderToCatID {
 		if dir == "" || dir == "." || dir == "root" {
 			continue
 		}
-		
+
 		// Create hierarchical folder nodes
 		parts := strings.Split(dir, string(filepath.Separator))
 		currentPath := ""
@@ -1901,20 +1904,20 @@ func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
 			} else {
 				currentPath = currentPath + string(filepath.Separator) + part
 			}
-			
+
 			folderID := "dir:" + currentPath
 			if !seenFolders[folderID] {
 				parentID := ""
 				if i > 0 {
 					parentID = "dir:" + prevPath
 				}
-				
+
 				elements = append(elements, CyElement{
 					Group: "nodes",
 					Data: GraphNode{
-						ID:    folderID,
-						Name:  part,
-						Kind:  "Folder",
+						ID:     folderID,
+						Name:   part,
+						Kind:   "Folder",
 						Parent: parentID,
 					},
 				})
@@ -1988,4 +1991,3 @@ func detectLanguage(docs []*scip.Document) string {
 		return "Generic"
 	}
 }
-

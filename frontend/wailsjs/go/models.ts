@@ -129,6 +129,7 @@ export namespace main {
 	    state: string;
 	    // Go type: time
 	    lastSeen: any;
+	    isManaged: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Workspace(source);
@@ -141,6 +142,7 @@ export namespace main {
 	        this.client = source["client"];
 	        this.state = source["state"];
 	        this.lastSeen = this.convertValues(source["lastSeen"], null);
+	        this.isManaged = source["isManaged"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
