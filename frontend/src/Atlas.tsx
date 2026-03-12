@@ -246,7 +246,7 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                                 ...el,
                                 data: {
                                     ...el.data,
-                                    value: Math.sqrt(el.data.value) * 12
+                                    value: Math.round(Math.sqrt(el.data.value) * 12 * 100) / 100
                                 }
                             };
                         }
