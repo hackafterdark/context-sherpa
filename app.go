@@ -241,81 +241,238 @@ func (a *App) RegisterWorkspace(path string) error {
 	return nil
 }
 
-// RunIndexingTask triggers the SCIP indexer for a workspace and streams log output
+// IndexTarget represents a directory and language that should be indexed
+type IndexTarget struct {
+	Path string
+	Lang string
+}
+
+// RunIndexingTask triggers the SCIP indexer for a workspace and streams log output.
+// It discovers language-specific roots and runs indexers from those locations.
 func (a *App) RunIndexingTask(workspacePath string) error {
 	if !a.isHub {
 		return fmt.Errorf("only the Master Hub can run indexing tasks")
 	}
 
-	// 1. Detect language
-	lang := a.detectLanguage(workspacePath)
-	if lang == "" {
-		a.emitIndexingLog(workspacePath, "Error: Could not auto-detect language. Ensure project files (go.mod, package.json, etc.) exist.")
-		return fmt.Errorf("unsupported language")
+	targets := a.discoverIndexTargets(workspacePath)
+	a.emitIndexingLog(workspacePath, fmt.Sprintf("Discovered %d indexing targets.", len(targets)))
+	if len(targets) == 0 {
+		a.emitIndexingLog(workspacePath, "No indexable code files found (.go, .ts, .py, etc.).")
+		return fmt.Errorf("no indexable targets found")
 	}
 
-	// 2. Resolve indexer tool
-	status := a.GetScipIndexerStatus(lang)
-	if !status["installed"].(bool) {
-		a.emitIndexingLog(workspacePath, fmt.Sprintf("Error: Indexer for %s not installed. Please visit Settings to install it.", lang))
-		return fmt.Errorf("indexer not installed")
-	}
-	toolPath := status["path"].(string)
-
-	a.emitIndexingLog(workspacePath, "Starting indexing for "+lang+"...")
-
-	// 3. Prepare command
-	// For Go: scip-go (usually no args needed if go.mod is in root)
-	// For TS/Python: Usually need --output and --project-root
-	var cmd *exec.Cmd
-	scipPath := filepath.Join(workspacePath, ".context-sherpa", "index.scip")
-
-	if lang == "go" {
-		cmd = exec.Command(toolPath)
-		cmd.Dir = workspacePath
-	} else {
-		cmd = exec.Command(toolPath, "--project-root", workspacePath, "--output", scipPath)
-	}
-
-	// 4. Stream logs
-	stdout, _ := cmd.StdoutPipe()
-	stderr, _ := cmd.StderrPipe()
-
-	go a.streamLogsToUI(workspacePath, stdout)
-	go a.streamLogsToUI(workspacePath, stderr)
-
-	// 5. Run
 	go func() {
-		err := cmd.Run()
-		if err != nil {
-			a.emitIndexingLog(workspacePath, "Indexing failed: "+err.Error())
-			wailsRuntime.EventsEmit(a.ctx, "indexing-finished", map[string]interface{}{
-				"root":    workspacePath,
-				"success": false,
-				"error":   err.Error(),
-			})
-		} else {
-			a.emitIndexingLog(workspacePath, "Indexing complete! index.scip created.")
-			wailsRuntime.EventsEmit(a.ctx, "indexing-finished", map[string]interface{}{
-				"root":    workspacePath,
-				"success": true,
-			})
+		successCount := 0
+		for _, target := range targets {
+			a.emitIndexingLog(workspacePath, fmt.Sprintf("Processing %s in %s...", target.Lang, target.Path))
+
+			// Resolve indexer tool
+			status := a.GetScipIndexerStatus(target.Lang)
+			if !status["installed"].(bool) {
+				a.emitIndexingLog(workspacePath, fmt.Sprintf("Error: Indexer for %s not installed. Please visit Settings to install it.", target.Lang))
+				continue
+			}
+			toolPath := status["path"].(string)
+
+			// Prepare command and output path
+			// We use relative paths for --output to be safer on Windows
+			scipFilename := fmt.Sprintf("index-%s.scip", target.Lang)
+			scipRelPath := filepath.Join(".context-sherpa", scipFilename)
+			scipAbsPath := filepath.Join(target.Path, scipRelPath)
+			
+			_ = os.MkdirAll(filepath.Join(target.Path, ".context-sherpa"), 0755)
+
+			var cmd *exec.Cmd
+			if target.Lang == "go" {
+				cmd = exec.Command(toolPath, "--project-root", ".", "--repository-root", ".", "--output", scipRelPath)
+			} else {
+				// For scip-typescript and scip-python
+				if runtime.GOOS == "windows" && (strings.HasSuffix(toolPath, ".cmd") || strings.HasSuffix(toolPath, ".ps1") || strings.HasSuffix(toolPath, ".bat")) {
+					cmd = exec.Command("cmd", "/c", toolPath, "index", "--output", scipRelPath)
+				} else {
+					cmd = exec.Command(toolPath, "index", "--output", scipRelPath)
+				}
+			}
+			cmd.Dir = target.Path
+			
+			// Log the actual command being run
+			actualCmd := cmd.Path
+			if len(cmd.Args) > 1 {
+				actualCmd += " " + strings.Join(cmd.Args[1:], " ")
+			}
+			a.emitIndexingLog(workspacePath, fmt.Sprintf("Running: %s", actualCmd))
+
+			// Stream logs
+			stdout, _ := cmd.StdoutPipe()
+			stderr, _ := cmd.StderrPipe()
+
+			go a.streamLogsToUI(workspacePath, stdout)
+			go a.streamLogsToUI(workspacePath, stderr)
+
+			if err := cmd.Run(); err != nil {
+				a.emitIndexingLog(workspacePath, fmt.Sprintf("Indexing %s failed in %s: %v", target.Lang, target.Path, err))
+			} else {
+				// Verify file existence
+				if _, err := os.Stat(scipAbsPath); err == nil {
+					a.emitIndexingLog(workspacePath, fmt.Sprintf("Indexing %s complete! %s created at %s", target.Lang, scipFilename, scipAbsPath))
+					successCount++
+				} else {
+					a.emitIndexingLog(workspacePath, fmt.Sprintf("Indexing %s finished with success code, but %s was not found at expected path: %s", target.Lang, scipFilename, scipAbsPath))
+				}
+			}
 		}
+
+		wailsRuntime.EventsEmit(a.ctx, "indexing-finished", map[string]interface{}{
+			"root":    workspacePath,
+			"success": successCount > 0,
+			"count":   successCount,
+		})
 	}()
 
 	return nil
 }
 
+type langSignal struct {
+	path     string
+	strength int // 2 = Strong (config file), 1 = Weak (code file/hint)
+}
+
+func (a *App) discoverIndexTargets(root string) []IndexTarget {
+	// 1. Walk tree and collect all directories with any language signal
+	allSignals := make(map[string]map[string]int) // path -> lang -> strength
+
+	isExcluded := func(path string) bool {
+		base := filepath.Base(path)
+		return base == "node_modules" || base == ".git" || base == ".context-sherpa" || base == "vendor"
+	}
+
+	queue := []string{root}
+	for len(queue) > 0 {
+		path := queue[0]
+		queue = queue[1:]
+
+		if isExcluded(path) {
+			continue
+		}
+
+		files, err := os.ReadDir(path)
+		if err != nil {
+			continue
+		}
+
+		signals := make(map[string]int)
+		for _, f := range files {
+			if f.IsDir() {
+				queue = append(queue, filepath.Join(path, f.Name()))
+				continue
+			}
+			name := f.Name()
+			ext := filepath.Ext(name)
+
+			// Go Signals
+			if name == "go.mod" {
+				signals["go"] = 2
+			} else if ext == ".go" && signals["go"] < 1 {
+				signals["go"] = 1
+			}
+
+			// TypeScript/JS Signals
+			if name == "tsconfig.json" {
+				signals["typescript"] = 2
+			} else if (name == "package.json" || ext == ".ts" || ext == ".tsx" || ext == ".js" || ext == ".jsx") && signals["typescript"] < 1 {
+				signals["typescript"] = 1
+			}
+
+			// Python Signals
+			if name == "pyproject.toml" || name == "requirements.txt" {
+				signals["python"] = 2
+			} else if ext == ".py" && signals["python"] < 1 {
+				signals["python"] = 1
+			}
+		}
+
+		if len(signals) > 0 {
+			allSignals[path] = signals
+		}
+	}
+
+	// 2. Filter targets per language
+	var targets []IndexTarget
+	langs := []string{"go", "typescript", "python"}
+
+	for _, lang := range langs {
+		// Identify candidate paths for this language
+		var candidates []langSignal
+		for p, signals := range allSignals {
+			if strength, ok := signals[lang]; ok {
+				candidates = append(candidates, langSignal{path: p, strength: strength})
+			}
+		}
+
+		// Pruning logic:
+		// A candidate path P is kept for language L if:
+		// - NO ancestor of P has a Strong signal (Strength=2) for L.
+		// - AND (If P is Weak (Strength=1), NO descendant of P has a Strong signal for L).
+		for _, candidate := range candidates {
+			keep := true
+			
+			// Check ancestors
+			parent := filepath.Dir(candidate.path)
+			for {
+				if signals, ok := allSignals[parent]; ok {
+					if signals[lang] == 2 {
+						keep = false
+						break
+					}
+				}
+				if parent == root || parent == filepath.Dir(parent) {
+					break
+				}
+				parent = filepath.Dir(parent)
+			}
+
+			if !keep {
+				continue
+			}
+
+			// If Weak, check descendants for Strong signals
+			if candidate.strength == 1 {
+				for p, signals := range allSignals {
+					if signals[lang] == 2 && strings.HasPrefix(p, candidate.path+string(filepath.Separator)) {
+						keep = false
+						break
+					}
+				}
+			}
+
+			if keep {
+				targets = append(targets, IndexTarget{Path: candidate.path, Lang: lang})
+			}
+		}
+	}
+
+	// 3. Final pruning of targets for the same language (keep only highest ancestor among selected targets)
+	var finalTargets []IndexTarget
+	for _, t := range targets {
+		isSub := false
+		for _, other := range targets {
+			if t.Lang == other.Lang && t.Path != other.Path && strings.HasPrefix(t.Path, other.Path+string(filepath.Separator)) {
+				isSub = true
+				break
+			}
+		}
+		if !isSub {
+			finalTargets = append(finalTargets, t)
+		}
+	}
+
+	return finalTargets
+}
+
 func (a *App) detectLanguage(root string) string {
-	if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
-		return "go"
-	}
-	if _, err := os.Stat(filepath.Join(root, "package.json")); err == nil {
-		return "typescript"
-	}
-	if _, err := os.Stat(filepath.Join(root, "requirements.txt")); err == nil ||
-		(func() bool { _, e := os.Stat(filepath.Join(root, "pyproject.toml")); return e == nil }()) {
-		return "python"
+	targets := a.discoverIndexTargets(root)
+	if len(targets) > 0 {
+		return targets[0].Lang
 	}
 	return ""
 }
