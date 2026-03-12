@@ -1,7 +1,10 @@
 import { useEffect, useState, useRef } from 'react';
 import { Icon } from '@iconify/react';
-import * as echarts from 'echarts';
+import cytoscape from 'cytoscape';
+import fcose from 'cytoscape-fcose';
 import { SearchForIndexes, GetGraphData } from '../wailsjs/go/main/App';
+
+cytoscape.use(fcose);
 
 type AtlasProps = {
     workspaceRoot: string;
@@ -9,7 +12,7 @@ type AtlasProps = {
 
 export default function Atlas({ workspaceRoot }: AtlasProps) {
     const chartRef = useRef<HTMLDivElement>(null);
-    const chartInstance = useRef<echarts.ECharts | null>(null);
+    const cyRef = useRef<cytoscape.Core | null>(null);
     const [indexFiles, setIndexFiles] = useState<string[]>([]);
     const [selectedIndex, setSelectedIndex] = useState<string>('');
     const [loading, setLoading] = useState(false);
@@ -29,30 +32,120 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
     }, [workspaceRoot]);
 
     useEffect(() => {
-        if (chartRef.current && !chartInstance.current) {
-            chartInstance.current = echarts.init(chartRef.current);
+        if (chartRef.current && !cyRef.current) {
+            cyRef.current = cytoscape({
+                container: chartRef.current,
+                elements: [],
+                style: [
+                    {
+                        selector: 'node',
+                        style: {
+                            'width': 'data(value)',
+                            'height': 'data(value)',
+                            'background-color': (node: any) => {
+                                const kind = node.data('kind');
+                                return kind === 'Struct' ? '#f59e0b' :
+                                       kind === 'Interface' ? '#10b981' :
+                                       kind === 'Function' ? '#3b82f6' : '#6b7280';
+                            },
+                            'label': 'data(name)',
+                            'font-size': '8px',
+                            'color': 'rgba(255,255,255,0.6)',
+                            'text-valign': 'bottom',
+                            'text-halign': 'center',
+                            'text-margin-y': 4,
+                            'min-zoomed-font-size': 10, // Lod optimization: hide when small
+                            'z-index': 10,
+                            'transition-property': 'background-color, line-color, target-arrow-color, opacity',
+                            'transition-duration': 200
+                        }
+                    },
+                    {
+                        selector: 'node:selected',
+                        style: {
+                            'border-width': 3,
+                            'border-color': '#fff',
+                            'overlay-color': '#fff',
+                            'overlay-padding': 4,
+                            'overlay-opacity': 0.2
+                        }
+                    },
+                    {
+                        selector: 'edge',
+                        style: {
+                            'width': 1.5,
+                            'line-color': '#333',
+                            'target-arrow-color': '#333',
+                            'target-arrow-shape': 'triangle',
+                            'curve-style': 'bezier',
+                            'opacity': 0.2,
+                            'arrow-scale': 0.8
+                        }
+                    },
+                    {
+                        selector: 'edge.highlighted',
+                        style: {
+                            'opacity': 1,
+                            'line-color': '#666',
+                            'target-arrow-color': '#666',
+                            'width': 3
+                        }
+                    },
+                    {
+                        selector: 'node.highlighted',
+                        style: {
+                            'border-width': 2,
+                            'border-color': '#fff'
+                        }
+                    },
+                    {
+                        selector: '.dimmed',
+                        style: {
+                            'opacity': 0.1
+                        }
+                    }
+                ],
+                layout: { name: 'null' },
+                wheelSensitivity: 0.2,
+                boxSelectionEnabled: false,
+                autounselectify: false
+            });
 
-            chartInstance.current.on('click', (params: any) => {
-                if (params.dataType === 'node') {
-                    setSelectedEdge(null);
-                    setSelectedNode(params.data);
-                } else if (params.dataType === 'edge') {
+            // Interaction Overhaul
+            cyRef.current.on('tap', 'node', (evt) => {
+                const node = evt.target;
+                setSelectedEdge(null);
+                setSelectedNode(node.data());
+            });
+
+            cyRef.current.on('tap', 'edge', (evt) => {
+                const edge = evt.target;
+                setSelectedNode(null);
+                setSelectedEdge(edge.data());
+            });
+
+            cyRef.current.on('tap', (evt) => {
+                if (evt.target === cyRef.current) {
                     setSelectedNode(null);
-                    setSelectedEdge(params.data);
+                    setSelectedEdge(null);
                 }
             });
 
-            // Background click deselects
-            chartInstance.current.getZr().on('click', (event: any) => {
-                if (!event.target) {
-                    setSelectedNode(null);
-                    setSelectedEdge(null);
-                }
+            // High-speed hovering
+            cyRef.current.on('mouseover', 'node', (evt) => {
+                const node = evt.target;
+                const neighborhood = node.neighborhood().add(node);
+                cyRef.current?.elements().addClass('dimmed');
+                neighborhood.removeClass('dimmed').addClass('highlighted');
+            });
+
+            cyRef.current.on('mouseout', 'node', () => {
+                cyRef.current?.elements().removeClass('dimmed').removeClass('highlighted');
             });
         }
 
         const resizeObserver = new ResizeObserver(() => {
-            chartInstance.current?.resize();
+            cyRef.current?.resize();
         });
 
         if (chartRef.current) {
@@ -61,113 +154,50 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
 
         return () => {
             resizeObserver.disconnect();
-            chartInstance.current?.dispose();
-            chartInstance.current = null;
+            cyRef.current?.destroy();
+            cyRef.current = null;
         };
     }, []);
 
     useEffect(() => {
-        if (selectedIndex) {
+        if (selectedIndex && cyRef.current) {
             setLoading(true);
             setSelectedNode(null);
             setSelectedEdge(null);
             GetGraphData(selectedIndex).then((data) => {
-                if (data && chartInstance.current) {
-                    // Legend is fixed to Code Kinds (not directories)
-                    const legendData = ['Struct', 'Interface', 'Function', 'Variable'];
-
-                    const option = {
-                        title: {
-                            text: 'Hotpath Structural Atlas',
-                            subtext: selectedIndex.split(/[\\/]/).pop(),
-                            top: 'bottom',
-                            left: 'right',
-                            textStyle: { color: 'rgba(255,255,255,0.3)', fontSize: 11 }
-                        },
-                        tooltip: {
-                            show: true,
-                            trigger: 'item',
-                            formatter: (params: any) => {
-                                if (params.dataType === 'node') {
-                                    return `<strong>[${params.data.kind}] ${params.data.name}</strong><br/>Score: ${params.data.value}<br/>${params.data.path || ''}`;
+                if (data && cyRef.current) {
+                    const cy = cyRef.current;
+                    cy.elements().remove();
+                    
+                    const elements = data.elements.map((el: any) => {
+                        if (el.group === 'nodes') {
+                            return {
+                                ...el,
+                                data: {
+                                    ...el.data,
+                                    value: Math.sqrt(el.data.value) * 12 // Even larger for "Anchors"
                                 }
-                                return null; // Disable edge tooltips as requested
-                            }
-                        },
-                        legend: {
-                            data: legendData,
-                            orient: 'vertical',
-                            left: 10,
-                            top: 40,
-                            textStyle: { fontSize: 10, color: '#aaa' }
-                        },
-                        series: [
-                            {
-                                type: 'graph',
-                                layout: 'force',
-                                data: data.nodes.map((n: any) => ({
-                                    ...n,
-                                    symbolSize: Math.sqrt(n.value) * 4.5, // Normalized hotpath sizing
-                                    itemStyle: {
-                                        color: n.kind === 'Struct' ? '#f59e0b' :
-                                            n.kind === 'Interface' ? '#10b981' :
-                                                n.kind === 'Function' ? '#3b82f6' : '#6b7280'
-                                    },
-                                    name: n.name // Keep name for label
-                                })),
-                                links: data.links,
-                                categories: data.categories, // Used for force layout clustering
-                                roam: true,
-                                scaleLimit: { min: 0.1, max: 10 },
-                                edgeSymbol: ['none', 'arrow'],
-                                edgeSymbolSize: [0, 8],
-                                edgeLabel: { show: false }, // Remove clutter
-                                label: {
-                                    position: 'right',
-                                    formatter: '{b}',
-                                    show: true,
-                                    fontSize: 9,
-                                    color: 'rgba(255,255,255,0.4)',
-                                    minMargin: 5,
-                                    silent: true // Prevents labels from blocking drag/pan
-                                },
-                                lineStyle: {
-                                    color: 'source',
-                                    curveness: 0.1,
-                                    opacity: 0.1,
-                                    width: 1.5
-                                },
-                                emphasis: {
-                                    focus: 'adjacency',
-                                    lineStyle: { width: 4, opacity: 0.8 },
-                                    label: { show: true, fontWeight: 'bold', fontSize: 11, color: '#fff' }
-                                },
-                                force: {
-                                    repulsion: 4000,
-                                    friction: 0,
-                                    gravity: 0.05,
-                                    edgeLength: [60, 180],
-                                    // layoutAnimation: data.nodes.length < 1500
-                                    layoutAnimation: false
-                                },
-                                itemStyle: {
-                                    silent: false
-                                },
-                                draggable: true,
-                                select: {
-                                    itemStyle: { borderColor: '#fff', borderWidth: 2, shadowBlur: 10, shadowColor: '#fff' },
-                                    lineStyle: { color: '#fff', width: 3, opacity: 1 }
-                                }
-                            }
-                        ]
-                    };
-
-                    chartInstance.current.clear();
-                    setTimeout(() => {
-                        if (chartInstance.current) {
-                            chartInstance.current.setOption(option as any, true);
+                            };
                         }
-                    }, 0);
+                        return el;
+                    });
+
+                    cy.add(elements);
+
+                    const layout = cy.layout({
+                        name: 'fcose',
+                        randomize: true,
+                        packComponents: true,
+                        nodeRepulsion: () => 4500,
+                        idealEdgeLength: () => 100,
+                        sampleSize: 100,
+                        nodeSeparation: 75,
+                        gravity: 0.25,
+                        animate: false
+                    } as any);
+
+                    layout.run();
+                    cy.fit(undefined, 50);
                 }
                 setLoading(false);
             });
@@ -175,77 +205,43 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
     }, [selectedIndex]);
 
     const handleZoomIn = () => {
-        if (!chartInstance.current) return;
-        const currentZoom = (chartInstance.current.getOption() as any).series[0].zoom || 1;
-        chartInstance.current.setOption({
-            series: [{ zoom: currentZoom * 1.5 }]
-        });
+        cyRef.current?.zoom(cyRef.current.zoom() * 1.5);
     };
 
     const handleZoomOut = () => {
-        if (!chartInstance.current) return;
-        const currentZoom = (chartInstance.current.getOption() as any).series[0].zoom || 1;
-        chartInstance.current.setOption({
-            series: [{ zoom: currentZoom / 1.5 }]
-        });
+        cyRef.current?.zoom(cyRef.current.zoom() / 1.5);
     };
 
     const handleReset = () => {
-        if (!chartInstance.current) return;
-        chartInstance.current.setOption({
-            series: [{
-                center: null,
-                zoom: 0.7
-            }]
-        });
+        cyRef.current?.fit(undefined, 50);
         setSelectedNode(null);
         setSelectedEdge(null);
     };
 
     const focusSymbol = (query: string) => {
-        if (!chartInstance.current) return;
+        if (!cyRef.current) return;
+        const cy = cyRef.current;
+        
+        let target = cy.nodes().filter((n: any) => 
+            n.data('name') === query || 
+            (n.data('id') && n.data('id') === "sym:" + query)
+        );
 
-        const chart = chartInstance.current;
-        const option = chart.getOption() as any;
-        const nodes = option.series[0].data;
-
-        let idx = nodes.findIndex((n: any) => n.name === query || (n.id && n.id === "sym:" + query));
-        if (idx === -1) {
-            idx = nodes.findIndex((n: any) => n.name.toLowerCase().includes(query.toLowerCase()));
+        if (target.empty()) {
+            target = cy.nodes().filter((n: any) => 
+                n.data('name').toLowerCase().includes(query.toLowerCase())
+            );
         }
 
-        if (idx !== -1) {
-            const node = nodes[idx];
-
-            try {
-                const graphData = (chart as any).getModel().getSeriesByIndex(0).getData();
-                const layout = graphData.getItemLayout(idx);
-
-                if (layout) {
-                    chart.setOption({
-                        series: [{
-                            center: [layout[0], layout[1]],
-                            zoom: 2.5
-                        }]
-                    });
-
-                    chart.dispatchAction({
-                        type: 'focusNodeAdjacency',
-                        seriesIndex: 0,
-                        dataIndex: idx
-                    });
-
-                    chart.dispatchAction({
-                        type: 'select',
-                        seriesIndex: 0,
-                        dataIndex: idx
-                    });
-
-                    setSelectedNode(node);
-                }
-            } catch (err) {
-                console.error("Failed to get layout coordinates:", err);
-            }
+        if (!target.empty()) {
+            const first = target.first();
+            cy.animate({
+                center: { eles: first },
+                zoom: 1.5,
+                duration: 500
+            });
+            setSelectedNode(first.data());
+            first.select();
         }
     };
 
@@ -266,7 +262,6 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
             </div>
 
             <div className="flex flex-1 gap-6 px-6 pb-6 overflow-hidden min-h-0">
-                {/* Fixed Sidebar: SCIP Files & Search */}
                 <div className="w-80 flex flex-col gap-8 shrink-0 border-r border-base-200 pr-6 overflow-y-auto scrollbar-hide">
                     <div className="flex flex-col gap-4">
                         <div className="text-[10px] uppercase tracking-[0.2em] opacity-40 font-black px-1">Symbol Search</div>
@@ -314,7 +309,6 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                     </div>
                 </div>
 
-                {/* Main Visualization Area */}
                 <div className="flex-1 relative bg-base-100/50 rounded-xl border border-base-200 overflow-hidden shadow-sm flex flex-col min-w-0">
                     {loading && (
                         <div className="absolute inset-0 z-50 flex items-center justify-center bg-base-100/50 backdrop-blur-sm">
@@ -327,36 +321,21 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                         style={{ pointerEvents: 'auto' }}
                     />
 
-                    {/* Legend & Controls Overlay */}
                     <div className="absolute left-6 bottom-6 flex flex-col gap-4 pointer-events-none z-10">
-                        {/* Control Bar */}
                         <div className="flex items-center gap-1 bg-base-100/90 backdrop-blur-xl border border-base-300/50 rounded-xl p-1.5 shadow-xl ring-1 ring-black/5 pointer-events-auto w-fit">
-                            <button
-                                onClick={handleZoomIn}
-                                className="btn btn-ghost btn-sm btn-square hover:bg-primary/10 hover:text-primary transition-colors text-base-content/60"
-                                title="Zoom In"
-                            >
+                            <button onClick={handleZoomIn} className="btn btn-ghost btn-sm btn-square hover:bg-primary/10 hover:text-primary transition-colors text-base-content/60" title="Zoom In">
                                 <Icon icon="lucide:zoom-in" className="w-4 h-4" />
                             </button>
-                            <button
-                                onClick={handleZoomOut}
-                                className="btn btn-ghost btn-sm btn-square hover:bg-primary/10 hover:text-primary transition-colors text-base-content/60"
-                                title="Zoom Out"
-                            >
+                            <button onClick={handleZoomOut} className="btn btn-ghost btn-sm btn-square hover:bg-primary/10 hover:text-primary transition-colors text-base-content/60" title="Zoom Out">
                                 <Icon icon="lucide:zoom-out" className="w-4 h-4" />
                             </button>
                             <div className="w-px h-4 bg-base-content/10 mx-0.5" />
-                            <button
-                                onClick={handleReset}
-                                className="btn btn-ghost btn-sm px-3 gap-2 hover:bg-primary/10 hover:text-primary transition-colors text-base-content/60 text-[10px] font-black uppercase tracking-wider"
-                                title="Reset View"
-                            >
+                            <button onClick={handleReset} className="btn btn-ghost btn-sm px-3 gap-2 hover:bg-primary/10 hover:text-primary transition-colors text-base-content/60 text-[10px] font-black uppercase tracking-wider" title="Reset View">
                                 <Icon icon="lucide:refresh-cw" className="w-3.5 h-3.5" />
                                 Reset
                             </button>
                         </div>
 
-                        {/* Legend */}
                         <div className="bg-base-100/90 backdrop-blur-xl border border-base-300/50 rounded-xl p-4 shadow-xl ring-1 ring-black/5 pointer-events-auto">
                             <div className="text-[9px] font-black uppercase tracking-[0.2em] opacity-30 mb-3 ml-1">Symbol Legend</div>
                             <div className="grid grid-cols-2 gap-x-6 gap-y-3">
@@ -389,7 +368,6 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                         </div>
                     )}
 
-                    {/* Info Drawer Overlay */}
                     {(selectedNode || selectedEdge) && (
                         <div className="absolute right-6 top-6 bottom-6 w-[380px] bg-base-200 border border-base-300 shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-300 z-40 rounded-xl p-0.5">
                             <div className="flex flex-col h-full bg-base-100 rounded-[10px] overflow-hidden">

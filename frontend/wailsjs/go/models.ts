@@ -50,6 +50,20 @@ export namespace inference {
 
 export namespace main {
 	
+	export class CyElement {
+	    group: string;
+	    data: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new CyElement(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.group = source["group"];
+	        this.data = source["data"];
+	    }
+	}
 	export class GraphCategory {
 	    name: string;
 	
@@ -62,85 +76,8 @@ export namespace main {
 	        this.name = source["name"];
 	    }
 	}
-	export class GraphLink {
-	    source: string;
-	    target: string;
-	    label: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new GraphLink(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.source = source["source"];
-	        this.target = source["target"];
-	        this.label = source["label"];
-	    }
-	}
-	export class Member {
-	    name: string;
-	    kind: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new Member(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.kind = source["kind"];
-	    }
-	}
-	export class GraphNode {
-	    id: string;
-	    name: string;
-	    value: number;
-	    category: number;
-	    path: string;
-	    kind: string;
-	    docstring: string;
-	    members: Member[];
-	    loc: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new GraphNode(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.value = source["value"];
-	        this.category = source["category"];
-	        this.path = source["path"];
-	        this.kind = source["kind"];
-	        this.docstring = source["docstring"];
-	        this.members = this.convertValues(source["members"], Member);
-	        this.loc = source["loc"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
 	export class GraphData {
-	    nodes: GraphNode[];
-	    links: GraphLink[];
+	    elements: CyElement[];
 	    categories: GraphCategory[];
 	
 	    static createFrom(source: any = {}) {
@@ -149,8 +86,7 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.nodes = this.convertValues(source["nodes"], GraphNode);
-	        this.links = this.convertValues(source["links"], GraphLink);
+	        this.elements = this.convertValues(source["elements"], CyElement);
 	        this.categories = this.convertValues(source["categories"], GraphCategory);
 	    }
 	
@@ -172,9 +108,6 @@ export namespace main {
 		    return a;
 		}
 	}
-	
-	
-	
 	export class UserPreferences {
 	    theme: string;
 	

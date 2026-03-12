@@ -1187,15 +1187,20 @@ type GraphLink struct {
 	Label  string `json:"label"`
 }
 
-// GraphCategory represents an ECharts graph category
+// GraphCategory represents a graph category (e.g., folder or kind)
 type GraphCategory struct {
 	Name string `json:"name"`
 }
 
-// GraphData representing the response for ECharts
+// CyElement represents a Cytoscape.js element (node or edge)
+type CyElement struct {
+	Group string `json:"group"`
+	Data  any    `json:"data"`
+}
+
+// GraphData representing the response for Cytoscape.js
 type GraphData struct {
-	Nodes      []GraphNode     `json:"nodes"`
-	Links      []GraphLink     `json:"links"`
+	Elements   []CyElement     `json:"elements"`
 	Categories []GraphCategory `json:"categories"`
 }
 
@@ -1461,17 +1466,34 @@ func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
 		}
 	}
 
-	// 6. Final Sweep: Ensure link integrity
-	finalLinks := make([]GraphLink, 0)
+	// 6. Final Sweep: Construct Cytoscape Elements
+	elements := make([]CyElement, 0)
+	
+	// Add Nodes
+	for _, n := range nodes {
+		elements = append(elements, CyElement{
+			Group: "nodes",
+			Data:  n,
+		})
+	}
+
+	// Add Edges
 	for _, l := range links {
 		if seenNodes[l.Source] && seenNodes[l.Target] {
-			finalLinks = append(finalLinks, l)
+			elements = append(elements, CyElement{
+				Group: "edges",
+				Data: map[string]interface{}{
+					"id":     fmt.Sprintf("e-%s-%s", l.Source, l.Target),
+					"source": l.Source,
+					"target": l.Target,
+					"label":  l.Label,
+				},
+			})
 		}
 	}
 
 	return &GraphData{
-		Nodes:      nodes,
-		Links:      finalLinks,
+		Elements:   elements,
 		Categories: categories,
 	}, nil
 }
