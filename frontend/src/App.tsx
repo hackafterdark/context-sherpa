@@ -37,7 +37,7 @@ function App() {
     return (
         <Layout activeTab={activeTab} setActiveTab={setActiveTab}>
             {activeTab === 'home' && <Home onVisualize={openAtlas} />}
-            {activeTab === 'atlas' && <Atlas workspaceRoot={atlasWorkspace} />}
+            {activeTab === 'atlas' && <Atlas workspaceRoot={atlasWorkspace} onWorkspaceChange={setAtlasWorkspace} />}
             {activeTab === 'settings' && <Settings theme={theme} setTheme={setTheme} />}
         </Layout>
     );

@@ -2,7 +2,8 @@ import { useEffect, useState, useRef } from 'react';
 import { Icon } from '@iconify/react';
 import cytoscape from 'cytoscape';
 import fcose from 'cytoscape-fcose';
-import { SearchForIndexes, GetGraphData } from '../wailsjs/go/main/App';
+import { SearchForIndexes, GetGraphData, GetWorkspaces } from '../wailsjs/go/main/App';
+import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -11,9 +12,10 @@ cytoscape.use(fcose);
 
 type AtlasProps = {
     workspaceRoot: string;
+    onWorkspaceChange: (root: string) => void;
 };
 
-export default function Atlas({ workspaceRoot }: AtlasProps) {
+export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) {
     const chartRef = useRef<HTMLDivElement>(null);
     const cyRef = useRef<cytoscape.Core | null>(null);
     const [indexFiles, setIndexFiles] = useState<string[]>([]);
@@ -25,6 +27,7 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
     const [language, setLanguage] = useState<string>('Go');
     const [searchResults, setSearchResults] = useState<any[]>([]);
     const [showSearchResults, setShowSearchResults] = useState(false);
+    const [allWorkspaces, setAllWorkspaces] = useState<any[]>([]);
     const searchRef = useRef<HTMLDivElement>(null);
 
     const getKindLabel = (kind: string, plural = false) => {
@@ -35,6 +38,63 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
         }
         if (plural) return kind + 's';
         return kind;
+    };
+
+    const buildTree = (files: string[], root: string) => {
+        const tree: any[] = [];
+        files.forEach(file => {
+            const relative = file.startsWith(root) ? file.slice(root.length).replace(/^[\\/]/, '') : file;
+            const parts = relative.split(/[\\/]/);
+            let current = tree;
+            let currentPath = '';
+            
+            parts.forEach((part, i) => {
+                const isLast = i === parts.length - 1;
+                currentPath = currentPath ? `${currentPath}/${part}` : part;
+                let node = current.find(n => n.name === part);
+                if (!node) {
+                    node = { 
+                        name: part, 
+                        path: isLast ? file : currentPath,
+                        kind: isLast ? 'file' : 'folder', 
+                        children: [] 
+                    };
+                    current.push(node);
+                }
+                current = node.children;
+            });
+        });
+        return tree;
+    };
+
+    const renderTree = (nodes: any[], depth = 0) => {
+        return nodes.sort((a,b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'folder' ? -1 : 1)).map(node => (
+            <div key={node.path}>
+                {node.kind === 'folder' ? (
+                    <div className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-black opacity-30 uppercase tracking-[0.2em] select-none mt-2 first:mt-0">
+                        <div style={{ width: depth * 12 }} />
+                        <Icon icon="lucide:folder" className="w-2.5 h-2.5" />
+                        {node.name}
+                    </div>
+                ) : (
+                    <button
+                        key={node.path}
+                        onClick={() => setSelectedIndex(node.path)}
+                        className={`flex items-center gap-2 w-full px-3 py-1.5 text-[11px] rounded-lg transition-all text-left group ${
+                            selectedIndex === node.path 
+                            ? 'bg-primary/10 text-primary font-bold border border-primary/20' 
+                            : 'hover:bg-base-200 border border-transparent opacity-60 hover:opacity-100'
+                        }`}
+                        style={{ paddingLeft: depth * 12 + 12 }}
+                    >
+                        <Icon icon="lucide:file-code" className={`w-3 h-3 ${selectedIndex === node.path ? 'opacity-100' : 'opacity-30 group-hover:opacity-100'}`} />
+                        <span className="truncate">{node.name}</span>
+                        {selectedIndex === node.path && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary" />}
+                    </button>
+                )}
+                {node.children && node.children.length > 0 && renderTree(node.children, depth + 1)}
+            </div>
+        ));
     };
 
     useEffect(() => {
@@ -48,9 +108,32 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
     }, []);
 
     useEffect(() => {
+        const fetchWorkspaces = async () => {
+            try {
+                const ws = await GetWorkspaces();
+                // De-dupe by root path
+                const unique = Array.from(new Map((ws as any[]).map(item => [item.root, item])).values());
+                setAllWorkspaces(unique);
+            } catch (e) {
+                console.error("Error fetching workspaces:", e);
+            }
+        };
+
+        fetchWorkspaces();
+        EventsOn('workspace-updated', (ws: any[]) => {
+            const unique = Array.from(new Map(ws.map(item => [item.root, item])).values());
+            setAllWorkspaces(unique);
+        });
+
+        return () => EventsOff('workspace-updated');
+    }, []);
+
+    useEffect(() => {
         if (workspaceRoot) {
+            setLoading(true); // Add loading state when switching
             SearchForIndexes(workspaceRoot).then((files) => {
                 setIndexFiles(files || []);
+                setLoading(false);
                 if (files && files.length > 0) {
                     setSelectedIndex(files[0]);
                 }
@@ -392,15 +475,44 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
 
     return (
         <div className="flex flex-col flex-1 h-full w-full gap-4 animate-in fade-in duration-300 bg-base-100">
-            <div className="flex justify-between items-center px-6 pt-4 shrink-0">
-                <div className="flex items-center gap-3">
-                    <h1 className="text-3xl font-bold font-sans tracking-tight text-base-content/90">Code Atlas</h1>
-                    <div className="badge badge-outline badge-sm opacity-40 font-mono border-base-content/20">{workspaceRoot}</div>
+            <div className="flex justify-between items-center px-6 pt-5 shrink-0">
+                <div className="flex items-center gap-4">
+                    <h1 className="text-3xl font-black font-sans tracking-tighter text-base-content/90">Code Atlas</h1>
+                    <div className="dropdown dropdown-bottom">
+                        <div tabIndex={0} role="button" className="badge badge-outline badge-md opacity-60 font-mono border-base-content/10 cursor-pointer hover:bg-base-300 transition-all flex items-center gap-2 pr-1.5 h-7 rounded-lg group">
+                            <span className="truncate max-w-[200px] text-[10px] font-bold">{workspaceRoot}</span>
+                            <Icon icon="lucide:chevron-down" className="w-3 h-3 opacity-30 group-hover:opacity-100 transition-opacity" />
+                        </div>
+                        <ul tabIndex={0} className="dropdown-content z-[100] menu p-2 shadow-2xl bg-base-100 rounded-2xl border border-base-300 w-96 mt-3 animate-in fade-in slide-in-from-top-2 duration-200 overflow-hidden">
+                            <div className="text-[10px] font-black uppercase tracking-[0.2em] opacity-30 px-4 py-3 border-b border-base-300/50 mb-1">Loaded Workspaces</div>
+                            <div className="max-h-80 overflow-y-auto scrollbar-hide py-1">
+                                {allWorkspaces.map(ws => (
+                                    <li key={ws.root}>
+                                        <button 
+                                            onClick={() => {
+                                                onWorkspaceChange(ws.root);
+                                                (document.activeElement as HTMLElement)?.blur();
+                                            }}
+                                            className={`flex flex-col items-start gap-1 py-3 px-4 rounded-xl mx-1 my-0.5 ${ws.root === workspaceRoot ? 'bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20' : 'hover:bg-base-200 border border-transparent'}`}
+                                        >
+                                            <div className="flex items-center gap-2.5 w-full">
+                                                <Icon icon="lucide:folder-tree" className={`w-3.5 h-3.5 ${ws.root === workspaceRoot ? 'text-primary' : 'opacity-40'}`} />
+                                                <span className="font-bold text-xs truncate flex-1 leading-none">{ws.root.split(/[\\/]/).pop() || ws.root}</span>
+                                            </div>
+                                            <span className="text-[9px] opacity-30 font-mono truncate w-full pl-6 leading-none">
+                                                {ws.root}
+                                            </span>
+                                        </button>
+                                    </li>
+                                ))}
+                            </div>
+                        </ul>
+                    </div>
                 </div>
             </div>
 
             <div className="flex flex-1 gap-6 px-6 pb-6 overflow-hidden min-h-0">
-                <div className="w-80 flex flex-col gap-8 shrink-0 border-r border-base-200 pr-6 overflow-y-auto scrollbar-hide">
+                <div className="w-80 flex flex-col gap-8 shrink-0 border-r border-base-200 pr-4 overflow-y-auto scrollbar-hide py-4">
                     <div className="flex flex-col gap-4 relative" ref={searchRef}>
                         <div className="text-[10px] uppercase tracking-[0.2em] opacity-40 font-black px-1">Symbol Search</div>
                         <form onSubmit={handleSearch} className="relative">
@@ -446,31 +558,19 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
 
                     <div className="flex flex-col gap-4">
                         <div className="flex items-center justify-between px-1">
-                            <div className="text-[10px] uppercase tracking-[0.2em] opacity-50 font-black">Symbolic Indexes</div>
-                            <span className="badge badge-ghost badge-sm opacity-40 font-mono scale-90">{indexFiles.length}</span>
+                            <div className="text-[10px] uppercase tracking-[0.2em] opacity-40 font-black">Symbolic Indexes</div>
+                            <span className="badge badge-ghost badge-sm opacity-20 font-mono scale-75 border-none">{indexFiles.length}</span>
                         </div>
 
-                        <div className="flex flex-col gap-2">
+                        <div className="flex flex-col">
                             {indexFiles.length === 0 ? (
-                                <div className="p-8 border border-dashed border-base-300 rounded-lg text-center opacity-30 text-xs">
+                                <div className="p-8 border border-dashed border-base-300 rounded-xl text-center opacity-20 text-xs">
                                     No indexes found
                                 </div>
                             ) : (
-                                indexFiles.map((file) => (
-                                    <button
-                                        key={file}
-                                        onClick={() => setSelectedIndex(file)}
-                                        className={`btn btn-sm justify-start gap-3 border-none shadow-sm h-12 normal-case font-bold ${selectedIndex === file
-                                            ? 'btn-primary bg-primary text-primary-content ring-1 ring-primary/40'
-                                            : 'bg-base-200/60 hover:bg-base-300 border border-base-300/40'
-                                            } transition-all duration-150 rounded-lg group`}
-                                    >
-                                        <Icon icon="lucide:file-code" className={`w-4 h-4 ${selectedIndex === file ? 'opacity-100' : 'opacity-30 group-hover:opacity-100'} transition-opacity`} />
-                                        <div className="flex flex-col items-start min-w-0">
-                                            <span className="truncate max-w-[180px] font-mono text-[11px] tracking-tight">{file.split(/[\\/]/).pop()}</span>
-                                        </div>
-                                    </button>
-                                ))
+                                <div className="flex flex-col">
+                                    {renderTree(buildTree(indexFiles, workspaceRoot))}
+                                </div>
                             )}
                         </div>
                     </div>
