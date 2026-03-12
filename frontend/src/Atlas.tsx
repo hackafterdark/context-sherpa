@@ -3,6 +3,9 @@ import { Icon } from '@iconify/react';
 import cytoscape from 'cytoscape';
 import fcose from 'cytoscape-fcose';
 import { SearchForIndexes, GetGraphData } from '../wailsjs/go/main/App';
+import ReactMarkdown from 'react-markdown';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 cytoscape.use(fcose);
 
@@ -478,8 +481,47 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                                             {selectedNode.docstring && (
                                                 <section>
                                                     <h3 className="text-[10px] font-black uppercase tracking-widest opacity-30 mb-3 ml-1">Documentation</h3>
-                                                    <div className="text-xs opacity-90 bg-base-200/30 p-4 rounded-xl border border-base-300/50 leading-relaxed font-sans whitespace-pre-wrap italic">
-                                                        {selectedNode.docstring}
+                                                    <div className="prose prose-sm prose-invert max-w-none p-4 rounded-xl border border-base-300/50 bg-base-200/30 text-xs italic opacity-90">
+                                                        <ReactMarkdown
+                                                            components={{
+                                                                code({ node, inline, className, children, ...props }: any) {
+                                                                    const match = /language-(\w+)/.exec(className || '');
+                                                                    return !inline && match ? (
+                                                                        <SyntaxHighlighter
+                                                                            style={vscDarkPlus}
+                                                                            language={match[1]}
+                                                                            PreTag="div"
+                                                                            wrapLongLines={true}
+                                                                            customStyle={{
+                                                                                margin: 0,
+                                                                                padding: '12px',
+                                                                                background: 'rgba(0,0,0,0.2)',
+                                                                                fontSize: '11px',
+                                                                                lineHeight: '1.5',
+                                                                                overflowX: 'hidden',
+                                                                                whiteSpace: 'pre-wrap',
+                                                                                wordBreak: 'break-all'
+                                                                            }}
+                                                                            codeTagProps={{
+                                                                                style: {
+                                                                                    whiteSpace: 'pre-wrap',
+                                                                                    wordBreak: 'break-all',
+                                                                                    display: 'block'
+                                                                                }
+                                                                            }}
+                                                                        >
+                                                                            {String(children).replace(/\n$/, '')}
+                                                                        </SyntaxHighlighter>
+                                                                    ) : (
+                                                                        <code className={className} {...props}>
+                                                                            {children}
+                                                                        </code>
+                                                                    );
+                                                                }
+                                                            }}
+                                                        >
+                                                            {selectedNode.docstring}
+                                                        </ReactMarkdown>
                                                     </div>
                                                 </section>
                                             )}

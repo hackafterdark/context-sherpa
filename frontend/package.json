@@ -12,11 +12,14 @@
     "dependencies": {
         "@iconify/react": "^6.0.2",
         "@types/cytoscape": "^3.31.0",
+        "@types/react-syntax-highlighter": "^15.5.13",
         "cytoscape": "^3.33.1",
         "cytoscape-fcose": "^2.2.0",
         "echarts": "^6.0.0",
         "react": "^18.3.1",
-        "react-dom": "^18.3.1"
+        "react-dom": "^18.3.1",
+        "react-markdown": "^10.1.0",
+        "react-syntax-highlighter": "^16.1.1"
     },
     "devDependencies": {
         "@eslint/js": "^9.9.0",
