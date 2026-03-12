@@ -1172,6 +1172,7 @@ type GraphNode struct {
 	Docstring string    `json:"docstring"`
 	Members   []Member  `json:"members"`
 	Loc       int       `json:"loc"`
+	Parent    string    `json:"parent,omitempty"`
 }
 
 // Member represents a sub-component of a node (e.g., field or method)
@@ -1377,6 +1378,11 @@ func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
 				// Minimum size floor
 				if val < 5 { val = 5 }
 
+				parentID := ""
+				if dir != "" && dir != "." {
+					parentID = "dir:" + dir
+				}
+
 				addNode(GraphNode{
 					ID:        nodeID,
 					Name:      name,
@@ -1387,6 +1393,7 @@ func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
 					Docstring: docstring,
 					Members:   []Member{},
 					Loc:       loc,
+					Parent:    parentID,
 				})
 			}
 		}
@@ -1469,7 +1476,46 @@ func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
 	// 6. Final Sweep: Construct Cytoscape Elements
 	elements := make([]CyElement, 0)
 	
-	// Add Nodes
+	// Add Folder Nodes (Compound Nodes)
+	seenFolders := make(map[string]bool)
+	for dir := range folderToCatID {
+		if dir == "" || dir == "." || dir == "root" {
+			continue
+		}
+		
+		// Create hierarchical folder nodes
+		parts := strings.Split(dir, string(filepath.Separator))
+		currentPath := ""
+		for i, part := range parts {
+			prevPath := currentPath
+			if currentPath == "" {
+				currentPath = part
+			} else {
+				currentPath = currentPath + string(filepath.Separator) + part
+			}
+			
+			folderID := "dir:" + currentPath
+			if !seenFolders[folderID] {
+				parentID := ""
+				if i > 0 {
+					parentID = "dir:" + prevPath
+				}
+				
+				elements = append(elements, CyElement{
+					Group: "nodes",
+					Data: GraphNode{
+						ID:    folderID,
+						Name:  part,
+						Kind:  "Folder",
+						Parent: parentID,
+					},
+				})
+				seenFolders[folderID] = true
+			}
+		}
+	}
+
+	// Add Nodes (Symbols)
 	for _, n := range nodes {
 		elements = append(elements, CyElement{
 			Group: "nodes",

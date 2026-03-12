@@ -46,7 +46,8 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                                 const kind = node.data('kind');
                                 return kind === 'Struct' ? '#f59e0b' :
                                        kind === 'Interface' ? '#10b981' :
-                                       kind === 'Function' ? '#3b82f6' : '#6b7280';
+                                       kind === 'Function' ? '#3b82f6' : 
+                                       kind === 'Variable' ? '#6b7280' : '#222';
                             },
                             'label': 'data(name)',
                             'font-size': '8px',
@@ -56,8 +57,19 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                             'text-margin-y': 4,
                             'min-zoomed-font-size': 10, // Lod optimization: hide when small
                             'z-index': 10,
-                            'transition-property': 'background-color, line-color, target-arrow-color, opacity',
+                            'transition-property': 'background-color, line-color, target-arrow-color, opacity, border-width, border-color',
                             'transition-duration': 200
+                        }
+                    },
+                    {
+                        selector: "node[kind = 'Folder']",
+                        style: {
+                            'background-opacity': 0,
+                            'border-width': 0,
+                            'label': '',
+                            'padding': '40px', // Extra padding for logical clustering
+                            'z-index': 1,
+                            'events': 'no' // Folders are transparent to clicks/hovers
                         }
                     },
                     {
@@ -83,36 +95,75 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                         }
                     },
                     {
+                        selector: '.dimmed',
+                        style: {
+                            'opacity': 0.1
+                        }
+                    },
+                    {
                         selector: 'edge.highlighted',
                         style: {
                             'opacity': 1,
-                            'line-color': '#666',
-                            'target-arrow-color': '#666',
-                            'width': 3
+                            'line-color': '#fff',
+                            'target-arrow-color': '#fff',
+                            'width': 2,
+                            'z-index': 19
                         }
                     },
                     {
                         selector: 'node.highlighted',
                         style: {
-                            'border-width': 2,
-                            'border-color': '#fff'
-                        }
-                    },
-                    {
-                        selector: '.dimmed',
-                        style: {
-                            'opacity': 0.1
+                            'border-width': 3,
+                            'border-color': '#fff',
+                            'opacity': 1,
+                            'text-opacity': 1,
+                            'z-index': 20,
+                            'min-zoomed-font-size': 0
                         }
                     }
                 ],
                 layout: { name: 'null' },
-                wheelSensitivity: 0.2,
+                wheelSensitivity: 1.0,
                 boxSelectionEnabled: false,
-                autounselectify: false
+                autounselectify: false,
+                autoungrabify: true
             });
 
-            // Interaction Overhaul
+            // Interaction Overhaul - Enable Panning on Nodes
+            let isPanning = false;
+            let lastPos = { x: 0, y: 0 };
+
+            cyRef.current.on('mousedown', (evt) => {
+                isPanning = true;
+                lastPos = { x: evt.renderedPosition.x, y: evt.renderedPosition.y };
+            });
+
+            cyRef.current.on('mousemove', (evt) => {
+                if (isPanning) {
+                    const currentPos = { x: evt.renderedPosition.x, y: evt.renderedPosition.y };
+                    const dx = currentPos.x - lastPos.x;
+                    const dy = currentPos.y - lastPos.y;
+                    
+                    if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+                        cyRef.current?.panBy({ x: dx, y: dy });
+                        lastPos = currentPos;
+                        // If we are panning, we don't want to trigger a 'tap' (click)
+                        cyRef.current?.container()?.classList.add('panning');
+                    }
+                }
+            });
+
+            cyRef.current.on('mouseup', () => {
+                isPanning = false;
+                setTimeout(() => {
+                    cyRef.current?.container()?.classList.remove('panning');
+                }, 50);
+            });
+
             cyRef.current.on('tap', 'node', (evt) => {
+                // Ignore taps if we were just panning
+                if (cyRef.current?.container()?.classList.contains('panning')) return;
+                
                 const node = evt.target;
                 setSelectedEdge(null);
                 setSelectedNode(node.data());
@@ -134,7 +185,10 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
             // High-speed hovering
             cyRef.current.on('mouseover', 'node', (evt) => {
                 const node = evt.target;
-                const neighborhood = node.neighborhood().add(node);
+                const nh = node.neighborhood().add(node);
+                // Include edges between neighbors for a complete local subgraph
+                const neighborhood = nh.add(nh.edgesWith(nh));
+                
                 cyRef.current?.elements().addClass('dimmed');
                 neighborhood.removeClass('dimmed').addClass('highlighted');
             });
@@ -170,12 +224,21 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                     cy.elements().remove();
                     
                     const elements = data.elements.map((el: any) => {
-                        if (el.group === 'nodes') {
+                        if (el.group === 'nodes' && el.data.kind !== 'Folder') {
                             return {
                                 ...el,
                                 data: {
                                     ...el.data,
-                                    value: Math.sqrt(el.data.value) * 12 // Even larger for "Anchors"
+                                    value: Math.sqrt(el.data.value) * 12
+                                }
+                            };
+                        }
+                        if (el.group === 'nodes' && el.data.kind === 'Folder') {
+                             return {
+                                ...el,
+                                data: {
+                                    ...el.data,
+                                    value: 0 // Folders take size from children
                                 }
                             };
                         }
@@ -188,12 +251,16 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                         name: 'fcose',
                         randomize: true,
                         packComponents: true,
-                        nodeRepulsion: () => 4500,
-                        idealEdgeLength: () => 100,
+                        nodeRepulsion: () => 8500, // Even more repulsion since clusters are invisible
+                        idealEdgeLength: () => 200,
                         sampleSize: 100,
-                        nodeSeparation: 75,
+                        nodeSeparation: 250,
                         gravity: 0.25,
-                        animate: false
+                        animate: false,
+                        padding: 100,
+                        tile: true,
+                        tilingPaddingVertical: 120,
+                        tilingPaddingHorizontal: 120
                     } as any);
 
                     layout.run();
