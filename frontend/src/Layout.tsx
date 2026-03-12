@@ -55,7 +55,7 @@ export default function Layout({ activeTab, setActiveTab, children }: LayoutProp
 
             {/* Main Content Area */}
             <div className="flex-1 overflow-hidden relative bg-base-200">
-                <div className={`p-8 ${activeTab === 'atlas' ? 'max-w-none w-full' : 'max-w-6xl mx-auto'} h-full flex flex-col`}>
+                <div className={`${activeTab === 'atlas' ? 'p-0 w-full' : 'p-8 max-w-6xl mx-auto'} h-full flex flex-col overflow-hidden`}>
                     {children}
                 </div>
             </div>
