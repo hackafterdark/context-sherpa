@@ -3,6 +3,7 @@ package main
 import (
 	"archive/tar"
 	"archive/zip"
+	"bufio"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hackafterdark/context-sherpa/pkg/database"
 	"github.com/hackafterdark/context-sherpa/pkg/inference"
 	"github.com/hackafterdark/context-sherpa/pkg/mcp"
 	scip "github.com/sourcegraph/scip/bindings/go/scip"
@@ -45,6 +47,7 @@ type App struct {
 	isHub      bool
 	downloader *inference.Downloader
 	inference  *inference.InferenceService
+	db         *database.DB
 }
 
 // NewApp creates a new App application struct
@@ -67,6 +70,9 @@ func (a *App) startup(ctx context.Context) {
 		modelsDir := filepath.Join(configDir, "models")
 		a.downloader = inference.NewDownloader(modelsDir)
 		a.inference = inference.NewInferenceService(modelsDir)
+
+		// Initialize Hub Database
+		a.initDatabase()
 
 		// Start the Hub's registration server on a background goroutine
 		go a.startHubServer()
@@ -132,7 +138,209 @@ func (a *App) tryAcquireHubLock() bool {
 	return err == nil
 }
 
-// Shutdown is called when the app closes
+func (a *App) initDatabase() {
+	configDir, err := getSherpaConfigDir()
+	if err != nil {
+		fmt.Printf("Hub: Failed to get config dir: %v\n", err)
+		return
+	}
+
+	dbPath := filepath.Join(configDir, "hub.db")
+	a.db, err = database.InitDB(dbPath)
+	if err != nil {
+		fmt.Printf("Hub: Failed to initialize hub.db: %v\n", err)
+		return
+	}
+
+	// Create workspaces table
+	_, err = a.db.Exec(`
+		CREATE TABLE IF NOT EXISTS workspaces (
+			root TEXT PRIMARY KEY,
+			client TEXT,
+			last_seen DATETIME,
+			is_managed BOOLEAN DEFAULT 0
+		)
+	`)
+	if err != nil {
+		fmt.Printf("Hub: Failed to create workspaces table: %v\n", err)
+	}
+
+	// Load existing workspaces into memory
+	rows, err := a.db.Query("SELECT root, client, last_seen FROM workspaces")
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var ws Workspace
+			var lastSeen string
+			if err := rows.Scan(&ws.Root, &ws.Client, &lastSeen); err == nil {
+				ws.LastSeen, _ = time.Parse(time.RFC3339, lastSeen)
+				ws.State = "offline"
+				a.workspaces = append(a.workspaces, ws)
+			}
+		}
+	}
+}
+
+// RegisterWorkspace manually adds a workspace directory to the Hub's persistent list
+func (a *App) RegisterWorkspace(path string) error {
+	if !a.isHub {
+		return fmt.Errorf("only the Master Hub can register workspaces")
+	}
+
+	// 1. Verify path exists
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("invalid path: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("path is not a directory")
+	}
+
+	// 2. Canonicalize path
+	absPath, _ := filepath.Abs(path)
+
+	// 3. Initialize local state (.context-sherpa folder)
+	sherpaDir := filepath.Join(absPath, ".context-sherpa")
+	if err := os.MkdirAll(sherpaDir, 0755); err != nil {
+		return fmt.Errorf("failed to create .context-sherpa dir: %w", err)
+	}
+
+	// 4. Persist to database
+	if a.db != nil {
+		_, err := a.db.Exec(`
+			INSERT INTO workspaces (root, client, last_seen, is_managed)
+			VALUES (?, ?, ?, ?)
+			ON CONFLICT(root) DO UPDATE SET last_seen = excluded.last_seen, is_managed = 1
+		`, absPath, "manual", time.Now().Format(time.RFC3339), 1)
+		if err != nil {
+			return fmt.Errorf("database error: %w", err)
+		}
+	}
+
+	// 5. Update in-memory list
+	found := false
+	for i, ws := range a.workspaces {
+		if ws.Root == absPath {
+			a.workspaces[i].LastSeen = time.Now()
+			found = true
+			break
+		}
+	}
+	if !found {
+		a.workspaces = append(a.workspaces, Workspace{
+			Root:     absPath,
+			Client:   "manual",
+			State:    "offline",
+			LastSeen: time.Now(),
+		})
+	}
+
+	// 6. Notify UI
+	wailsRuntime.EventsEmit(a.ctx, "workspace-updated", a.workspaces)
+
+	return nil
+}
+
+// RunIndexingTask triggers the SCIP indexer for a workspace and streams log output
+func (a *App) RunIndexingTask(workspacePath string) error {
+	if !a.isHub {
+		return fmt.Errorf("only the Master Hub can run indexing tasks")
+	}
+
+	// 1. Detect language
+	lang := a.detectLanguage(workspacePath)
+	if lang == "" {
+		a.emitIndexingLog(workspacePath, "Error: Could not auto-detect language. Ensure project files (go.mod, package.json, etc.) exist.")
+		return fmt.Errorf("unsupported language")
+	}
+
+	// 2. Resolve indexer tool
+	status := a.GetScipIndexerStatus(lang)
+	if !status["installed"].(bool) {
+		a.emitIndexingLog(workspacePath, fmt.Sprintf("Error: Indexer for %s not installed. Please visit Settings to install it.", lang))
+		return fmt.Errorf("indexer not installed")
+	}
+	toolPath := status["path"].(string)
+
+	a.emitIndexingLog(workspacePath, "Starting indexing for "+lang+"...")
+
+	// 3. Prepare command
+	// For Go: scip-go (usually no args needed if go.mod is in root)
+	// For TS/Python: Usually need --output and --project-root
+	var cmd *exec.Cmd
+	scipPath := filepath.Join(workspacePath, ".context-sherpa", "index.scip")
+
+	if lang == "go" {
+		cmd = exec.Command(toolPath)
+		cmd.Dir = workspacePath
+	} else {
+		cmd = exec.Command(toolPath, "--project-root", workspacePath, "--output", scipPath)
+	}
+
+	// 4. Stream logs
+	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
+
+	go a.streamLogsToUI(workspacePath, stdout)
+	go a.streamLogsToUI(workspacePath, stderr)
+
+	// 5. Run
+	go func() {
+		err := cmd.Run()
+		if err != nil {
+			a.emitIndexingLog(workspacePath, "Indexing failed: "+err.Error())
+			wailsRuntime.EventsEmit(a.ctx, "indexing-finished", map[string]interface{}{
+				"root":    workspacePath,
+				"success": false,
+				"error":   err.Error(),
+			})
+		} else {
+			a.emitIndexingLog(workspacePath, "Indexing complete! index.scip created.")
+			wailsRuntime.EventsEmit(a.ctx, "indexing-finished", map[string]interface{}{
+				"root":    workspacePath,
+				"success": true,
+			})
+		}
+	}()
+
+	return nil
+}
+
+func (a *App) detectLanguage(root string) string {
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
+		return "go"
+	}
+	if _, err := os.Stat(filepath.Join(root, "package.json")); err == nil {
+		return "typescript"
+	}
+	if _, err := os.Stat(filepath.Join(root, "requirements.txt")); err == nil ||
+		(func() bool { _, e := os.Stat(filepath.Join(root, "pyproject.toml")); return e == nil }()) {
+		return "python"
+	}
+	return ""
+}
+
+func (a *App) streamLogsToUI(root string, r io.Reader) {
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		a.emitIndexingLog(root, scanner.Text())
+	}
+}
+
+func (a *App) emitIndexingLog(root string, message string) {
+	wailsRuntime.EventsEmit(a.ctx, "indexing-log", map[string]string{
+		"root":    root,
+		"message": message,
+	})
+}
+
+// PickDirectory opens a native directory picker and returns the selected path
+func (a *App) PickDirectory() (string, error) {
+	return wailsRuntime.OpenDirectoryDialog(a.ctx, wailsRuntime.OpenDialogOptions{
+		Title: "Select Workspace Directory",
+	})
+}
+
 func (a *App) Shutdown(ctx context.Context) {
 	if a.isHub {
 		lockPath := mcp.GetHubLockPath()
@@ -176,6 +384,20 @@ func (a *App) startHubServer() {
 		if !found {
 			ws.LastSeen = time.Now()
 			a.workspaces = append(a.workspaces, ws)
+		}
+
+		// Persist to database
+		if a.db != nil {
+			_, err := a.db.Exec(`
+				INSERT INTO workspaces (root, client, last_seen)
+				VALUES (?, ?, ?)
+				ON CONFLICT(root) DO UPDATE SET
+					client = excluded.client,
+					last_seen = excluded.last_seen
+			`, ws.Root, ws.Client, ws.LastSeen.Format(time.RFC3339))
+			if err != nil {
+				fmt.Printf("Hub: Failed to persist workspace to DB: %v\n", err)
+			}
 		}
 
 		fmt.Printf("Hub: Workspace registered/updated: %s (PID: %d, Client: %s)\n", ws.Root, ws.PID, ws.Client)

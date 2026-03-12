@@ -35,6 +35,12 @@ export function OpenConfigDir():Promise<void>;
 
 export function OpenWorkspace(arg1:string):Promise<void>;
 
+export function PickDirectory():Promise<string>;
+
+export function RegisterWorkspace(arg1:string):Promise<void>;
+
+export function RunIndexingTask(arg1:string):Promise<void>;
+
 export function RunInference(arg1:string,arg2:string):Promise<string>;
 
 export function SavePreferences(arg1:main.UserPreferences):Promise<void>;

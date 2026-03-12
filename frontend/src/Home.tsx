@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Icon } from '@iconify/react';
-import { GetWorkspaces, OpenWorkspace } from '../wailsjs/go/main/App';
-import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
+import { GetWorkspaces, OpenWorkspace, PickDirectory, RegisterWorkspace, RunIndexingTask } from '../wailsjs/go/main/App';
+import { EventsOn } from '../wailsjs/runtime/runtime';
 
 type Workspace = {
     pid: number;
@@ -10,8 +10,16 @@ type Workspace = {
     state: string;
 };
 
+type IndexingStatus = {
+    root: string;
+    logs: string[];
+    isActive: boolean;
+};
+
 export default function Home({ onVisualize }: { onVisualize: (root: string) => void }) {
     const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+    const [indexing, setIndexing] = useState<IndexingStatus | null>(null);
+    const logEndRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         const fetchWorkspaces = async () => {
@@ -26,34 +34,88 @@ export default function Home({ onVisualize }: { onVisualize: (root: string) => v
         fetchWorkspaces();
 
         // Listen for real-time updates from the Hub
-        EventsOn('workspace-updated', (ws: Workspace[]) => {
+        const offUpdate = EventsOn('workspace-updated', (ws: Workspace[]) => {
             setWorkspaces(ws);
+        });
+
+        // Listen for indexing logs
+        const offLog = EventsOn('indexing-log', (data: { root: string, message: string }) => {
+            setIndexing(prev => {
+                if (!prev || prev.root !== data.root) return prev;
+                return { ...prev, logs: [...prev.logs, data.message] };
+            });
+        });
+
+        const offFinish = EventsOn('indexing-finished', (data: { root: string, success: boolean, error?: string }) => {
+            setIndexing(prev => {
+                if (!prev || prev.root !== data.root) return prev;
+                return { ...prev, isActive: false, logs: [...prev.logs, data.success ? "--- Indexing complete! ---" : `--- Error: ${data.error} ---`] };
+            });
         });
 
         const interval = setInterval(fetchWorkspaces, 10000); // Slower polling as backup
 
         return () => {
             clearInterval(interval);
-            EventsOff('workspace-updated');
+            offUpdate();
+            offLog();
+            offFinish();
         };
     }, []);
 
+    useEffect(() => {
+        if (logEndRef.current) {
+            logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+    }, [indexing?.logs]);
+
+    const handleAddWorkspace = async () => {
+        try {
+            const path = await PickDirectory();
+            if (path) {
+                await RegisterWorkspace(path);
+            }
+        } catch (e) {
+            console.error("Error adding workspace:", e);
+        }
+    };
+
+    const handleStartIndexing = async (root: string) => {
+        setIndexing({ root, logs: ["Starting indexing task..."], isActive: true });
+        try {
+            await RunIndexingTask(root);
+        } catch (e) {
+            console.error("Error starting indexing:", e);
+        }
+    };
+
     return (
         <div className="flex flex-col gap-6 animate-in fade-in duration-300">
-            <h1 className="text-3xl font-bold font-sans tracking-tight">Dashboard</h1>
+            <div className="flex justify-between items-center">
+                <h1 className="text-3xl font-bold font-sans tracking-tight">Dashboard</h1>
+                <button 
+                    onClick={handleAddWorkspace}
+                    className="btn btn-primary btn-sm gap-2"
+                >
+                    <Icon icon="lucide:plus" />
+                    Add Workspace
+                </button>
+            </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 <div className="card bg-base-100 shadow-sm border border-base-200 col-span-1 md:col-span-2">
                     <div className="card-body">
-                        <h2 className="card-title text-xl mb-4 flex items-center gap-2">
-                            <Icon icon="lucide:folder-tree" className="text-primary" />
-                            Active Workspaces
-                        </h2>
+                        <div className="flex justify-between items-center mb-4">
+                            <h2 className="card-title text-xl flex items-center gap-2">
+                                <Icon icon="lucide:folder-tree" className="text-primary" />
+                                Workspaces
+                            </h2>
+                        </div>
 
                         {workspaces.length === 0 ? (
                             <p className="text-base-content/70 flex items-center gap-2 italic">
                                 <Icon icon="lucide:info" />
-                                No active workspaces detected. Start an MCP node to register a workspace.
+                                No workspaces registered. Add a workspace or start an MCP node.
                             </p>
                         ) : (
                             <div className="overflow-x-auto">
@@ -69,8 +131,10 @@ export default function Home({ onVisualize }: { onVisualize: (root: string) => v
                                     </thead>
                                     <tbody>
                                         {workspaces.map((ws) => (
-                                            <tr key={`${ws.root}-${ws.pid}`} className={`hover group ${ws.state === 'offline' ? 'opacity-50 grayscale' : ''}`}>
-                                                <td className="font-mono text-xs max-w-xs truncate" title={ws.root}>{ws.root}</td>
+                                            <tr key={`${ws.root}-${ws.pid}`} className={`hover group ${ws.state === 'offline' ? 'opacity-70' : ''}`}>
+                                                <td className="font-mono text-xs max-w-xs truncate" title={ws.root}>
+                                                    {ws.root}
+                                                </td>
                                                 <td><span className="badge badge-ghost badge-sm">{ws.client}</span></td>
                                                 <td>
                                                     <span className={`badge badge-sm ${ws.state === 'active' ? 'badge-success' :
@@ -80,22 +144,29 @@ export default function Home({ onVisualize }: { onVisualize: (root: string) => v
                                                         {ws.state}
                                                     </span>
                                                 </td>
-                                                <td className="opacity-50 text-xs">{ws.pid}</td>
+                                                <td className="opacity-50 text-xs">{ws.pid || '-'}</td>
                                                 <td className="text-right whitespace-nowrap">
                                                     <div className="flex justify-end gap-1">
                                                         <button
+                                                            onClick={() => handleStartIndexing(ws.root)}
+                                                            className="btn btn-ghost btn-xs btn-square tooltip tooltip-left text-primary hover:bg-primary/10"
+                                                            data-tip="Build SCIP Index"
+                                                        >
+                                                            <Icon icon="lucide:refresh-cw" className={`w-4 h-4 ${indexing?.root === ws.root && indexing.isActive ? 'animate-spin' : ''}`} />
+                                                        </button>
+                                                        <button
                                                             onClick={() => onVisualize(ws.root)}
                                                             className="btn btn-ghost btn-xs btn-square tooltip tooltip-left text-accent hover:bg-accent/10"
-                                                            data-tip="Visualize Codebase"
+                                                            data-tip="Visualize Code Atlas"
                                                         >
                                                             <Icon icon="lucide:network" className="w-4 h-4" />
                                                         </button>
                                                         <button
                                                             onClick={() => OpenWorkspace(ws.root)}
                                                             className="btn btn-ghost btn-xs btn-square tooltip tooltip-left text-primary hover:bg-primary/10"
-                                                            data-tip="Browse Folder"
+                                                            data-tip="Open in Explorer"
                                                         >
-                                                            <Icon icon="lucide:external-link" className="w-4 h-4" />
+                                                            <Icon icon="lucide:folder-open" className="w-4 h-4" />
                                                         </button>
                                                     </div>
                                                 </td>
@@ -107,19 +178,74 @@ export default function Home({ onVisualize }: { onVisualize: (root: string) => v
                         )}
                     </div>
                 </div>
-
-                {/* <div className="card bg-base-100 shadow-sm border border-base-200">
-                    <div className="card-body">
-                        <h2 className="card-title text-lg flex items-center gap-2">
-                            <Icon icon="lucide:database" className="text-primary" />
-                            Local Memory
-                        </h2>
-                        <p className="text-base-content/70 text-sm">
-                            `sherpa.db` state tracking and task history are stored within each workspace root.
-                        </p>
-                    </div>
-                </div> */}
             </div>
+
+            {/* Indexing Modal/Overlay */}
+            {indexing && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-in fade-in duration-200">
+                    <div className="card w-full max-w-2xl bg-base-100 shadow-2xl border border-base-300">
+                        <div className="card-body p-6">
+                            <div className="flex justify-between items-center mb-4">
+                                <h3 className="text-lg font-bold flex items-center gap-2">
+                                    <Icon icon="lucide:cpu" className="text-primary" />
+                                    Indexing: {indexing.root.split(/[\\/]/).pop()}
+                                </h3>
+                                {!indexing.isActive && (
+                                    <button 
+                                        onClick={() => setIndexing(null)}
+                                        className="btn btn-ghost btn-sm btn-circle"
+                                    >
+                                        <Icon icon="lucide:x" />
+                                    </button>
+                                )}
+                            </div>
+
+                            <div className="bg-black/90 rounded-lg p-4 h-64 overflow-y-auto font-mono text-xs text-green-400 border border-base-content/10">
+                                {indexing.logs.map((log, i) => (
+                                    <div key={i} className="mb-1">{log}</div>
+                                ))}
+                                <div ref={logEndRef} />
+                            </div>
+
+                            <div className="mt-4 flex justify-between items-center">
+                                <div className="flex items-center gap-3">
+                                    {indexing.isActive ? (
+                                        <>
+                                            <span className="loading loading-spinner loading-sm text-primary"></span>
+                                            <span className="text-sm font-medium animate-pulse">Running scip indexer...</span>
+                                        </>
+                                    ) : (
+                                        <span className="text-sm font-medium text-success flex items-center gap-2">
+                                            <Icon icon="lucide:check-circle" />
+                                            Task Finished
+                                        </span>
+                                    )}
+                                </div>
+                                {!indexing.isActive && (
+                                    <div className="flex gap-2">
+                                        <button 
+                                            onClick={() => {
+                                                setIndexing(null);
+                                                onVisualize(indexing.root);
+                                            }}
+                                            className="btn btn-accent btn-sm gap-2"
+                                        >
+                                            <Icon icon="lucide:network" />
+                                            View in Atlas
+                                        </button>
+                                        <button 
+                                            onClick={() => setIndexing(null)}
+                                            className="btn btn-ghost btn-sm"
+                                        >
+                                            Close
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

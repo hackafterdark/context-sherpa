@@ -66,6 +66,18 @@ export function OpenWorkspace(arg1) {
   return window['go']['main']['App']['OpenWorkspace'](arg1);
 }
 
+export function PickDirectory() {
+  return window['go']['main']['App']['PickDirectory']();
+}
+
+export function RegisterWorkspace(arg1) {
+  return window['go']['main']['App']['RegisterWorkspace'](arg1);
+}
+
+export function RunIndexingTask(arg1) {
+  return window['go']['main']['App']['RunIndexingTask'](arg1);
+}
+
 export function RunInference(arg1, arg2) {
   return window['go']['main']['App']['RunInference'](arg1, arg2);
 }
