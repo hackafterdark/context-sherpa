@@ -296,7 +296,8 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
 
         let target = cy.nodes().filter((n: any) =>
             n.data('name') === query ||
-            (n.data('id') && n.data('id') === "sym:" + query)
+            (n.data('id') && n.data('id') === "sym:" + query) ||
+            (n.data('id') && n.data('id') === query)
         );
 
         if (target.empty()) {
@@ -536,14 +537,20 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                                                         {selectedNode.members.map((m: any, idx: number) => (
                                                             <button
                                                                 key={idx}
-                                                                onClick={() => focusSymbol(m.name)}
+                                                                onClick={() => focusSymbol(m.symbol ? "sym:" + m.symbol : m.name)}
                                                                 className="flex items-center justify-between p-3.5 hover:bg-primary hover:text-primary-content rounded-lg transition-all duration-200 text-xs text-left group border border-transparent shadow-sm"
                                                             >
-                                                                <div className="flex items-center gap-3">
-                                                                    <Icon icon="lucide:layers" className="opacity-20 group-hover:opacity-100 w-3.5 h-3.5" />
-                                                                    <span className="font-bold opacity-80 group-hover:opacity-100">{m.name}</span>
+                                                                <div className="flex flex-col gap-1 min-w-0">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <Icon icon={m.kind === 'Method' ? "lucide:zap" : "lucide:hash"} className="opacity-20 group-hover:opacity-100 w-3.5 h-3.5" />
+                                                                        <span className="font-bold opacity-80 group-hover:opacity-100 truncate">
+                                                                            {m.name}{m.kind === 'Method' ? '()' : ''}
+                                                                        </span>
+                                                                    </div>
                                                                 </div>
-                                                                <span className="opacity-30 text-[9px] uppercase font-mono bg-base-300/50 px-2 py-0.5 rounded group-hover:bg-primary-focus group-hover:opacity-100">{m.kind}</span>
+                                                                <span className="opacity-30 text-[9px] uppercase font-mono bg-base-300/50 px-2 py-0.5 rounded group-hover:bg-primary-focus group-hover:opacity-100 shrink-0 h-fit">
+                                                                    {m.kind}
+                                                                </span>
                                                             </button>
                                                         ))}
                                                     </div>
@@ -553,7 +560,7 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
 
                                         <div className="p-6 bg-base-200/50 border-t border-base-300/50">
                                             <button
-                                                onClick={() => focusSymbol(selectedNode.name)}
+                                                onClick={() => focusSymbol(selectedNode.id)}
                                                 className="btn btn-primary w-full h-12 gap-3 shadow-lg shadow-primary/20 rounded-xl text-sm font-bold"
                                             >
                                                 <Icon icon="lucide:target" className="w-4 h-4" />

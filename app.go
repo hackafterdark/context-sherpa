@@ -1177,8 +1177,9 @@ type GraphNode struct {
 
 // Member represents a sub-component of a node (e.g., field or method)
 type Member struct {
-	Name string `json:"name"`
-	Kind string `json:"kind"`
+	Name   string `json:"name"`
+	Kind   string `json:"kind"`
+	Symbol string `json:"symbol"` // Full SCIP symbol for navigation
 }
 
 // GraphLink represents an ECharts graph link
@@ -1404,16 +1405,43 @@ func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
 		if nodes[i].Kind != "Struct" && nodes[i].Kind != "Interface" {
 			continue
 		}
+		// Nodes[i].ID is "sym:" + symbol
 		originalSymbol := nodes[i].ID[4:]
-		prefix := originalSymbol
+		
 		for sym := range symbolToInfo {
-			if strings.HasPrefix(sym, prefix) && sym != originalSymbol {
-				memberName := sym[len(prefix):]
-				memberName = strings.TrimSuffix(memberName, ".")
-				if memberName != "" && !strings.Contains(memberName, ".") {
+			if strings.HasPrefix(sym, originalSymbol) && sym != originalSymbol {
+				parsed, err := scip.ParseSymbol(sym)
+				if err != nil || len(parsed.Descriptors) == 0 {
+					continue
+				}
+
+				// Only direct children (e.g., App#scipFiles. and not App#scipFiles.inner.)
+				// This is a bit simplified; in SCIP Go, members are usually descriptors at the end
+				// We check if the parent symbol is indeed the parent in descriptors
+				isChild := false
+				parentParsed, _ := scip.ParseSymbol(originalSymbol)
+				if len(parsed.Descriptors) == len(parentParsed.Descriptors)+1 {
+					isChild = true
+					for j := 0; j < len(parentParsed.Descriptors); j++ {
+						if parsed.Descriptors[j].Name != parentParsed.Descriptors[j].Name || 
+						   parsed.Descriptors[j].Suffix != parentParsed.Descriptors[j].Suffix {
+							isChild = false
+							break
+						}
+					}
+				}
+
+				if isChild {
+					leaf := parsed.Descriptors[len(parsed.Descriptors)-1]
+					memberKind := "Field"
+					if leaf.Suffix == scip.Descriptor_Method {
+						memberKind = "Method"
+					}
+
 					nodes[i].Members = append(nodes[i].Members, Member{
-						Name: memberName,
-						Kind: "Field/Method",
+						Name:   leaf.Name,
+						Kind:   memberKind,
+						Symbol: sym,
 					})
 				}
 			}
