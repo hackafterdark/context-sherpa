@@ -1204,6 +1204,7 @@ type CyElement struct {
 type GraphData struct {
 	Elements   []CyElement     `json:"elements"`
 	Categories []GraphCategory `json:"categories"`
+	Language   string          `json:"language"`
 }
 
 // GetGraphData transforms SCIP data into ECharts JSON with "Hotpath" sizing and spatial clustering
@@ -1569,6 +1570,43 @@ func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
 	return &GraphData{
 		Elements:   elements,
 		Categories: categories,
+		Language:   detectLanguage(index.Documents),
 	}, nil
+}
+
+func detectLanguage(docs []*scip.Document) string {
+	exts := make(map[string]int)
+	for _, doc := range docs {
+		ext := filepath.Ext(doc.RelativePath)
+		if ext != "" {
+			exts[ext]++
+		}
+	}
+
+	mainExt := ""
+	maxCount := 0
+	for ext, count := range exts {
+		if count > maxCount {
+			maxCount = count
+			mainExt = ext
+		}
+	}
+
+	switch mainExt {
+	case ".go":
+		return "Go"
+	case ".ts", ".tsx":
+		return "TypeScript"
+	case ".js", ".jsx":
+		return "JavaScript"
+	case ".py":
+		return "Python"
+	case ".rs":
+		return "Rust"
+	case ".cpp", ".hpp", ".cc", ".h":
+		return "C++"
+	default:
+		return "Generic"
+	}
 }
 

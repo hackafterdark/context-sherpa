@@ -22,6 +22,17 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedNode, setSelectedNode] = useState<any>(null);
     const [selectedEdge, setSelectedEdge] = useState<any>(null);
+    const [language, setLanguage] = useState<string>('Go');
+
+    const getKindLabel = (kind: string, plural = false) => {
+        if (kind === 'Struct') {
+            const isClass = ['TypeScript', 'JavaScript', 'Python'].includes(language);
+            if (isClass) return plural ? 'Classes' : 'Class';
+            return plural ? 'Structs' : 'Struct';
+        }
+        if (plural) return kind + 's';
+        return kind;
+    };
 
     useEffect(() => {
         if (workspaceRoot) {
@@ -225,6 +236,7 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
             setSelectedEdge(null);
             GetGraphData(selectedIndex).then((data) => {
                 if (data && cyRef.current) {
+                    setLanguage(data.language || 'Go');
                     const cy = cyRef.current;
                     cy.elements().remove();
 
@@ -414,19 +426,19 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                             <div className="grid grid-cols-2 gap-x-6 gap-y-3">
                                 <div className="flex items-center gap-2.5">
                                     <div className="w-2.5 h-2.5 rounded-full bg-[#f59e0b] shadow-sm"></div>
-                                    <span className="text-[10px] font-bold opacity-70 tracking-tight">Structs</span>
+                                    <span className="text-[10px] font-bold opacity-70 tracking-tight">{getKindLabel('Struct', true)}</span>
                                 </div>
                                 <div className="flex items-center gap-2.5">
                                     <div className="w-2.5 h-2.5 rounded-full bg-[#10b981] shadow-sm"></div>
-                                    <span className="text-[10px] font-bold opacity-70 tracking-tight">Interfaces</span>
+                                    <span className="text-[10px] font-bold opacity-70 tracking-tight">{getKindLabel('Interface', true)}</span>
                                 </div>
                                 <div className="flex items-center gap-2.5">
                                     <div className="w-2.5 h-2.5 rounded-full bg-[#3b82f6] shadow-sm"></div>
-                                    <span className="text-[10px] font-bold opacity-70 tracking-tight">Functions</span>
+                                    <span className="text-[10px] font-bold opacity-70 tracking-tight">{getKindLabel('Function', true)}</span>
                                 </div>
                                 <div className="flex items-center gap-2.5">
                                     <div className="w-2.5 h-2.5 rounded-full bg-[#6b7280] shadow-sm"></div>
-                                    <span className="text-[10px] font-bold opacity-70 tracking-tight">Variables</span>
+                                    <span className="text-[10px] font-bold opacity-70 tracking-tight">{getKindLabel('Variable', true)}</span>
                                 </div>
                             </div>
                         </div>
@@ -450,7 +462,7 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                                             <div className="min-w-0 pr-4">
                                                 <div className="flex items-center gap-2 mb-2">
                                                     <div className="badge badge-primary badge-outline text-[10px] font-black px-2 h-5 opacity-60 uppercase tracking-widest rounded-md">
-                                                        {selectedNode.kind}
+                                                        {getKindLabel(selectedNode.kind)}
                                                     </div>
                                                 </div>
                                                 <h2 className="text-xl font-black leading-tight tracking-tighter break-words" title={selectedNode.name}>
@@ -549,7 +561,7 @@ export default function Atlas({ workspaceRoot }: AtlasProps) {
                                                                     </div>
                                                                 </div>
                                                                 <span className="opacity-30 text-[9px] uppercase font-mono bg-base-300/50 px-2 py-0.5 rounded group-hover:bg-primary-focus group-hover:opacity-100 shrink-0 h-fit">
-                                                                    {m.kind}
+                                                                    {getKindLabel(m.kind)}
                                                                 </span>
                                                             </button>
                                                         ))}

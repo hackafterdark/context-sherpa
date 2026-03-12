@@ -79,6 +79,7 @@ export namespace main {
 	export class GraphData {
 	    elements: CyElement[];
 	    categories: GraphCategory[];
+	    language: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new GraphData(source);
@@ -88,6 +89,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.elements = this.convertValues(source["elements"], CyElement);
 	        this.categories = this.convertValues(source["categories"], GraphCategory);
+	        this.language = source["language"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
