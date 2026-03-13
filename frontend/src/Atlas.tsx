@@ -5,6 +5,9 @@ import fcose from 'cytoscape-fcose';
 import { SearchForIndexes, GetGraphData, GetWorkspaces, GetFileContent } from '../wailsjs/go/main/App';
 import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
 import Editor from '@monaco-editor/react';
+import ReactMarkdown from 'react-markdown';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 cytoscape.use(fcose);
 
@@ -737,8 +740,45 @@ ${snippet || '// No content available'}
                                                     {selectedNode.docstring && (
                                                         <section>
                                                             <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-4 px-1">Documentation</h3>
-                                                            <div className="p-5 bg-base-200/50 rounded-xl border border-base-300/50 text-[11px] leading-relaxed text-base-content/70 italic font-medium">
-                                                                {selectedNode.docstring}
+                                                            <div className="p-0 overflow-hidden bg-base-200/50 rounded-xl border border-base-300/50 w-full max-w-full">
+                                                                <ReactMarkdown
+                                                                    components={{
+                                                                        code({ node, inline, className, children, ...props }: any) {
+                                                                            const match = /language-(\w+)/.exec(className || '');
+                                                                            return !inline && match ? (
+                                                                                <SyntaxHighlighter
+                                                                                    {...props}
+                                                                                    children={String(children).replace(/\n$/, '')}
+                                                                                    style={vscDarkPlus}
+                                                                                    language={match[1]}
+                                                                                    wrapLongLines={true}
+                                                                                    customStyle={{
+                                                                                        margin: 0,
+                                                                                        padding: '1.25rem',
+                                                                                        backgroundColor: 'transparent',
+                                                                                        fontSize: '11px',
+                                                                                        lineHeight: '1.6',
+                                                                                        whiteSpace: 'pre-wrap',
+                                                                                        wordBreak: 'break-word'
+                                                                                    }}
+                                                                                    codeTagProps={{
+                                                                                        style: {
+                                                                                            whiteSpace: 'pre-wrap',
+                                                                                            wordBreak: 'break-word',
+                                                                                            display: 'block'
+                                                                                        }
+                                                                                    }}
+                                                                                />
+                                                                            ) : (
+                                                                                <code className={`${className} bg-base-300 px-1 py-0.5 rounded text-[11px] font-mono`} {...props}>
+                                                                                    {children}
+                                                                                </code>
+                                                                            )
+                                                                        }
+                                                                    }}
+                                                                >
+                                                                    {selectedNode.docstring}
+                                                                </ReactMarkdown>
                                                             </div>
                                                         </section>
                                                     )}
