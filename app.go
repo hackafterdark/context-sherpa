@@ -1541,6 +1541,25 @@ func (a *App) SearchForIndexes(rootPath string) ([]string, error) {
 	return scipFiles, err
 }
 
+// GetFileContent reads the content of a file from a workspace.
+func (a *App) GetFileContent(workspaceRoot string, relativePath string) (string, error) {
+	// Canonicalize paths to prevent directory traversal
+	absRoot, _ := filepath.Abs(workspaceRoot)
+	joined := filepath.Join(absRoot, relativePath)
+	absPath, _ := filepath.Abs(joined)
+
+	// Security: Ensure the resolved path is still within the workspace root
+	if !strings.HasPrefix(absPath, absRoot) {
+		return "", fmt.Errorf("security: access denied to path outside workspace root")
+	}
+
+	content, err := os.ReadFile(absPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read file: %w", err)
+	}
+	return string(content), nil
+}
+
 // GraphNode represents an ECharts graph node
 type GraphNode struct {
 	ID        string   `json:"id"`
@@ -1552,6 +1571,8 @@ type GraphNode struct {
 	Docstring string   `json:"docstring"`
 	Members   []Member `json:"members"`
 	Loc       int      `json:"loc"`
+	StartLine int      `json:"startLine"`
+	EndLine   int      `json:"endLine"`
 	Parent    string   `json:"parent,omitempty"`
 }
 
@@ -1729,9 +1750,17 @@ func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
 					docstring = info.Documentation[0]
 				}
 
-				// Calculate Lines of Code (LOC)
+				// Calculate Lines of Code (LOC) and Ranges
 				loc := 0
-				if len(occ.Range) >= 3 {
+				startLine := 0
+				endLine := 0
+				if len(occ.Range) == 3 {
+					startLine = int(occ.Range[0] + 1) // [line, startCol, endCol]
+					endLine = startLine
+					loc = 1
+				} else if len(occ.Range) >= 4 {
+					startLine = int(occ.Range[0] + 1) // [startLine, startCol, endLine, endCol]
+					endLine = int(occ.Range[2] + 1)
 					loc = int(occ.Range[2] - occ.Range[0] + 1)
 				}
 
@@ -1777,6 +1806,8 @@ func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
 					Docstring: docstring,
 					Members:   []Member{},
 					Loc:       loc,
+					StartLine: startLine,
+					EndLine:   endLine,
 					Parent:    parentID,
 				})
 			}

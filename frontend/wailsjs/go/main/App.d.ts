@@ -15,6 +15,8 @@ export function GetAstGrepStatus():Promise<Record<string, any>>;
 
 export function GetDownloadProgress(arg1:string):Promise<number>;
 
+export function GetFileContent(arg1:string,arg2:string):Promise<string>;
+
 export function GetGraphData(arg1:string):Promise<main.GraphData>;
 
 export function GetPreferences():Promise<main.UserPreferences>;

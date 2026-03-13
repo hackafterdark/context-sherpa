@@ -26,6 +26,10 @@ export function GetDownloadProgress(arg1) {
   return window['go']['main']['App']['GetDownloadProgress'](arg1);
 }
 
+export function GetFileContent(arg1, arg2) {
+  return window['go']['main']['App']['GetFileContent'](arg1, arg2);
+}
+
 export function GetGraphData(arg1) {
   return window['go']['main']['App']['GetGraphData'](arg1);
 }

@@ -2,11 +2,9 @@ import { useEffect, useState, useRef } from 'react';
 import { Icon } from '@iconify/react';
 import cytoscape from 'cytoscape';
 import fcose from 'cytoscape-fcose';
-import { SearchForIndexes, GetGraphData, GetWorkspaces } from '../wailsjs/go/main/App';
+import { SearchForIndexes, GetGraphData, GetWorkspaces, GetFileContent } from '../wailsjs/go/main/App';
 import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
-import ReactMarkdown from 'react-markdown';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import Editor from '@monaco-editor/react';
 
 cytoscape.use(fcose);
 
@@ -29,6 +27,9 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
     const [showSearchResults, setShowSearchResults] = useState(false);
     const [allWorkspaces, setAllWorkspaces] = useState<any[]>([]);
     const searchRef = useRef<HTMLDivElement>(null);
+    const [fileContent, setFileContent] = useState<string>('');
+    const [isSourceExpanded, setIsSourceExpanded] = useState(false);
+    const editorRef = useRef<any>(null);
 
     const getKindLabel = (kind: string, plural = false) => {
         if (kind === 'Struct') {
@@ -326,6 +327,38 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
     }, []);
 
     useEffect(() => {
+        const node = selectedNode;
+        if (node && node.path && workspaceRoot) {
+            GetFileContent(workspaceRoot, node.path).then(content => {
+                setFileContent(content);
+                // If we have an editor ref and a start line, jump to it
+                if (editorRef.current && node.startLine) {
+                    setTimeout(() => {
+                        const editor = editorRef.current;
+                        editor.revealLineInCenter(node.startLine);
+                        // Clear old decorations
+                        (editor as any)._decorations = editor.deltaDecorations((editor as any)._decorations || [], [
+                            {
+                                range: { startLineNumber: node.startLine, startColumn: 1, endLineNumber: node.endLine || node.startLine, endColumn: 100 },
+                                options: {
+                                    isWholeLine: true,
+                                    className: 'bg-primary/5',
+                                    linesDecorationsClassName: 'symbol-gutter-highlight',
+                                }
+                            }
+                        ]);
+                    }, 100);
+                }
+            }).catch(e => {
+                console.error("Error fetching file content:", e);
+                setFileContent("// Error loading file content");
+            });
+        } else {
+            setFileContent('');
+        }
+    }, [selectedNode, workspaceRoot]);
+
+    useEffect(() => {
         if (selectedIndex && cyRef.current) {
             setLoading(true);
             setSelectedNode(null);
@@ -424,6 +457,26 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
             setSelectedNode(first.data());
             first.select();
         }
+    };
+
+    const handleCopyForAgent = () => {
+        if (!selectedNode) return;
+        let snippet = fileContent;
+        if (fileContent && selectedNode.startLine && selectedNode.endLine) {
+            const lines = fileContent.split('\n');
+            snippet = lines.slice(selectedNode.startLine - 1, selectedNode.endLine).join('\n');
+        }
+
+        const text = `### Symbol Context: ${selectedNode.name}
+- **Path:** ${selectedNode.path}
+- **Signature:** \`${selectedNode.name}\`
+- **Structure:** ${selectedNode.kind}
+- **Snippet:**
+\`\`\`${language.toLowerCase()}
+${snippet || '// No content available'}
+\`\`\`
+`;
+        navigator.clipboard.writeText(text);
     };
 
     const handleSearchChange = (val: string) => {
@@ -638,188 +691,225 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
                     {(selectedNode || selectedEdge) && (
                         <div className="absolute right-6 top-6 bottom-6 w-[380px] bg-base-200 border border-base-300 shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-300 z-40 rounded-xl p-0.5">
                             <div className="flex flex-col h-full bg-base-100 rounded-[10px] overflow-hidden">
-                                {selectedNode ? (
-                                    <>
-                                        <div className="p-6 border-b border-base-300/50 flex justify-between items-start bg-base-200/50">
-                                            <div className="min-w-0 pr-4">
-                                                <div className="flex items-center gap-2 mb-2">
-                                                    <div className="badge badge-primary badge-outline text-[10px] font-black px-2 h-5 opacity-60 uppercase tracking-widest rounded-md">
-                                                        {getKindLabel(selectedNode.kind)}
+                                <div className="flex items-center justify-between px-6 py-4 border-b border-base-300/50 bg-base-200/50">
+                                    <div className="flex items-center gap-2">
+                                        <Icon icon="lucide:info" className="w-3.5 h-3.5 text-primary" />
+                                        <span className="text-[10px] font-black uppercase tracking-widest text-primary">Details</span>
+                                    </div>
+                                    <button onClick={() => { setSelectedNode(null); setSelectedEdge(null); }} className="btn btn-ghost btn-xs btn-square hover:bg-error/10 hover:text-error">
+                                        <Icon icon="lucide:x" className="w-4 h-4" />
+                                    </button>
+                                </div>
+
+                                <div className="flex-1 flex flex-col overflow-hidden">
+                                    <div className="flex-1 overflow-y-auto">
+                                        {selectedNode ? (
+                                            <>
+                                                <div className="p-6 border-b border-base-300/50 flex justify-between items-start bg-base-200/50">
+                                                    <div className="min-w-0 pr-4">
+                                                        <div className="flex items-center gap-2 mb-2">
+                                                            <div className="badge badge-primary badge-outline text-[10px] font-black px-2 h-5 opacity-60 uppercase tracking-widest rounded-md">
+                                                                {getKindLabel(selectedNode.kind)}
+                                                            </div>
+                                                        </div>
+                                                        <h2 className="text-xl font-black leading-tight tracking-tighter break-words" title={selectedNode.name}>
+                                                            {selectedNode.name}
+                                                        </h2>
+                                                        <div className="flex items-center gap-2 mt-4">
+                                                            <div className="flex flex-col bg-base-200/80 px-3 py-1.5 rounded-lg border border-base-300/50 min-w-[70px]">
+                                                                <span className="text-[8px] uppercase opacity-40 font-black tracking-widest leading-none mb-1">Impact</span>
+                                                                <span className="text-sm font-mono font-bold leading-none text-primary">{selectedNode.value}</span>
+                                                            </div>
+                                                            {selectedNode.loc > 0 && (
+                                                                <div className="flex flex-col bg-base-200/80 px-3 py-1.5 rounded-lg border border-base-300/50 min-w-[70px]">
+                                                                    <span className="text-[8px] uppercase opacity-40 font-black tracking-widest leading-none mb-1">Lines</span>
+                                                                    <span className="text-sm font-mono font-bold leading-none">{selectedNode.loc}</span>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex items-center gap-2 mt-4 opacity-30">
+                                                            <Icon icon="lucide:file-text" className="w-3.5 h-3.5" />
+                                                            <span className="text-[10px] font-mono truncate max-w-[200px]">{selectedNode.path || 'Virtual Node'}</span>
+                                                        </div>
                                                     </div>
                                                 </div>
-                                                <h2 className="text-xl font-black leading-tight tracking-tighter break-words" title={selectedNode.name}>
-                                                    {selectedNode.name}
-                                                </h2>
-                                                <div className="flex items-center gap-2 mt-4">
-                                                    <div className="flex flex-col bg-base-200/80 px-3 py-1.5 rounded-lg border border-base-300/50 min-w-[70px]">
-                                                        <span className="text-[8px] uppercase opacity-40 font-black tracking-widest leading-none mb-1">Impact</span>
-                                                        <span className="text-sm font-mono font-bold leading-none text-primary">{selectedNode.value}</span>
-                                                    </div>
-                                                    {selectedNode.loc > 0 && (
-                                                        <div className="flex flex-col bg-base-200/80 px-3 py-1.5 rounded-lg border border-base-300/50 min-w-[70px]">
-                                                            <span className="text-[8px] uppercase opacity-40 font-black tracking-widest leading-none mb-1">Lines</span>
-                                                            <span className="text-sm font-mono font-bold leading-none">{selectedNode.loc}</span>
-                                                        </div>
+
+                                                <div className="p-6 space-y-8 flex-1 overflow-y-auto">
+                                                    {selectedNode.docstring && (
+                                                        <section>
+                                                            <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-4 px-1">Documentation</h3>
+                                                            <div className="p-5 bg-base-200/50 rounded-xl border border-base-300/50 text-[11px] leading-relaxed text-base-content/70 italic font-medium">
+                                                                {selectedNode.docstring}
+                                                            </div>
+                                                        </section>
+                                                    )}
+
+                                                    {selectedNode.members && selectedNode.members.length > 0 && (
+                                                        <section>
+                                                            <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-4 px-1">Structure</h3>
+                                                            <div className="grid grid-cols-1 gap-2">
+                                                                {selectedNode.members.map((m: any, i: number) => (
+                                                                    <div key={i} className="flex items-center justify-between p-3.5 bg-base-200/30 rounded-xl border border-base-300/50 group hover:border-primary/30 transition-all shadow-sm hover:shadow-md">
+                                                                        <div className="flex items-center gap-3">
+                                                                            <Icon icon={m.kind === 'Field' ? 'lucide:box' : 'lucide:function-square'} className={`w-3.5 h-3.5 ${m.kind === 'Field' ? 'text-blue-400' : 'text-purple-400'} opacity-60`} />
+                                                                            <span className="text-[11px] font-bold tracking-tight">{m.name}</span>
+                                                                        </div>
+                                                                        <span className="text-[9px] font-mono opacity-30 group-hover:opacity-60 transition-opacity uppercase font-black">{m.type || 'any'}</span>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </section>
                                                     )}
                                                 </div>
-                                                <div className="flex items-center gap-2 mt-4 opacity-30">
-                                                    <Icon icon="lucide:file-text" className="w-3.5 h-3.5" />
-                                                    <span className="text-[10px] font-mono truncate max-w-[200px]">{selectedNode.path || 'Virtual Node'}</span>
-                                                </div>
-                                            </div>
-                                            <button onClick={() => setSelectedNode(null)} className="btn btn-ghost btn-xs btn-circle shrink-0 hover:bg-error/10 hover:text-error transition-colors">
-                                                <Icon icon="lucide:x" className="w-4 h-4" />
-                                            </button>
-                                        </div>
 
-                                        <div className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-hide">
-                                            {selectedNode.docstring && (
-                                                <section>
-                                                    <h3 className="text-[10px] font-black uppercase tracking-widest opacity-30 mb-3 ml-1">Documentation</h3>
-                                                    <div className="prose prose-sm prose-invert max-w-none p-4 rounded-xl border border-base-300/50 bg-base-200/30 text-xs italic opacity-90">
-                                                        <ReactMarkdown
-                                                            components={{
-                                                                code({ node, inline, className, children, ...props }: any) {
-                                                                    const match = /language-(\w+)/.exec(className || '');
-                                                                    return !inline && match ? (
-                                                                        <SyntaxHighlighter
-                                                                            style={vscDarkPlus}
-                                                                            language={match[1]}
-                                                                            PreTag="div"
-                                                                            wrapLongLines={true}
-                                                                            customStyle={{
-                                                                                margin: 0,
-                                                                                padding: '12px',
-                                                                                background: 'rgba(0,0,0,0.2)',
-                                                                                fontSize: '11px',
-                                                                                lineHeight: '1.5',
-                                                                                overflowX: 'hidden',
-                                                                                whiteSpace: 'pre-wrap',
-                                                                                wordBreak: 'break-all'
-                                                                            }}
-                                                                            codeTagProps={{
-                                                                                style: {
-                                                                                    whiteSpace: 'pre-wrap',
-                                                                                    wordBreak: 'break-all',
-                                                                                    display: 'block'
-                                                                                }
-                                                                            }}
-                                                                        >
-                                                                            {String(children).replace(/\n$/, '')}
-                                                                        </SyntaxHighlighter>
-                                                                    ) : (
-                                                                        <code className={className} {...props}>
-                                                                            {children}
-                                                                        </code>
-                                                                    );
-                                                                }
-                                                            }}
-                                                        >
-                                                            {selectedNode.docstring}
-                                                        </ReactMarkdown>
+                                                <div className="p-6 bg-base-200/50 border-t border-base-300/50 flex gap-3">
+                                                    <button
+                                                        onClick={handleCopyForAgent}
+                                                        className="flex-1 btn btn-outline btn-primary h-12 gap-3 rounded-xl text-[10px] font-black uppercase tracking-widest"
+                                                    >
+                                                        <Icon icon="lucide:clipboard-copy" className="w-4 h-4" />
+                                                        Copy for Agent
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setIsSourceExpanded(true)}
+                                                        className="btn btn-primary btn-square w-12 h-12 rounded-xl"
+                                                        title="View Source"
+                                                    >
+                                                        <Icon icon="lucide:code-2" className="w-5 h-5" />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => focusSymbol(selectedNode.id)}
+                                                        className="btn btn-primary btn-square w-12 h-12 rounded-xl"
+                                                        title="Pinpoint Logic"
+                                                    >
+                                                        <Icon icon="lucide:target" className="w-5 h-5" />
+                                                    </button>
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <div className="p-6 border-b border-base-300/50 bg-base-200/50">
+                                                    <div className="flex items-center gap-3 mb-2">
+                                                        <Icon icon="lucide:git-pull-request" className="w-4 h-4 text-primary" />
+                                                        <h2 className="text-xl font-black tracking-tighter">Connection</h2>
                                                     </div>
-                                                </section>
-                                            )}
+                                                    <p className="text-[10px] font-bold text-base-content/40 uppercase tracking-widest">Symbol Flow Analysis</p>
+                                                </div>
 
-                                            {selectedNode.members && selectedNode.members.length > 0 && (
-                                                <section>
-                                                    <div className="flex items-center justify-between mb-3 px-1">
-                                                        <h3 className="text-[10px] font-black uppercase tracking-widest opacity-30">Members</h3>
-                                                        <span className="badge badge-ghost badge-sm opacity-30 font-mono font-bold">{selectedNode.members.length}</span>
+                                                <div className="p-6 space-y-8 flex-1 overflow-y-auto scrollbar-hide">
+                                                    <section className="bg-base-200/30 rounded-xl border border-base-300/50 p-5 relative">
+                                                        <div className="absolute -left-px top-8 bottom-8 w-1 bg-primary/40 rounded-full" />
+                                                        <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-3 ml-1">Origin</h3>
+                                                        <div className="font-mono text-xs font-bold text-primary break-all leading-relaxed bg-base-100 p-3 rounded-lg border border-base-300/30 shadow-sm">
+                                                            {selectedEdge.source.replace(/^sym:\s*/, '').replace(/^scip-[^\s]+\s+[^\s]+\s+/, '')}
+                                                        </div>
+                                                    </section>
+
+                                                    <div className="flex justify-center -my-6 relative z-10">
+                                                        <div className="bg-primary p-2.5 rounded-full border-4 border-base-100 shadow-xl">
+                                                            <Icon icon="lucide:chevron-down" className="text-primary-content w-4 h-4" />
+                                                        </div>
                                                     </div>
-                                                    <div className="flex flex-col gap-1.5 bg-base-200/20 p-1.5 rounded-xl border border-base-300/50">
-                                                        {selectedNode.members.map((m: any, idx: number) => (
-                                                            <button
-                                                                key={idx}
-                                                                onClick={() => focusSymbol(m.symbol ? "sym:" + m.symbol : m.name)}
-                                                                className="flex items-center justify-between p-3.5 hover:bg-primary hover:text-primary-content rounded-lg transition-all duration-200 text-xs text-left group border border-transparent shadow-sm"
-                                                            >
-                                                                <div className="flex flex-col gap-1 min-w-0">
-                                                                    <div className="flex items-center gap-2">
-                                                                        <Icon icon={m.kind === 'Method' ? "lucide:zap" : "lucide:hash"} className="opacity-20 group-hover:opacity-100 w-3.5 h-3.5" />
-                                                                        <span className="font-bold opacity-80 group-hover:opacity-100 truncate">
-                                                                            {m.name}{m.kind === 'Method' ? '()' : ''}
-                                                                        </span>
-                                                                    </div>
-                                                                </div>
-                                                                <span className="opacity-30 text-[9px] uppercase font-mono bg-base-300/50 px-2 py-0.5 rounded group-hover:bg-primary-focus group-hover:opacity-100 shrink-0 h-fit">
-                                                                    {getKindLabel(m.kind)}
-                                                                </span>
-                                                            </button>
-                                                        ))}
-                                                    </div>
-                                                </section>
-                                            )}
-                                        </div>
 
-                                        <div className="p-6 bg-base-200/50 border-t border-base-300/50">
-                                            <button
-                                                onClick={() => focusSymbol(selectedNode.id)}
-                                                className="btn btn-primary w-full h-12 gap-3 shadow-lg shadow-primary/20 rounded-xl text-sm font-bold"
-                                            >
-                                                <Icon icon="lucide:target" className="w-4 h-4" />
-                                                Pinpoint Logic
-                                            </button>
-                                        </div>
-                                    </>
-                                ) : (
-                                    <>
-                                        <div className="p-6 border-b border-base-300/50 flex justify-between items-start bg-base-200/50">
-                                            <div>
-                                                <div className="badge badge-secondary badge-outline text-[10px] font-black px-2 h-5 opacity-60 uppercase tracking-widest mb-1 rounded-md">Relationship</div>
-                                                <h2 className="text-xl font-black tracking-tighter">Call Pipeline</h2>
-                                            </div>
-                                            <button onClick={() => setSelectedEdge(null)} className="btn btn-ghost btn-xs btn-circle shrink-0 hover:bg-error/10 hover:text-error transition-colors">
-                                                <Icon icon="lucide:x" className="w-4 h-4" />
-                                            </button>
-                                        </div>
-                                        <div className="flex-1 p-6 space-y-6 overflow-y-auto scrollbar-hide">
-                                            <section className="bg-base-200/30 rounded-xl border border-base-300/50 p-5 relative">
-                                                <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-3 ml-1">Origin</h3>
-                                                <div className="font-mono text-xs font-bold text-primary break-all leading-relaxed bg-base-100 p-3 rounded-lg border border-base-300/30 shadow-sm">
-                                                    {selectedEdge.source.replace(/^sym:\s*/, '').replace(/^scip-[^\s]+\s+[^\s]+\s+/, '')}
-                                                </div>
-                                            </section>
+                                                    <section className="bg-base-200/30 rounded-xl border border-base-300/50 p-5 relative">
+                                                        <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-3 ml-1">Destination</h3>
+                                                        <div className="font-mono text-xs font-bold text-success break-all leading-relaxed bg-base-100 p-3 rounded-lg border border-base-300/30 shadow-sm">
+                                                            {selectedEdge.target.replace(/^sym:\s*/, '').replace(/^scip-[^\s]+\s+[^\s]+\s+/, '')}
+                                                        </div>
+                                                    </section>
 
-                                            <div className="flex justify-center -my-6 relative z-10">
-                                                <div className="bg-primary p-2.5 rounded-full border-4 border-base-100 shadow-xl">
-                                                    <Icon icon="lucide:chevron-down" className="text-primary-content w-4 h-4" />
+                                                    <section>
+                                                        <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-3 px-1">Flow Type</h3>
+                                                        <div className="p-4 bg-primary/10 rounded-xl border border-primary/20 text-xs font-black italic text-primary/80 break-words flex items-center gap-3">
+                                                            <Icon icon="lucide:git-branch" className="w-4 h-4" />
+                                                            {selectedEdge.label || 'Static Dependency'}
+                                                        </div>
+                                                    </section>
                                                 </div>
-                                            </div>
+                                                <div className="p-6 bg-base-200/50 border-t border-base-300/50 flex flex-col gap-3">
+                                                    <button
+                                                        onClick={() => focusSymbol(selectedEdge.source.replace('sym:', ''))}
+                                                        className="btn btn-outline h-12 rounded-xl gap-3 border-base-300 hover:bg-base-200 transition-all font-bold text-sm"
+                                                    >
+                                                        <Icon icon="lucide:arrow-up-left" className="w-4 h-4" />
+                                                        Jump to Origin
+                                                    </button>
+                                                    <button
+                                                        onClick={() => focusSymbol(selectedEdge.target.replace('sym:', ''))}
+                                                        className="btn btn-outline h-12 rounded-xl gap-3 border-base-300 hover:bg-base-200 transition-all font-bold text-sm"
+                                                    >
+                                                        <Icon icon="lucide:arrow-down-right" className="w-4 h-4" />
+                                                        Jump to Destination
+                                                    </button>
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
-                                            <section className="bg-base-200/30 rounded-xl border border-base-300/50 p-5 relative">
-                                                <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-3 ml-1">Destination</h3>
-                                                <div className="font-mono text-xs font-bold text-success break-all leading-relaxed bg-base-100 p-3 rounded-lg border border-base-300/30 shadow-sm">
-                                                    {selectedEdge.target.replace(/^sym:\s*/, '').replace(/^scip-[^\s]+\s+[^\s]+\s+/, '')}
-                                                </div>
-                                            </section>
-
-                                            <section>
-                                                <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-3 px-1">Flow Type</h3>
-                                                <div className="p-4 bg-primary/10 rounded-xl border border-primary/20 text-xs font-black italic text-primary/80 break-words flex items-center gap-3">
-                                                    <Icon icon="lucide:git-branch" className="w-4 h-4" />
-                                                    {selectedEdge.label.split('(').pop()?.replace(')', '') || 'Direct Link'}
-                                                </div>
-                                            </section>
-                                        </div>
-                                        <div className="p-6 bg-base-200/50 border-t border-base-300/50 flex flex-col gap-3">
-                                            <button
-                                                onClick={() => focusSymbol(selectedEdge.source.replace('sym:', ''))}
-                                                className="btn btn-outline h-12 rounded-xl gap-3 border-base-300 hover:bg-base-200 transition-all font-bold text-sm"
-                                            >
-                                                <Icon icon="lucide:arrow-up-left" className="w-4 h-4" />
-                                                Jump to Origin
-                                            </button>
-                                            <button
-                                                onClick={() => focusSymbol(selectedEdge.target.replace('sym:', ''))}
-                                                className="btn btn-outline h-12 rounded-xl gap-3 border-base-300 hover:bg-base-200 transition-all font-bold text-sm"
-                                            >
-                                                <Icon icon="lucide:arrow-down-right" className="w-4 h-4" />
-                                                Jump to Destination
-                                            </button>
-                                        </div>
-                                    </>
-                                )}
+                    {isSourceExpanded && (
+                        <div className="absolute inset-0 z-50 bg-base-100 flex flex-col animate-in fade-in duration-200">
+                            <div className="flex items-center justify-between p-4 border-b border-base-300 bg-base-200/50">
+                                <div className="flex items-center gap-4">
+                                    <div className="flex flex-col">
+                                        <h2 className="text-lg font-black tracking-tighter leading-none">{selectedNode?.name}</h2>
+                                        <span className="text-[10px] font-mono opacity-40 mt-1">{selectedNode?.path}</span>
+                                    </div>
+                                    <div className="badge badge-primary badge-outline text-[10px] font-black px-2 h-5 opacity-60 uppercase tracking-widest rounded-md">
+                                        {getKindLabel(selectedNode?.kind)}
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={handleCopyForAgent}
+                                        className="btn btn-sm btn-outline btn-primary gap-2 text-[10px] font-black uppercase tracking-widest"
+                                    >
+                                        <Icon icon="lucide:clipboard-copy" className="w-3.5 h-3.5" />
+                                        Copy for Agent
+                                    </button>
+                                    <button 
+                                        onClick={() => setIsSourceExpanded(false)}
+                                        className="btn btn-sm btn-ghost btn-square"
+                                    >
+                                        <Icon icon="lucide:x" className="w-5 h-5" />
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="flex-1 overflow-hidden bg-[#1e1e1e]">
+                                <Editor
+                                    height="100%"
+                                    defaultLanguage={language.toLowerCase()}
+                                    theme="vs-dark"
+                                    value={fileContent}
+                                    options={{
+                                        readOnly: true,
+                                        minimap: { enabled: true },
+                                        scrollBeyondLastLine: false,
+                                        fontSize: 13,
+                                        lineNumbers: 'on',
+                                        wordWrap: 'on',
+                                        renderWhitespace: 'none',
+                                    }}
+                                    onMount={(editor) => {
+                                        editorRef.current = editor; // Keep reference to the expanded editor
+                                        if (selectedNode?.startLine) {
+                                            editor.revealLineInCenter(selectedNode.startLine);
+                                            (editor as any)._decorations = editor.deltaDecorations([], [
+                                                {
+                                                    range: { startLineNumber: selectedNode.startLine, startColumn: 1, endLineNumber: selectedNode.endLine || selectedNode.startLine, endColumn: 100 },
+                                                    options: {
+                                                        isWholeLine: true,
+                                                        className: 'bg-primary/5',
+                                                        linesDecorationsClassName: 'symbol-gutter-highlight',
+                                                    }
+                                                }
+                                            ]);
+                                        }
+                                    }}
+                                />
                             </div>
                         </div>
                     )}
