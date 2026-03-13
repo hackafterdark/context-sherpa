@@ -39,6 +39,8 @@ export function OpenWorkspace(arg1:string):Promise<void>;
 
 export function PickDirectory():Promise<string>;
 
+export function RegenerateIndex(arg1:string,arg2:string):Promise<void>;
+
 export function RegisterWorkspace(arg1:string):Promise<void>;
 
 export function RunIndexingTask(arg1:string):Promise<void>;

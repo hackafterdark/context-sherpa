@@ -755,14 +755,15 @@ func initializeScipHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 		return mcp.NewToolResultError("Could not auto-detect project language. Please specify 'language' parameter."), nil
 	}
 
-	if err := indexWorkspace(workspaceRoot, language); err != nil {
+	if err := IndexWorkspace(workspaceRoot, language); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Indexing failed: %v", err)), nil
 	}
 
 	return mcp.NewToolResultText(fmt.Sprintf("Workspace indexed successfully for %s.", language)), nil
 }
 
-func indexWorkspace(workspaceRoot string, language string) error {
+// IndexWorkspace indexes the workspace for the given language.
+func IndexWorkspace(workspaceRoot string, language string) error {
 	// 0. Use canonical absolute path
 	if abs, err := filepath.Abs(workspaceRoot); err == nil {
 		workspaceRoot = abs

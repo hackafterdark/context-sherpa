@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { Icon } from '@iconify/react';
 import cytoscape from 'cytoscape';
 import fcose from 'cytoscape-fcose';
-import { SearchForIndexes, GetGraphData, GetWorkspaces, GetFileContent } from '../wailsjs/go/main/App';
+import { SearchForIndexes, GetGraphData, GetWorkspaces, GetFileContent, RegenerateIndex } from '../wailsjs/go/main/App';
 import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
 import Editor from '@monaco-editor/react';
 import ReactMarkdown from 'react-markdown';
@@ -33,6 +33,8 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
     const [fileContent, setFileContent] = useState<string>('');
     const [isSourceExpanded, setIsSourceExpanded] = useState(false);
     const editorRef = useRef<any>(null);
+    const [regenerating, setRegenerating] = useState<Record<string, boolean>>({});
+    const [indexingStatus, setIndexingStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
     const getKindLabel = (kind: string, plural = false) => {
         if (kind === 'Struct') {
@@ -71,6 +73,29 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
         return tree;
     };
 
+    const handleRegenerateIndex = async (path: string) => {
+        setRegenerating(prev => ({ ...prev, [path]: true }));
+        setIndexingStatus(null);
+        try {
+            await RegenerateIndex(workspaceRoot, path);
+            setIndexingStatus({ type: 'success', message: 'Index regenerated successfully!' });
+            // Re-fetch indexes to ensure everything is up to date
+            const files = await SearchForIndexes(workspaceRoot);
+            setIndexFiles(files || []);
+        } catch (e: any) {
+            console.error("Error regenerating index:", e);
+            const msg = e?.toString() || 'Unknown error';
+            setIndexingStatus({ 
+                type: 'error', 
+                message: msg.includes('missing tsconfig.json') 
+                    ? 'Failed: Missing tsconfig.json in project root.' 
+                    : `Indexing failed: ${msg.split('\n')[0]}`
+            });
+        } finally {
+            setRegenerating(prev => ({ ...prev, [path]: false }));
+        }
+    };
+
     const renderTree = (nodes: any[], depth = 0) => {
         return nodes.sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'folder' ? -1 : 1)).map(node => (
             <div key={node.path}>
@@ -81,19 +106,40 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
                         {node.name}
                     </div>
                 ) : (
-                    <button
-                        key={node.path}
-                        onClick={() => setSelectedIndex(node.path)}
-                        className={`flex items-center gap-2 w-full px-3 py-1.5 text-[11px] rounded-lg transition-all text-left group ${selectedIndex === node.path
-                                ? 'bg-primary/10 text-primary font-bold border border-primary/20'
-                                : 'hover:bg-base-200 border border-transparent opacity-60 hover:opacity-100'
-                            }`}
-                        style={{ paddingLeft: depth * 12 + 12 }}
+                    <div className={`group flex items-center pr-2 rounded-lg transition-all border ${
+                        selectedIndex === node.path
+                            ? 'bg-primary/10 text-primary font-bold border-primary/20'
+                            : 'hover:bg-base-200 border-transparent'
+                        }`}
+                        style={{ marginLeft: depth * 12 }}
                     >
-                        <Icon icon="lucide:file-code" className={`w-3 h-3 ${selectedIndex === node.path ? 'opacity-100' : 'opacity-30 group-hover:opacity-100'}`} />
-                        <span className="truncate">{node.name}</span>
-                        {selectedIndex === node.path && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary" />}
-                    </button>
+                        <button
+                            key={node.path}
+                            onClick={() => setSelectedIndex(node.path)}
+                            className="flex items-center gap-2 flex-1 px-3 py-1.5 text-[11px] text-left min-w-0"
+                        >
+                            <Icon icon="lucide:file-code" className={`w-3 h-3 flex-shrink-0 ${selectedIndex === node.path ? 'opacity-100' : 'opacity-30 group-hover:opacity-100'}`} />
+                            <span className={`truncate ${selectedIndex === node.path ? 'opacity-100' : 'opacity-60 group-hover:opacity-100'}`}>{node.name}</span>
+                        </button>
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                handleRegenerateIndex(node.path);
+                            }}
+                            disabled={regenerating[node.path]}
+                            className={`p-1 rounded-md transition-all ${
+                                regenerating[node.path] || selectedIndex === node.path 
+                                    ? 'opacity-100' 
+                                    : 'opacity-0 group-hover:opacity-60 hover:opacity-100 hover:bg-base-300'
+                                }`}
+                            title="Regenerate Index"
+                        >
+                            <Icon
+                                icon={regenerating[node.path] ? "lucide:loader-2" : "lucide:refresh-cw"}
+                                className={`w-3 h-3 ${regenerating[node.path] ? 'animate-spin text-primary' : ''} ${selectedIndex === node.path && !regenerating[node.path] ? 'text-primary' : ''}`}
+                            />
+                        </button>
+                    </div>
                 )}
                 {node.children && node.children.length > 0 && renderTree(node.children, depth + 1)}
             </div>
@@ -109,6 +155,13 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
+
+    useEffect(() => {
+        if (indexingStatus) {
+            const timer = setTimeout(() => setIndexingStatus(null), 5000);
+            return () => clearTimeout(timer);
+        }
+    }, [indexingStatus]);
 
     useEffect(() => {
         const fetchWorkspaces = async () => {
@@ -564,6 +617,18 @@ ${snippet || '// No content available'}
                         </ul>
                     </div>
                 </div>
+
+                {indexingStatus && (
+                    <div className={`p-4 rounded-xl border flex items-center gap-3 animate-in fade-in slide-in-from-top-2 duration-300 shadow-lg ${
+                        indexingStatus.type === 'success' ? 'bg-success/10 text-success border-success/20' : 'bg-error/10 text-error border-error/20'
+                    }`}>
+                        <Icon icon={indexingStatus.type === 'success' ? 'lucide:check-circle' : 'lucide:alert-circle'} className="w-4 h-4" />
+                        <span className="text-[11px] font-black uppercase tracking-widest">{indexingStatus.message}</span>
+                        <button onClick={() => setIndexingStatus(null)} className="ml-2 hover:opacity-50">
+                            <Icon icon="lucide:x" className="w-3.5 h-3.5" />
+                        </button>
+                    </div>
+                )}
             </div>
 
             <div className="flex flex-1 gap-6 px-6 pb-6 overflow-hidden min-h-0">

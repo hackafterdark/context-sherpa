@@ -74,6 +74,10 @@ export function PickDirectory() {
   return window['go']['main']['App']['PickDirectory']();
 }
 
+export function RegenerateIndex(arg1, arg2) {
+  return window['go']['main']['App']['RegenerateIndex'](arg1, arg2);
+}
+
 export function RegisterWorkspace(arg1) {
   return window['go']['main']['App']['RegisterWorkspace'](arg1);
 }

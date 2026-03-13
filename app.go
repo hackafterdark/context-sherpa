@@ -1541,6 +1541,24 @@ func (a *App) SearchForIndexes(rootPath string) ([]string, error) {
 	return scipFiles, err
 }
 
+// RegenerateIndex triggers a regeneration of a specific SCIP index.
+func (a *App) RegenerateIndex(workspaceRoot string, scipPath string) error {
+	// Derive actual project root from the .scip file path.
+	// Index files are stored in {projectRoot}/.context-sherpa/index-{lang}.scip
+	// So we go up 2 levels: index file -> .context-sherpa/ -> projectRoot/
+	projectRoot := filepath.Dir(filepath.Dir(scipPath))
+
+	// Infer language from scip filename (e.g., index-go.scip -> go)
+	filename := filepath.Base(scipPath)
+	language := ""
+	if strings.HasPrefix(filename, "index-") {
+		language = strings.TrimPrefix(filename, "index-")
+		language = strings.TrimSuffix(language, ".scip")
+	}
+
+	return mcp.IndexWorkspace(projectRoot, language)
+}
+
 // GetFileContent reads the content of a file from a workspace.
 func (a *App) GetFileContent(workspaceRoot string, relativePath string) (string, error) {
 	// Canonicalize paths to prevent directory traversal
