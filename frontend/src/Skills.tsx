@@ -84,6 +84,8 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
 
             // Set fundamental states FIRST
             console.log("Hub: Setting originalContent and currentPath...");
+            console.log('data', data);
+            console.log('draft', draft);
             setOriginalContent(data);
             setCurrentPath(path);
 
@@ -113,27 +115,34 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
 
     const handleContentChange = (newContent: string) => {
         const normalizedInput = normalizeText(newContent);
-        setContent(newContent);
 
-        // STABILIZATION WINDOW: MDXEditor often normalizes content on load (e.g. changing line endings, 
-        // dash styles, etc). We allow a 3-second window after loading where any mismatch is 
-        // treated as normalization and synced to originalContent, unless the user has actually
-        // made a persistent edit (which should take longer than the initial auto-events).
+        // STABILIZATION WINDOW: MDXEditor often normalizes content on load.
+        // We allow a 3s window to sync originalContent with the editor's internal format.
         const timeSinceLoad = Date.now() - lastLoadTimeRef.current;
-        if (timeSinceLoad < 3000) {
-            if (!isDirty && normalizedInput !== originalContent) {
-                console.log(`Hub: Stabilization sync (T+${timeSinceLoad}ms). Syncing originalContent with editor normalization.`);
+        if (timeSinceLoad < 3000 && !isDirty) {
+            if (normalizedInput !== originalContent) {
+                // Safeguard: If editor fires an empty string on mount but we have real data, disregard.
+                if (normalizedInput === "" && originalContent !== "") {
+                    console.warn(`Hub: Stabilization ignored empty input for non-empty file (T+${timeSinceLoad}ms)`);
+                    return;
+                }
+
+                console.log(`Hub: Stabilization sync (T+${timeSinceLoad}ms). Syncing originalContent.`);
                 setOriginalContent(normalizedInput);
+                setContent(newContent);
                 return;
             }
         }
 
-        console.log('newContent length:', newContent.length);
-        console.log('originalContent length:', originalContent.length);
+        // Normal path
+        setContent(newContent);
 
         const dirty = normalizedInput !== originalContent;
         if (dirty !== isDirty) {
-            console.log("Hub: Dirty state:", dirty);
+            console.log("Hub: Dirty state:", dirty, {
+                currentLen: normalizedInput.length,
+                originalLen: originalContent.length
+            });
         }
         setIsDirty(dirty);
 

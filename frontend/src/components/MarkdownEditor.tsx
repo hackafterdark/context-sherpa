@@ -16,7 +16,12 @@ import {
   CodeToggle,
   MDXEditorMethods,
   linkPlugin,
-  codeMirrorPlugin
+  codeMirrorPlugin,
+  frontmatterPlugin,
+  tablePlugin,
+  imagePlugin,
+  InsertTable,
+  InsertImage
 } from '@mdxeditor/editor';
 import '@mdxeditor/editor/style.css';
 import { useRef, Component, ErrorInfo, ReactNode, useEffect } from 'react';
@@ -211,8 +216,10 @@ export default function MarkdownEditor({ markdown, onChange, readOnly = false }:
   };
 
   useEffect(() => {
+    console.log("MDXEditor: Prop 'markdown' length:", markdown?.length || 0);
     if (editorRef.current) {
       const currentMarkdown = editorRef.current.getMarkdown();
+      console.log("MDXEditor: Internal state length:", currentMarkdown.length);
       
       // Only force sync if the content is meaningfully different
       if (normalizeForComparison(currentMarkdown) !== normalizeForComparison(markdown)) {
@@ -235,12 +242,16 @@ export default function MarkdownEditor({ markdown, onChange, readOnly = false }:
           markdown={markdown}
           onChange={onChange}
           readOnly={readOnly}
+          suppressHtmlProcessing={true}
           plugins={[
             headingsPlugin(),
             listsPlugin(),
             quotePlugin(),
             thematicBreakPlugin(),
             markdownShortcutPlugin(),
+            tablePlugin(),
+            frontmatterPlugin(),
+            imagePlugin(),
             codeBlockPlugin(),
             codeMirrorPlugin({ codeBlockLanguages: { js: 'JavaScript', css: 'CSS', go: 'Go', bash: 'Bash', python: 'Python' } }),
             linkPlugin(),
@@ -256,6 +267,8 @@ export default function MarkdownEditor({ markdown, onChange, readOnly = false }:
                   <ListsToggle />
                   <div className="w-px h-6 bg-base-content/10 mx-1" />
                   <CreateLink />
+                  <InsertImage />
+                  <InsertTable />
                   <InsertCodeBlock />
                 </>
               )
