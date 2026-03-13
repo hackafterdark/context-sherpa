@@ -48,17 +48,17 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
             const parts = relative.split(/[\\/]/);
             let current = tree;
             let currentPath = '';
-            
+
             parts.forEach((part, i) => {
                 const isLast = i === parts.length - 1;
                 currentPath = currentPath ? `${currentPath}/${part}` : part;
                 let node = current.find(n => n.name === part);
                 if (!node) {
-                    node = { 
-                        name: part, 
+                    node = {
+                        name: part,
                         path: isLast ? file : currentPath,
-                        kind: isLast ? 'file' : 'folder', 
-                        children: [] 
+                        kind: isLast ? 'file' : 'folder',
+                        children: []
                     };
                     current.push(node);
                 }
@@ -69,7 +69,7 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
     };
 
     const renderTree = (nodes: any[], depth = 0) => {
-        return nodes.sort((a,b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'folder' ? -1 : 1)).map(node => (
+        return nodes.sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'folder' ? -1 : 1)).map(node => (
             <div key={node.path}>
                 {node.kind === 'folder' ? (
                     <div className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-black opacity-30 uppercase tracking-[0.2em] select-none mt-2 first:mt-0">
@@ -81,11 +81,10 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
                     <button
                         key={node.path}
                         onClick={() => setSelectedIndex(node.path)}
-                        className={`flex items-center gap-2 w-full px-3 py-1.5 text-[11px] rounded-lg transition-all text-left group ${
-                            selectedIndex === node.path 
-                            ? 'bg-primary/10 text-primary font-bold border border-primary/20' 
-                            : 'hover:bg-base-200 border border-transparent opacity-60 hover:opacity-100'
-                        }`}
+                        className={`flex items-center gap-2 w-full px-3 py-1.5 text-[11px] rounded-lg transition-all text-left group ${selectedIndex === node.path
+                                ? 'bg-primary/10 text-primary font-bold border border-primary/20'
+                                : 'hover:bg-base-200 border border-transparent opacity-60 hover:opacity-100'
+                            }`}
                         style={{ paddingLeft: depth * 12 + 12 }}
                     >
                         <Icon icon="lucide:file-code" className={`w-3 h-3 ${selectedIndex === node.path ? 'opacity-100' : 'opacity-30 group-hover:opacity-100'}`} />
@@ -496,17 +495,17 @@ ${snippet || '// No content available'}
             .sort((a: any, b: any) => {
                 const aName = a.name.toLowerCase();
                 const bName = b.name.toLowerCase();
-                
+
                 // Exact match first
                 if (aName === query && bName !== query) return -1;
                 if (bName === query && aName !== query) return 1;
-                
+
                 // Prefix match next
                 const aPrefix = aName.startsWith(query);
                 const bPrefix = bName.startsWith(query);
                 if (aPrefix && !bPrefix) return -1;
                 if (bPrefix && !aPrefix) return 1;
-                
+
                 return aName.localeCompare(bName);
             })
             .slice(0, 15);
@@ -541,7 +540,7 @@ ${snippet || '// No content available'}
                             <div className="max-h-80 overflow-y-auto scrollbar-hide py-1">
                                 {allWorkspaces.map(ws => (
                                     <li key={ws.root}>
-                                        <button 
+                                        <button
                                             onClick={() => {
                                                 onWorkspaceChange(ws.root);
                                                 (document.activeElement as HTMLElement)?.blur();
@@ -593,9 +592,9 @@ ${snippet || '// No content available'}
                                             className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-primary hover:text-primary-content transition-colors group text-left"
                                         >
                                             <div className="flex items-center gap-3 min-w-0">
-                                                <Icon 
-                                                    icon={res.kind === 'Struct' ? 'lucide:box' : res.kind === 'Function' ? 'lucide:zap' : 'lucide:hash'} 
-                                                    className="opacity-40 group-hover:opacity-100 w-3.5 h-3.5 shrink-0" 
+                                                <Icon
+                                                    icon={res.kind === 'Struct' ? 'lucide:box' : res.kind === 'Function' ? 'lucide:zap' : 'lucide:hash'}
+                                                    className="opacity-40 group-hover:opacity-100 w-3.5 h-3.5 shrink-0"
                                                 />
                                                 <span className="text-xs font-bold truncate">{res.name}</span>
                                             </div>
@@ -782,7 +781,7 @@ ${snippet || '// No content available'}
                                                         className="btn btn-primary btn-square w-12 h-12 rounded-xl"
                                                         title="Pinpoint Logic"
                                                     >
-                                                        <Icon icon="lucide:target" className="w-5 h-5" />
+                                                        <Icon icon="lucide:locate-fixed" className="w-5 h-5" />
                                                     </button>
                                                 </div>
                                             </>
@@ -798,7 +797,6 @@ ${snippet || '// No content available'}
 
                                                 <div className="p-6 space-y-8 flex-1 overflow-y-auto scrollbar-hide">
                                                     <section className="bg-base-200/30 rounded-xl border border-base-300/50 p-5 relative">
-                                                        <div className="absolute -left-px top-8 bottom-8 w-1 bg-primary/40 rounded-full" />
                                                         <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-3 ml-1">Origin</h3>
                                                         <div className="font-mono text-xs font-bold text-primary break-all leading-relaxed bg-base-100 p-3 rounded-lg border border-base-300/30 shadow-sm">
                                                             {selectedEdge.source.replace(/^sym:\s*/, '').replace(/^scip-[^\s]+\s+[^\s]+\s+/, '')}
@@ -870,7 +868,7 @@ ${snippet || '// No content available'}
                                         <Icon icon="lucide:clipboard-copy" className="w-3.5 h-3.5" />
                                         Copy for Agent
                                     </button>
-                                    <button 
+                                    <button
                                         onClick={() => setIsSourceExpanded(false)}
                                         className="btn btn-sm btn-ghost btn-square"
                                     >
