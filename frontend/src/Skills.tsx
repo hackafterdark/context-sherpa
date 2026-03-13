@@ -10,6 +10,8 @@ type SkillsProps = {
     onWorkspaceChange: (root: string) => void;
 };
 
+const DRAFT_PREFIX = 'hub-skill-draft:';
+
 export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps) {
     const [currentPath, setCurrentPath] = useState('');
     const [content, setContent] = useState('');
@@ -50,9 +52,18 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
         try {
             const data = await ReadMarkdown(path);
             setCurrentPath(path);
-            setContent(data);
             setOriginalContent(data);
-            setIsDirty(false);
+            
+            // Check for persistent draft
+            const draft = localStorage.getItem(DRAFT_PREFIX + path);
+            if (draft && draft !== data) {
+                setContent(draft);
+                setIsDirty(true);
+            } else {
+                setContent(data);
+                setIsDirty(false);
+                if (draft) localStorage.removeItem(DRAFT_PREFIX + path);
+            }
         } catch (err) {
             console.error("Failed to load markdown:", err);
         }
@@ -60,7 +71,16 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
 
     const handleContentChange = (newContent: string) => {
         setContent(newContent);
-        setIsDirty(newContent !== originalContent);
+        const dirty = newContent !== originalContent;
+        setIsDirty(dirty);
+        
+        if (currentPath) {
+            if (dirty) {
+                localStorage.setItem(DRAFT_PREFIX + currentPath, newContent);
+            } else {
+                localStorage.removeItem(DRAFT_PREFIX + currentPath);
+            }
+        }
     };
 
     const handleSave = async () => {
@@ -71,6 +91,7 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
             await WriteMarkdown(currentPath, content);
             setOriginalContent(content);
             setIsDirty(false);
+            localStorage.removeItem(DRAFT_PREFIX + currentPath);
         } catch (err) {
             console.error("Failed to save markdown:", err);
         } finally {
@@ -78,12 +99,40 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
         }
     };
 
-    const confirmDiscard = () => {
+    const handleDiscard = () => {
+        setContent(originalContent);
         setIsDirty(false);
-        setShowConfirmModal(false);
+        if (currentPath) {
+            localStorage.removeItem(DRAFT_PREFIX + currentPath);
+        }
+    };
+
+    const confirmDiscardModal = async () => {
         if (pendingPath) {
-            loadFile(pendingPath);
+            const nextPath = pendingPath; // Capture it
+            localStorage.removeItem(DRAFT_PREFIX + currentPath);
+            
+            // Re-load the next file directly bypassing the isDirty check
+            try {
+                const data = await ReadMarkdown(nextPath);
+                setCurrentPath(nextPath);
+                setOriginalContent(data);
+                
+                const draft = localStorage.getItem(DRAFT_PREFIX + nextPath);
+                if (draft && draft !== data) {
+                    setContent(draft);
+                    setIsDirty(true);
+                } else {
+                    setContent(data);
+                    setIsDirty(false);
+                    if (draft) localStorage.removeItem(DRAFT_PREFIX + nextPath);
+                }
+            } catch (err) {
+                console.error("Failed to load markdown:", err);
+            }
+            
             setPendingPath(null);
+            setShowConfirmModal(false);
         }
     };
 
@@ -160,13 +209,23 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
                         </div>
 
                         <div className="flex items-center gap-2">
+                            {isDirty && (
+                                <button 
+                                    className="btn btn-ghost btn-sm gap-2 opacity-60 hover:opacity-100"
+                                    onClick={handleDiscard}
+                                    disabled={saving}
+                                >
+                                    <Icon icon="lucide:undo-2" className="text-lg" />
+                                    Discard
+                                </button>
+                            )}
                             <button 
                                 className={`btn btn-primary btn-sm gap-2 ${saving ? "loading" : ""}`}
                                 disabled={!isDirty || saving}
                                 onClick={handleSave}
                             >
                                 <Icon icon="lucide:save" className="text-lg" />
-                                Save to Disk
+                                Save
                             </button>
                         </div>
                     </div>
@@ -200,7 +259,7 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
                         <p className="py-4">You have unsaved changes in your current file. Do you want to discard them and switch to the new file?</p>
                         <div className="modal-action">
                             <button className="btn btn-ghost" onClick={() => setShowConfirmModal(false)}>Cancel</button>
-                            <button className="btn btn-error" onClick={confirmDiscard}>Discard Changes</button>
+                            <button className="btn btn-error" onClick={confirmDiscardModal}>Discard Changes</button>
                         </div>
                     </div>
                 </div>
@@ -208,4 +267,5 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
         </div>
     );
 }
+
 
