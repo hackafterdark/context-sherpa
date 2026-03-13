@@ -12,12 +12,22 @@ type SkillsProps = {
 
 const DRAFT_PREFIX = 'hub-skill-draft:';
 
+const normalizeText = (text: string) => {
+    if (!text) return '';
+    // Strip BOM, normalize ALL carriage returns (\r\n or just \r) to \n
+    return text
+        .replace(/^\uFEFF/, '')                 // Strip BOM
+        .replace(/\r\n|\r/g, '\n')              // Normalize line endings
+        .trim();                                // Trim flanking whitespace
+};
+
 export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps) {
     const [currentPath, setCurrentPath] = useState('');
     const [content, setContent] = useState('');
     const [originalContent, setOriginalContent] = useState('');
     const [isDirty, setIsDirty] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
     const [pendingPath, setPendingPath] = useState<string | null>(null);
     const [showConfirmModal, setShowConfirmModal] = useState(false);
     const [allWorkspaces, setAllWorkspaces] = useState<any[]>([]);
@@ -42,43 +52,77 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
         return () => EventsOff('workspace-updated');
     }, []);
 
-    const loadFile = async (path: string) => {
+    const loadFile = async (path: string, force = false) => {
+        // Return early if already loading or if clicking the same file (unless forced)
+        if (isLoading) return;
+        if (!force && path.toLowerCase() === currentPath.toLowerCase()) return;
+
         if (isDirty) {
             setPendingPath(path);
             setShowConfirmModal(true);
             return;
         }
 
+        setIsLoading(true);
+        console.log("Hub: Loading file:", path);
         try {
-            const data = await ReadMarkdown(path);
-            setCurrentPath(path);
-            setOriginalContent(data);
-            
+            const rawData = await ReadMarkdown(path);
+            console.log(`Hub: ReadMarkdown success. Path: ${path}, Bytes: ${rawData?.length || 0}`);
+            const data = normalizeText(rawData);
+            console.log(`Hub: Normalized content string length: ${data.length}`);
+
+            if (data.length === 0 && rawData.length > 0) {
+                console.warn("Hub: Normalization resulted in EMPTY string but raw data existed!", { raw: rawData.substring(0, 50) });
+            }
+
+            const normPath = path.toLowerCase();
+
             // Check for persistent draft
-            const draft = localStorage.getItem(DRAFT_PREFIX + path);
+            const rawDraft = localStorage.getItem(DRAFT_PREFIX + normPath);
+            const draft = rawDraft ? normalizeText(rawDraft) : null;
+
+            // Set fundamental states FIRST
+            console.log("Hub: Setting originalContent and currentPath...");
+            setOriginalContent(data);
+            setCurrentPath(path);
+
             if (draft && draft !== data) {
-                setContent(draft);
+                console.log("Hub: Restoring draft for", path);
+                setContent(rawDraft!);
                 setIsDirty(true);
             } else {
+                console.log("Hub: Setting clean content for", path);
                 setContent(data);
                 setIsDirty(false);
-                if (draft) localStorage.removeItem(DRAFT_PREFIX + path);
+                if (rawDraft) localStorage.removeItem(DRAFT_PREFIX + normPath);
             }
         } catch (err) {
-            console.error("Failed to load markdown:", err);
+            console.error("Hub: Load failed for path:", path, err);
+            setCurrentPath('');
+            setContent('');
+            setIsDirty(false);
+        } finally {
+            console.log("Hub: Finalizing load for", path);
+            setTimeout(() => setIsLoading(false), 150);
         }
     };
 
     const handleContentChange = (newContent: string) => {
+        const normalizedInput = normalizeText(newContent);
         setContent(newContent);
-        const dirty = newContent !== originalContent;
+
+        const dirty = normalizedInput !== originalContent;
+        if (dirty !== isDirty) {
+            console.log("Hub: Dirty state:", dirty);
+        }
         setIsDirty(dirty);
-        
+
         if (currentPath) {
+            const normPath = currentPath.toLowerCase();
             if (dirty) {
-                localStorage.setItem(DRAFT_PREFIX + currentPath, newContent);
+                localStorage.setItem(DRAFT_PREFIX + normPath, newContent);
             } else {
-                localStorage.removeItem(DRAFT_PREFIX + currentPath);
+                localStorage.removeItem(DRAFT_PREFIX + normPath);
             }
         }
     };
@@ -89,9 +133,10 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
         setSaving(true);
         try {
             await WriteMarkdown(currentPath, content);
-            setOriginalContent(content);
+            const normalizedSaved = normalizeText(content);
+            setOriginalContent(normalizedSaved);
             setIsDirty(false);
-            localStorage.removeItem(DRAFT_PREFIX + currentPath);
+            localStorage.removeItem(DRAFT_PREFIX + currentPath.toLowerCase());
         } catch (err) {
             console.error("Failed to save markdown:", err);
         } finally {
@@ -103,36 +148,20 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
         setContent(originalContent);
         setIsDirty(false);
         if (currentPath) {
-            localStorage.removeItem(DRAFT_PREFIX + currentPath);
+            localStorage.removeItem(DRAFT_PREFIX + currentPath.toLowerCase());
         }
     };
 
     const confirmDiscardModal = async () => {
         if (pendingPath) {
-            const nextPath = pendingPath; // Capture it
-            localStorage.removeItem(DRAFT_PREFIX + currentPath);
-            
-            // Re-load the next file directly bypassing the isDirty check
-            try {
-                const data = await ReadMarkdown(nextPath);
-                setCurrentPath(nextPath);
-                setOriginalContent(data);
-                
-                const draft = localStorage.getItem(DRAFT_PREFIX + nextPath);
-                if (draft && draft !== data) {
-                    setContent(draft);
-                    setIsDirty(true);
-                } else {
-                    setContent(data);
-                    setIsDirty(false);
-                    if (draft) localStorage.removeItem(DRAFT_PREFIX + nextPath);
-                }
-            } catch (err) {
-                console.error("Failed to load markdown:", err);
-            }
-            
+            const nextPath = pendingPath;
+            localStorage.removeItem(DRAFT_PREFIX + currentPath.toLowerCase());
+            setIsDirty(false);
             setPendingPath(null);
             setShowConfirmModal(false);
+
+            // Re-load the next file using the clean loadFile logic
+            loadFile(nextPath);
         }
     };
 
@@ -141,7 +170,7 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
             {/* Main Header matching Atlas.tsx */}
             <div className="flex justify-between items-center px-6 pt-5 shrink-0">
                 <div className="flex items-center gap-4">
-                    <h1 className="text-3xl font-bold font-sans tracking-tight">Intelligence Command</h1>
+                    <h1 className="text-3xl font-bold font-sans tracking-tight">Behavior Adjustment</h1>
                     <div className="dropdown dropdown-bottom">
                         <div tabIndex={0} role="button" className="badge badge-outline badge-md opacity-60 font-mono border-base-content/10 cursor-pointer hover:bg-base-300 transition-all flex items-center gap-2 pr-1.5 h-7 rounded-lg group">
                             <span className="truncate max-w-[200px] text-[10px] font-bold">{workspaceRoot}</span>
@@ -178,7 +207,7 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
             {/* Viewport Content */}
             <div className="flex flex-1 gap-0 pb-0 overflow-hidden min-h-0">
                 {/* Sidebar Catalog */}
-                <SkillCatalog 
+                <SkillCatalog
                     workspaceRoot={workspaceRoot}
                     onFileSelect={loadFile}
                     currentFilePath={currentPath}
@@ -193,8 +222,13 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
                                 <Icon icon="lucide:file-edit" className="text-primary text-xl" />
                             </div>
                             <div className="min-w-0">
-                                <h2 className="text-sm font-bold truncate">
+                                <h2 className="text-sm font-bold truncate flex items-center gap-2">
                                     {currentPath ? currentPath.split(/[\\/]/).pop() : "Editor"}
+                                    {content && (
+                                        <span className="text-[10px] font-mono opacity-50 font-normal px-2 py-0.5 bg-base-300 rounded border border-base-content/5">
+                                            {content.length} chars | {content.substring(0, 10).replace(/[\n\r]/g, ' ')}...
+                                        </span>
+                                    )}
                                 </h2>
                                 <p className="text-[10px] opacity-50 truncate cursor-help tooltip tooltip-bottom" data-tip={currentPath}>
                                     {currentPath || "Select a file to start editing"}
@@ -210,7 +244,7 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
 
                         <div className="flex items-center gap-2">
                             {isDirty && (
-                                <button 
+                                <button
                                     className="btn btn-ghost btn-sm gap-2 opacity-60 hover:opacity-100"
                                     onClick={handleDiscard}
                                     disabled={saving}
@@ -219,7 +253,7 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
                                     Discard
                                 </button>
                             )}
-                            <button 
+                            <button
                                 className={`btn btn-primary btn-sm gap-2 ${saving ? "loading" : ""}`}
                                 disabled={!isDirty || saving}
                                 onClick={handleSave}
@@ -231,17 +265,27 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
                     </div>
 
                     {/* Editor Surface */}
-                    <div className="flex-1 p-6 overflow-hidden">
-                        {currentPath ? (
-                            <MarkdownEditor 
-                                markdown={content}
-                                onChange={handleContentChange}
-                            />
+                    <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-base-200/20 rounded-b-2xl">
+                        {isLoading ? (
+                            <div className="flex-1 flex flex-col items-center justify-center opacity-40">
+                                <span className="loading loading-spinner loading-lg text-primary"></span>
+                                <span className="text-xs mt-4 font-bold tracking-widest uppercase animate-pulse">Initializing...</span>
+                            </div>
+                        ) : currentPath ? (
+                            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                                <MarkdownEditor
+                                    key={currentPath.toLowerCase()}
+                                    markdown={content}
+                                    onChange={handleContentChange}
+                                />
+                            </div>
                         ) : (
-                            <div className="h-full flex flex-col items-center justify-center opacity-30 text-center">
-                                <Icon icon="lucide:brain-circuit" className="text-8xl mb-4" />
-                                <h2 className="text-2xl font-bold">Refine Intelligence</h2>
-                                <p>Select an AGENTS.md or SKILL.md from the sidebar to refine your AI's mind.</p>
+                            <div className="flex-1 flex flex-col items-center justify-center opacity-30 text-center p-6">
+                                <div className="p-8 bg-base-300 rounded-full mb-6 shadow-inner ring-1 ring-base-content/5">
+                                    <Icon icon="lucide:brain-circuit" className="text-7xl text-primary/50" />
+                                </div>
+                                <h2 className="text-2xl font-bold tracking-tight text-base-content/80">Behavior Adjustment</h2>
+                                <p className="max-w-xs mx-auto mt-3 text-sm leading-relaxed">Select an AGENTS.md or SKILL.md from the sidebar to refine your AI's behavioral rules.</p>
                             </div>
                         )}
                     </div>
@@ -251,7 +295,7 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
             {/* Discard Changes Modal */}
             {showConfirmModal && (
                 <div className="modal modal-open">
-                    <div className="modal-box">
+                    <div className="modal-box shadow-2xl border border-base-300">
                         <h3 className="font-bold text-lg flex items-center gap-2">
                             <Icon icon="lucide:alert-triangle" className="text-warning" />
                             Unsaved Changes

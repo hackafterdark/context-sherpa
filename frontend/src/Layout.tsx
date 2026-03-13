@@ -42,7 +42,7 @@ export default function Layout({ activeTab, setActiveTab, children }: LayoutProp
 
                     <button
                         className={`btn btn-square btn-ghost w-full transition-colors ${activeTab === 'skills' ? 'bg-base-100 shadow-sm text-primary' : 'text-base-content/70 hover:bg-base-100 hover:text-base-content'} tooltip tooltip-right`}
-                        data-tip="Intelligence Command"
+                        data-tip="Behavior Adjustment"
                         onClick={() => setActiveTab('skills')}
                     >
                         <Icon icon="lucide:brain" className="text-xl" />
@@ -71,7 +71,7 @@ export default function Layout({ activeTab, setActiveTab, children }: LayoutProp
 
             {/* Main Content Area */}
             <div className="flex-1 overflow-hidden relative bg-base-200">
-                <div className={`${activeTab === 'atlas' ? 'p-0 w-full overflow-hidden' : 'px-6 pt-5 overflow-y-auto'} h-full flex flex-col`}>
+                <div className={`${(activeTab === 'atlas' || activeTab === 'skills') ? 'p-0 w-full overflow-hidden' : 'px-6 pt-5 overflow-y-auto'} h-full flex flex-col`}>
                     {children}
                 </div>
             </div>

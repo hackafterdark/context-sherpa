@@ -248,20 +248,28 @@ func (a *App) RegisterWorkspace(path string) error {
 
 // ReadMarkdown loads the raw text for MDXEditor.
 func (a *App) ReadMarkdown(path string) (string, error) {
+	fmt.Printf("Hub: ReadMarkdown requested for path: %s\n", path)
 	if !a.isPathInWorkspace(path) {
+		fmt.Printf("Hub: ReadMarkdown access denied for path: %s\n", path)
 		return "", fmt.Errorf("access denied: path is outside of registered workspaces")
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
+		fmt.Printf("Hub: ReadMarkdown error for %s: %v\n", path, err)
 		return "", fmt.Errorf("failed to read file: %w", err)
 	}
 
-	return string(data), nil
+	// Safety: Strip null bytes to prevent bridge truncation
+	content := strings.ReplaceAll(string(data), "\x00", "")
+
+	fmt.Printf("Hub: ReadMarkdown success, read %d bytes from %s\n", len(data), path)
+	return content, nil
 }
 
 // WriteMarkdown commits the edits to the workspace.
 func (a *App) WriteMarkdown(path string, content string) error {
+	fmt.Printf("Hub: WriteMarkdown requested for path: %s\n", path)
 	if !a.isPathInWorkspace(path) {
 		return fmt.Errorf("access denied: path is outside of registered workspaces")
 	}
@@ -316,14 +324,30 @@ func (a *App) isPathInWorkspace(path string) bool {
 		return false
 	}
 
+	// On Windows, drive letters and paths are case-insensitive
+	isWindows := runtime.GOOS == "windows"
+	if isWindows {
+		absPath = strings.ToLower(absPath)
+	}
+
 	for _, ws := range a.workspaces {
 		wsAbs, err := filepath.Abs(ws.Root)
 		if err != nil {
 			continue
 		}
 
-		// Check if absPath starts with wsAbs
-		if strings.HasPrefix(absPath, wsAbs) {
+		if isWindows {
+			wsAbs = strings.ToLower(wsAbs)
+		}
+
+		// Ensure we're comparing clean directory boundaries
+		wsAbs = filepath.Clean(wsAbs)
+		if !strings.HasSuffix(wsAbs, string(filepath.Separator)) {
+			wsAbs += string(filepath.Separator)
+		}
+
+		// Check if absPath is equal to wsAbs (root file) or a child
+		if absPath == strings.TrimSuffix(wsAbs, string(filepath.Separator)) || strings.HasPrefix(absPath, wsAbs) {
 			return true
 		}
 	}
