@@ -17,6 +17,7 @@ import {
   MDXEditorMethods,
   linkPlugin,
   codeMirrorPlugin,
+  CodeMirrorEditor,
   frontmatterPlugin,
   tablePlugin,
   imagePlugin,
@@ -220,7 +221,7 @@ export default function MarkdownEditor({ markdown, onChange, readOnly = false }:
     if (editorRef.current) {
       const currentMarkdown = editorRef.current.getMarkdown();
       console.log("MDXEditor: Internal state length:", currentMarkdown.length);
-      
+
       // Only force sync if the content is meaningfully different
       if (normalizeForComparison(currentMarkdown) !== normalizeForComparison(markdown)) {
         console.log("MDXEditor: Force syncing content (meaningful difference detected)");
@@ -252,8 +253,16 @@ export default function MarkdownEditor({ markdown, onChange, readOnly = false }:
             tablePlugin(),
             frontmatterPlugin(),
             imagePlugin(),
-            codeBlockPlugin(),
-            codeMirrorPlugin({ codeBlockLanguages: { js: 'JavaScript', css: 'CSS', go: 'Go', bash: 'Bash', python: 'Python' } }),
+            codeBlockPlugin({
+              codeBlockEditorDescriptors: [
+                {
+                  priority: -10,
+                  match: () => true,
+                  Editor: CodeMirrorEditor
+                }
+              ]
+            }),
+            codeMirrorPlugin({ codeBlockLanguages: { js: 'JavaScript', ts: 'TypeScript', tsx: 'TypeScript (react)', jsx: 'JavaScript (react)', css: 'CSS', go: 'Go', python: 'Python', bash: 'Bash' } }),
             linkPlugin(),
             toolbarPlugin({
               toolbarContents: () => (
