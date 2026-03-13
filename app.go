@@ -246,6 +246,91 @@ func (a *App) RegisterWorkspace(path string) error {
 	return nil
 }
 
+// ReadMarkdown loads the raw text for MDXEditor.
+func (a *App) ReadMarkdown(path string) (string, error) {
+	if !a.isPathInWorkspace(path) {
+		return "", fmt.Errorf("access denied: path is outside of registered workspaces")
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to read file: %w", err)
+	}
+
+	return string(data), nil
+}
+
+// WriteMarkdown commits the edits to the workspace.
+func (a *App) WriteMarkdown(path string, content string) error {
+	if !a.isPathInWorkspace(path) {
+		return fmt.Errorf("access denied: path is outside of registered workspaces")
+	}
+
+	// Audit: Ensure path is within workspace boundaries
+	err := os.WriteFile(path, []byte(content), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+
+	return nil
+}
+
+// DiscoverMarkdownFiles recursively scans a workspace for .md files.
+func (a *App) DiscoverMarkdownFiles(root string) ([]string, error) {
+	if !a.isPathInWorkspace(root) {
+		return nil, fmt.Errorf("access denied: path is outside of registered workspaces")
+	}
+
+	var files []string
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip hidden directories (like .git, .context-sherpa) and node_modules
+		if info.IsDir() {
+			base := filepath.Base(path)
+			if strings.HasPrefix(base, ".") || base == "node_modules" || base == "vendor" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		if strings.ToLower(filepath.Ext(path)) == ".md" {
+			files = append(files, path)
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan for markdown files: %w", err)
+	}
+
+	return files, nil
+}
+
+// isPathInWorkspace checks if the given path is within any registered workspace.
+func (a *App) isPathInWorkspace(path string) bool {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+
+	for _, ws := range a.workspaces {
+		wsAbs, err := filepath.Abs(ws.Root)
+		if err != nil {
+			continue
+		}
+
+		// Check if absPath starts with wsAbs
+		if strings.HasPrefix(absPath, wsAbs) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // IndexTarget represents a directory and language that should be indexed
 type IndexTarget struct {
 	Path string

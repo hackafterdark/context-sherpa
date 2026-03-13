@@ -39,6 +39,14 @@ export default function Layout({ activeTab, setActiveTab, children }: LayoutProp
                     >
                         <Icon icon="lucide:network" className="text-xl" />
                     </button>
+
+                    <button
+                        className={`btn btn-square btn-ghost w-full transition-colors ${activeTab === 'skills' ? 'bg-base-100 shadow-sm text-primary' : 'text-base-content/70 hover:bg-base-100 hover:text-base-content'} tooltip tooltip-right`}
+                        data-tip="Intelligence Command"
+                        onClick={() => setActiveTab('skills')}
+                    >
+                        <Icon icon="lucide:brain" className="text-xl" />
+                    </button>
                 </div>
 
                 {/* Bottom Menu Items */}

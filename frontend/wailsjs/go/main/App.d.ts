@@ -9,6 +9,8 @@ export function DeleteModel(arg1:string):Promise<void>;
 
 export function DeleteScipIndexer(arg1:string):Promise<void>;
 
+export function DiscoverMarkdownFiles(arg1:string):Promise<Array<string>>;
+
 export function DownloadModel(arg1:string,arg2:string):Promise<void>;
 
 export function GetAstGrepStatus():Promise<Record<string, any>>;
@@ -39,6 +41,8 @@ export function OpenWorkspace(arg1:string):Promise<void>;
 
 export function PickDirectory():Promise<string>;
 
+export function ReadMarkdown(arg1:string):Promise<string>;
+
 export function RegenerateIndex(arg1:string,arg2:string):Promise<void>;
 
 export function RegisterWorkspace(arg1:string):Promise<void>;
@@ -50,3 +54,5 @@ export function RunInference(arg1:string,arg2:string):Promise<string>;
 export function SavePreferences(arg1:main.UserPreferences):Promise<void>;
 
 export function SearchForIndexes(arg1:string):Promise<Array<string>>;
+
+export function WriteMarkdown(arg1:string,arg2:string):Promise<void>;

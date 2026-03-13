@@ -14,6 +14,10 @@ export function DeleteScipIndexer(arg1) {
   return window['go']['main']['App']['DeleteScipIndexer'](arg1);
 }
 
+export function DiscoverMarkdownFiles(arg1) {
+  return window['go']['main']['App']['DiscoverMarkdownFiles'](arg1);
+}
+
 export function DownloadModel(arg1, arg2) {
   return window['go']['main']['App']['DownloadModel'](arg1, arg2);
 }
@@ -74,6 +78,10 @@ export function PickDirectory() {
   return window['go']['main']['App']['PickDirectory']();
 }
 
+export function ReadMarkdown(arg1) {
+  return window['go']['main']['App']['ReadMarkdown'](arg1);
+}
+
 export function RegenerateIndex(arg1, arg2) {
   return window['go']['main']['App']['RegenerateIndex'](arg1, arg2);
 }
@@ -96,4 +104,8 @@ export function SavePreferences(arg1) {
 
 export function SearchForIndexes(arg1) {
   return window['go']['main']['App']['SearchForIndexes'](arg1);
+}
+
+export function WriteMarkdown(arg1, arg2) {
+  return window['go']['main']['App']['WriteMarkdown'](arg1, arg2);
 }
