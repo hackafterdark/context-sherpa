@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Icon } from '@iconify/react';
 import { ReadMarkdown, WriteMarkdown, GetWorkspaces } from '../wailsjs/go/main/App';
 import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
@@ -31,6 +31,7 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
     const [pendingPath, setPendingPath] = useState<string | null>(null);
     const [showConfirmModal, setShowConfirmModal] = useState(false);
     const [allWorkspaces, setAllWorkspaces] = useState<any[]>([]);
+    const lastLoadTimeRef = useRef(0);
 
     useEffect(() => {
         const fetchWorkspaces = async () => {
@@ -96,6 +97,9 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
                 setIsDirty(false);
                 if (rawDraft) localStorage.removeItem(DRAFT_PREFIX + normPath);
             }
+
+            // Set stabilization window for normalization
+            lastLoadTimeRef.current = Date.now();
         } catch (err) {
             console.error("Hub: Load failed for path:", path, err);
             setCurrentPath('');
@@ -110,6 +114,22 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
     const handleContentChange = (newContent: string) => {
         const normalizedInput = normalizeText(newContent);
         setContent(newContent);
+
+        // STABILIZATION WINDOW: MDXEditor often normalizes content on load (e.g. changing line endings, 
+        // dash styles, etc). We allow a 3-second window after loading where any mismatch is 
+        // treated as normalization and synced to originalContent, unless the user has actually
+        // made a persistent edit (which should take longer than the initial auto-events).
+        const timeSinceLoad = Date.now() - lastLoadTimeRef.current;
+        if (timeSinceLoad < 3000) {
+            if (!isDirty && normalizedInput !== originalContent) {
+                console.log(`Hub: Stabilization sync (T+${timeSinceLoad}ms). Syncing originalContent with editor normalization.`);
+                setOriginalContent(normalizedInput);
+                return;
+            }
+        }
+
+        console.log('newContent length:', newContent.length);
+        console.log('originalContent length:', originalContent.length);
 
         const dirty = normalizedInput !== originalContent;
         if (dirty !== isDirty) {

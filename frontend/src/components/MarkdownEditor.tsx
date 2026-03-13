@@ -201,14 +201,27 @@ const editorStyles = `
 export default function MarkdownEditor({ markdown, onChange, readOnly = false }: MarkdownEditorProps) {
   const editorRef = useRef<MDXEditorMethods>(null);
 
+  // Robust normalization for equality check
+  const normalizeForComparison = (text: string) => {
+    if (!text) return '';
+    return text
+      .replace(/\r\n|\r/g, '\n') // Line endings
+      .replace(/\s+$/gm, '')     // Trailing spaces per line
+      .trim();                  // Flanking whitespace
+  };
+
   useEffect(() => {
-    console.log("MDXEditor: Received markdown length:", markdown?.length || 0);
-    // Force set markdown if the editor is out of sync or if it's the first load
     if (editorRef.current) {
       const currentMarkdown = editorRef.current.getMarkdown();
-      if (currentMarkdown !== markdown) {
-        console.log("MDXEditor: Force syncing content...");
+      
+      // Only force sync if the content is meaningfully different
+      if (normalizeForComparison(currentMarkdown) !== normalizeForComparison(markdown)) {
+        console.log("MDXEditor: Force syncing content (meaningful difference detected)");
         editorRef.current.setMarkdown(markdown);
+      } else {
+        // Even if slightly different (whitespace), don't force sync if it's "equivalent"
+        // to avoid infinite loops or focus loss
+        // console.log("MDXEditor: Content equivalent, skipping force sync");
       }
     }
   }, [markdown]);
