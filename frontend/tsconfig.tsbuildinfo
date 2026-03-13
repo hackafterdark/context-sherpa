@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/atlas.tsx","./src/home.tsx","./src/layout.tsx","./src/settings.tsx","./src/cytoscape-fcose.d.ts","./src/main.tsx","./wailsjs/go/models.ts","./wailsjs/go/main/app.d.ts","./wailsjs/runtime/runtime.d.ts"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/atlas.tsx","./src/help.tsx","./src/home.tsx","./src/layout.tsx","./src/settings.tsx","./src/cytoscape-fcose.d.ts","./src/main.tsx","./wailsjs/go/models.ts","./wailsjs/go/main/app.d.ts","./wailsjs/runtime/runtime.d.ts"],"version":"5.9.3"}

@@ -3,6 +3,7 @@ import Layout from './Layout';
 import Home from './Home';
 import Settings from './Settings';
 import Atlas from './Atlas';
+import Help from './Help';
 import { GetPreferences, SavePreferences } from '../wailsjs/go/main/App';
 
 function App() {
@@ -38,6 +39,7 @@ function App() {
         <Layout activeTab={activeTab} setActiveTab={setActiveTab}>
             {activeTab === 'home' && <Home onVisualize={openAtlas} />}
             {activeTab === 'atlas' && <Atlas workspaceRoot={atlasWorkspace} onWorkspaceChange={setAtlasWorkspace} />}
+            {activeTab === 'help' && <Help />}
             {activeTab === 'settings' && <Settings theme={theme} setTheme={setTheme} />}
         </Layout>
     );
