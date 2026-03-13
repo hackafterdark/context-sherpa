@@ -145,6 +145,32 @@ const Help = () => {
                     </div>
                 </div>
             </section>
+
+            <footer className="mt-4 pt-8 border-t border-base-content/10 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-base-content/50">
+                <div className="flex items-center gap-2">
+                    <Icon icon="lucide:github" />
+                    <a 
+                        href="https://github.com/hackafterdark/context-sherpa" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="hover:text-primary transition-colors underline decoration-primary/30 underline-offset-4"
+                    >
+                        github.com/hackafterdark/context-sherpa
+                    </a>
+                </div>
+                <div>
+                    Built by <a 
+                        href="https://www.hackafterdark.com/" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="font-semibold hover:text-primary transition-colors"
+                    >
+                        Hack After Dark
+                    </a>
+                    <span className="mx-2">•</span>
+                    <span>MIT License</span>
+                </div>
+            </footer>
         </div>
     );
 };
