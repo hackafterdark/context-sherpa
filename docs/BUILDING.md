@@ -13,9 +13,18 @@ Context Sherpa can be built in two modes: the **GUI Application** (powered by Wa
 
 ---
 
-## Building the GUI Application
+The GUI version provides the full visual experience, including the Code Atlas, Agent Rule Editor, and easy dependency management. For more advanced build scenarios, refer to the [Wails Manual Builds Guide](https://wails.io/docs/guides/manual-builds).
 
-The GUI version provides the full visual experience, including the Code Atlas, Agent Rule Editor, and easy dependency management.
+### Frontend Build (Required)
+
+Before building the GUI with Wails, you must first build the React Vite application in the `frontend` directory:
+
+```bash
+cd frontend
+npm install
+npm run build
+cd ..
+```
 
 ### Development Mode
 Runs the application with a live-reloading frontend.

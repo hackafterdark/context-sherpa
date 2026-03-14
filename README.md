@@ -18,6 +18,8 @@ Traditional tools like **grep** are fast but lack symbol awareness, while **sema
 - **vs. Semantic Search**: Where vectors often fail to distinguish between similar-looking code, our **Structural Analysis** (ast-grep) uses the code's abstract syntax tree for exact pattern matching—**no vector databases or text embeddings required**.
 - **vs. Indexing**: Unlike massive, centralized indexing services, Context Sherpa is local-first, lightweight, and requires zero cloud configuration or complex RAG infrastructure.
 
+Of course the benefit of text embeddings in a vector database and other traditional methods is that they are more of a one size fits all solution. They can be used for many programming languages and even non-code files. Remember that a different SCIP tool must be used for each programming language. Lucky for you, you can use both. Context Sherpa will add SCIP tools for more languages in the future. 
+
 ![Context Sherpa Scan Results](./docs/example-scan-output.png)
 
 ---
@@ -58,17 +60,27 @@ Download the latest version for your platform from [GitHub Releases](https://git
   ```
 - **Linux**: Download the binary and provide execution permissions (`chmod +x`).
 
+> [!IMPORTANT]
+> **Security Notice**: Pre-built binaries are currently **not signed**. When running the application for the first time, you may encounter OS security warnings (e.g., Windows SmartScreen or macOS Gatekeeper). You will need to manually allow the application to run.
+> 
+> This is a known limitation of the current release process. Future pre-built binaries will undergo formal code signing for convenience. Building from source (instructions below) avoids these security warnings.
+
 ### Building from Source
 
 Context Sherpa is built with **Go** and **Wails**. For detailed building instructions, please see [BUILDING.md](docs/BUILDING.md).
 
-```bash
-# Install Wails
-go install github.com/wailsapp/wails/v2/cmd/wails@latest
+1.  **Build the Frontend**:
+    ```bash
+    cd frontend && npm install && npm run build && cd ..
+    ```
+2.  **Build the GUI**:
+    ```bash
+    # Install Wails CLI if not already present
+    go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
-# Build the GUI
-wails build
-```
+    # Build the binary
+    wails build
+    ```
 
 ---
 

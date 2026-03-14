@@ -24,7 +24,7 @@ Select any node in the graph to view the underlying source code and navigate thr
 
 ## 🛠️ Behavior Adjustment (Rule Editor)
 
-Context Sherpa allows you to dynamically tune your AI agent's behavior. Use the Behavior Adjustment screen to create and manage `ast-grep` rules using natural language intent.
+Context Sherpa allows you to dynamically tune your AI agent's behavior. Use the Behavior Adjustment screen to create and manage agent rules and skills using natural language intent.
 
 ![Rule Editor](./behavior-adjustment.png)
 
