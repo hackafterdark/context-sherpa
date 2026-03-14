@@ -248,19 +248,16 @@ export default function Skills({ workspaceRoot, onWorkspaceChange, theme }: Skil
                     {/* Header / Toolbar */}
                     <div className="flex items-center justify-between px-6 py-3 bg-base-100/30 border-b border-base-content/5">
                         <div className="flex items-center gap-3 min-w-0">
-                            <div className="p-2 bg-primary/10 rounded-lg">
-                                <Icon icon="lucide:file-edit" className="text-primary text-xl" />
-                            </div>
                             <div className="min-w-0">
                                 <h2 className="text-sm font-bold truncate flex items-center gap-2">
                                     {currentPath ? currentPath.split(/[\\/]/).pop() : "Editor"}
                                     {content && (
-                                        <span className="text-[10px] font-mono opacity-50 font-normal px-2 py-0.5 bg-base-300 rounded border border-base-content/5">
-                                            {content.length} chars | {content.substring(0, 10).replace(/[\n\r]/g, ' ')}...
+                                        <span className="text-[11px] font-mono opacity-50 font-normal px-2 py-0.5 bg-base-300 rounded border border-base-content/5">
+                                            {content.length} chars | ({Math.ceil(content.length / 4)} est tokens)
                                         </span>
                                     )}
                                 </h2>
-                                <p className="text-[10px] opacity-50 truncate cursor-help tooltip tooltip-bottom" data-tip={currentPath}>
+                                <p className="text-[11px] opacity-50 truncate tooltip tooltip-bottom" data-tip={currentPath}>
                                     {currentPath || "Select a file to start editing"}
                                 </p>
                             </div>
