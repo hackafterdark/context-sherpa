@@ -435,10 +435,10 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                     <div className="flex flex-col gap-3">
                         <div className="flex items-center gap-2">
                             <Icon icon="lucide:brain" className="text-accent w-5 h-5" />
-                            <h3 className="font-bold text-lg">External Inference Provider</h3>
+                            <h3 className="font-bold text-lg">Local Inference</h3>
                         </div>
                         <p className="text-base-content/60 text-sm">
-                            Configure an external LLM provider like Ollama or LM Studio to enable semantic reasoning.
+                            Configure your local model provider (Ollama or LM Studio) for tiered inference. This allows agents to distill complex code snippets into high-density summaries locally, significantly reducing the token noise and costs associated with sending raw source code to frontier models.
                         </p>
 
                         <div className="grid grid-cols-1 gap-4 mt-2">
@@ -554,7 +554,7 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                                                     <label className="label pb-0">
                                                         <span className="label-text font-semibold">Pull New Model ({prefs?.inferenceProvider === 'ollama' ? 'Ollama' : 'LM Studio'})</span>
                                                     </label>
-                                                    
+
                                                     <div className="flex flex-wrap gap-2">
                                                         {CURATED_MODELS.map((m: { id: string; name: string; description: string }) => (
                                                             <button
@@ -589,8 +589,8 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                                                             Pull
                                                         </button>
                                                     </div>
-                                                    
-                                                     <div className="p-3 bg-base-200/50 rounded border border-base-300 text-[11px] opacity-80 leading-relaxed">
+
+                                                    <div className="p-3 bg-base-200/50 rounded border border-base-300 text-[11px] opacity-80 leading-relaxed">
                                                         <div className="flex items-start gap-2">
                                                             <Icon icon="lucide:lightbulb" className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" />
                                                             <div>
@@ -607,7 +607,7 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                                                                     <>
                                                                         <p className="font-semibold text-base-content/90 mb-1">LM Studio Model IDs:</p>
                                                                         <p>Specify the full model ID (e.g. <code className="bg-base-300 px-1 rounded">bartowski/Llama-3.2-1B-Instruct-GGUF</code>).
-                                                                        Models will be downloaded to your library path.</p>
+                                                                            Models will be downloaded to your library path.</p>
                                                                     </>
                                                                 )}
                                                             </div>

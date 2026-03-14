@@ -12,7 +12,7 @@ Context Sherpa exposes a suite of tools through the Model Context Protocol (MCP)
 
 ## Semantic Reasoning
 
-These tools leverage Local Small Language Models (SLMs) to understand code intent and provide high-level reasoning.
+These tools leverage **Integrated Local Reasoning** via your preferred model provider (**Ollama** or **LM Studio**) to enable Tier 2 of the [Tiered Inference Framework](../README.md#tiered-inference-framework).
 
 ### `classify_repo_intent`
 Determines which Sherpa tool (Symbolic, Structural, or Semantic) is best suited for a user's high-level query.
@@ -32,12 +32,18 @@ A catch-all tool for asking open-ended semantic questions about code that don't 
   - `max_tokens` (number, optional): Max tokens to generate.
 
 ### `list_local_models`
-Lists all available local models and their current status (downloaded, active, etc.).
+Lists all available models from the configured local inference engine (Ollama or LM Studio).
 
 ### `switch_local_model`
-Changes the active model being used for semantic tasks.
+Changes the active default model in the Hub settings.
 - **Parameters**:
-  - `modelId` (string, required): The ID of the model to activate.
+  - `modelId` (string, required): The ID of the model to set as default.
+
+### `pull_inference_model`
+Requests the local inference engine to download a new model.
+- **Parameters**:
+  - `modelId` (string, required): The ID of the model to pull (e.g. `qwen2.5:0.5b`).
+
 
 ---
 

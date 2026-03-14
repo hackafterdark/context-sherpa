@@ -28,7 +28,7 @@ Of course the benefit of text embeddings in a vector database and other traditio
 
 - **Code Atlas Explorer**: A premium GUI to visualize and inspect your codebase relationships.
 - **Agent Rule Management**: Dynamically manage project-specific standards using `ast-grep` and natural language feedback.
-- **Local Semantic Reasoning**: Tiered inference using local SLMs (SmolLM2, Qwen2.5-Coder) for private, zero-latency code understanding.
+- **Integrated Local Reasoning**: Connect to local providers (Ollama, LM Studio) to enable **Tiered Inference**. This architecture utilizes local models for high-frequency context distillation and semantic triage, drastically reducing the token noise and costs associated with sending raw source code to frontier models.
 - **Universal MCP Server**: A high-performance "headless" mode that integrates directly with tools like Cursor, Cline, and Roo Code.
 
 ---
@@ -106,13 +106,25 @@ Add Context Sherpa to your AI agent's `mcp_settings.json`:
 
 ---
 
+## 🏔️ The Tiered Inference Framework
+
+Context Sherpa is built on a three-layer "Tiered Inference" strategy that balances speed, cost, and intelligence:
+
+- **Tier 1: Deterministic Logic (SCIP / ast-grep)**: Instant, 0-token cost structural mapping. Precise symbolic analysis that provides the ground truth for your codebase.
+- **Tier 2: Local Semantic Reasoning (Ollama / LM Studio)**: Low-latency code distillation, intent classification, and privacy-safe logic checks. Powered by Integrated Local Reasoning on your own hardware.
+- **Tier 3: Strategic Frontier Intelligence (Claude / Gemini)**: High-level architectural planning and complex refactoring directed by the "Big Brain" (your primary agent).
+
+By offloading Tier 1 and Tier 2 tasks to Context Sherpa, you save up to 90% in token costs while significantly increasing the accuracy of Tier 3 strategic work.
+
+---
+
 ## 📦 Setting Up Dependencies
 
 Context Sherpa uses 3rd party tools to provide high-fidelity intelligence. These can be managed directly in the **GUI Settings** area:
 
 1.  **ast-grep**: The core structural analysis engine.
 2.  **SCIP Indexers**: Language-specific indexers for Go, TypeScript, and Python.
-3.  **Local SLMs**: Small models for semantic code reasoning (SmolLM2, Qwen2.5-Coder).
+3.  **Inference Engines**: Connect to **Ollama** or **LM Studio** to enable semantic reasoning tools.
 
 ---
 
@@ -132,7 +144,7 @@ Context Sherpa leverages several incredible open-source projects:
 - **[ast-grep](https://ast-grep.github.io/)**: The core engine for high-performance structural code analysis.
 - **[Wails](https://wails.io/)**: The framework powering our cross-platform desktop experience.
 - **[Sourcegraph SCIP](https://github.com/sourcegraph/scip)**: Providing the foundation for precise symbolic code intelligence via `scip-go`, `scip-typescript`, and `scip-python`.
-- **Local SLMs**: We are grateful to the creators of **Qwen2.5-Coder-0.5B** and **SmolLM2-135M** for providing the small-but-mighty models that enable our tiered semantic inference.
+- **Local Inference**: We are grateful to the communities behind **Ollama** and **LM Studio** for providing the infrastructure that powers our tiered semantic inference.
 
 ## License
 

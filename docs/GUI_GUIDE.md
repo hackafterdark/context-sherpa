@@ -32,7 +32,7 @@ Context Sherpa allows you to dynamically tune your AI agent's behavior. Use the 
 
 ## ⚙️ Settings & Toolchain
 
-The Settings area makes it easy to manage the powerful tools that fuel Context Sherpa's analysis. Install SCIP indexers, manage local SLMs, and configure your preferred theme.
+The Settings area makes it easy to manage the powerful tools that fuel Context Sherpa's analysis. Install SCIP indexers, configure your preferred **Integrated Local Reasoning** provider (Ollama or LM Studio), and choose your preferred theme.
 
 ![Settings Interface](./settings.png)
 

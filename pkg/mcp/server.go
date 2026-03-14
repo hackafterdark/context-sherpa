@@ -154,15 +154,6 @@ func Start(workspaceRoot string, verbose bool, logFilePath string, astGrepPath s
 		server.WithToolCapabilities(false),
 	)
 
-	// Semantic Reasoning Tools
-	s.AddTool(mcp.NewTool("list_local_models",
-		mcp.WithDescription("List available local SLMs and their status."),
-	), listLocalModelsHandler)
-
-	s.AddTool(mcp.NewTool("switch_local_model",
-		mcp.WithDescription("Changes the active model in the Hub."),
-		mcp.WithString("modelId", mcp.Required(), mcp.Description("ID of the model to activate.")),
-	), switchLocalModelHandler)
 
 	s.AddTool(mcp.NewTool("query_local_reasoning",
 		mcp.WithDescription("(The Fallback) A catch-all tool for asking any open-ended semantic question about a code snippet that doesn't fit a specific template."),
@@ -171,6 +162,20 @@ func Start(workspaceRoot string, verbose bool, logFilePath string, astGrepPath s
 		mcp.WithNumber("max_tokens", mcp.Description("Optional maximum number of tokens to generate. Defaults to 512.")),
 		mcp.WithNumber("temperature", mcp.Description("Optional sampling temperature (0.0 to 1.0). Defaults to 0.1.")),
 	), queryLocalReasoningHandler)
+
+	s.AddTool(mcp.NewTool("list_local_models",
+		mcp.WithDescription("List available models from the configured local inference engine (Ollama/LM Studio)."),
+	), listLocalModelsHandler)
+
+	s.AddTool(mcp.NewTool("switch_local_model",
+		mcp.WithDescription("Changes the preferred model in the Hub settings."),
+		mcp.WithString("modelId", mcp.Required(), mcp.Description("ID of the model to set as default.")),
+	), switchLocalModelHandler)
+
+	s.AddTool(mcp.NewTool("pull_inference_model",
+		mcp.WithDescription("Requests the local inference engine (Ollama/LM Studio) to download a new model."),
+		mcp.WithString("modelId", mcp.Required(), mcp.Description("ID of the model to pull (e.g. 'qwen2.5:0.5b' or full GGUF path).")),
+	), pullInferenceModelHandler)
 
 	s.AddTool(mcp.NewTool("classify_repo_intent",
 		mcp.WithDescription("(The Router) Determines which Sherpa tool (Symbolic, Structural, or Semantic) is best suited for a user's high-level query."),
@@ -1481,33 +1486,6 @@ Please ensure ast-grep is available in one of these ways:
    context-sherpa --astGrepPath="/path/to/ast-grep"`)
 }
 
-// getSherpaModelsDir returns the platform-specific path to the models directory
-func getSherpaModelsDir() (string, error) {
-	var baseDir string
-	if runtime.GOOS == "windows" {
-		baseDir = os.Getenv("LOCALAPPDATA")
-		if baseDir == "" {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return "", err
-			}
-			baseDir = home
-		}
-	} else {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		baseDir = home
-	}
-
-	modelsDir := filepath.Join(baseDir, "context-sherpa", "models")
-	if runtime.GOOS != "windows" {
-		modelsDir = filepath.Join(baseDir, ".context-sherpa", "models")
-	}
-	_ = os.MkdirAll(modelsDir, 0755)
-	return modelsDir, nil
-}
 
 // getRuleDir determines the directory where rules should be stored by searching
 // for sgconfig.yml in the current and parent directories.
@@ -2014,40 +1992,6 @@ func validateAstGrepRule(yamlContent string) error {
 	return nil
 }
 
-func listLocalModelsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	modelsDir, err := getSherpaModelsDir()
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error finding models directory: %v", err)), nil
-	}
-
-	entries, err := os.ReadDir(modelsDir)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error reading models directory: %v", err)), nil
-	}
-
-	var sb strings.Builder
-	sb.WriteString("Available Local Models (GGUF):\n")
-	found := false
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			sb.WriteString(fmt.Sprintf("- %s\n", entry.Name()))
-			found = true
-		}
-	}
-
-	if !found {
-		sb.WriteString("(No models found. Please download them from the Dashboard.)\n")
-	}
-
-	return mcp.NewToolResultText(sb.String()), nil
-}
-
-func switchLocalModelHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// In one-shot mode, we don't 'switch' models in the backend.
-	// The client just provides the modelId in the inference request.
-	modelID, _ := request.RequireString("modelId")
-	return mcp.NewToolResultText(fmt.Sprintf("Model selection for one-shot tasks updated: %s. Use this ID in your next ask_little_brain call.", modelID)), nil
-}
 
 func runSLM(ctx context.Context, request mcp.CallToolRequest, prompt string) (*mcp.CallToolResult, error) {
 	modelID := ""
@@ -2073,29 +2017,12 @@ func runSLM(ctx context.Context, request mcp.CallToolRequest, prompt string) (*m
 		return mcp.NewToolResultError(fmt.Sprintf("Error loading preferences: %v", err)), nil
 	}
 
-	var provider inference.InferenceProvider
-	switch prefs.InferenceProvider {
-	case "ollama":
-		url := prefs.InferenceURL
-		if url == "" {
-			url = "http://localhost:11434"
-		}
-		provider = inference.NewOllamaProvider(url)
-	case "openai":
-		url := prefs.InferenceURL
-		if url == "" {
-			url = "http://localhost:1234/v1"
-		}
-		provider = inference.NewOpenAIProvider(url)
-	case "lmstudio":
-		url := prefs.InferenceURL
-		if url == "" {
-			url = "http://localhost:1234/api/v1"
-		}
-		provider = inference.NewLMStudioProvider(url)
-	case "disabled":
-		return mcp.NewToolResultText("Semantic reasoning is currently disabled in the Hub settings. Please select an inference provider (Ollama or LM Studio) to use this tool."), nil
-	default:
+	provider, _, err := getInferenceProvider()
+	if err != nil {
+		return nil, err
+	}
+
+	if provider == nil {
 		return mcp.NewToolResultError("No inference provider configured. Please set up Ollama or LM Studio in the Hub settings."), nil
 	}
 
@@ -2153,12 +2080,138 @@ func loadPreferencesManually() (UserPreferences, error) {
 	return prefs, nil
 }
 
+func listLocalModelsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	provider, _, err := getInferenceProvider()
+	if err != nil {
+		return nil, err
+	}
+	if provider == nil {
+		return mcp.NewToolResultError("Inference is disabled or not configured."), nil
+	}
+
+	models, err := provider.ListModels(ctx)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to list models: %v", err)), nil
+	}
+
+	if len(models) == 0 {
+		return mcp.NewToolResultText("No models found in the local inference engine."), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Available Models:\n")
+	for _, m := range models {
+		sb.WriteString(fmt.Sprintf("- %s\n", m))
+	}
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func switchLocalModelHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	modelID, err := request.RequireString("modelId")
+	if err != nil {
+		return mcp.NewToolResultError("modelId is required"), nil
+	}
+
+	prefs, err := loadPreferencesManually()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error loading preferences: %v", err)), nil
+	}
+
+	prefs.InferenceModel = modelID
+	if err := savePreferencesManually(prefs); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error saving preferences: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Successfully updated default model to: %s", modelID)), nil
+}
+
+func pullInferenceModelHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	modelID, err := request.RequireString("modelId")
+	if err != nil {
+		return mcp.NewToolResultError("modelId is required"), nil
+	}
+
+	provider, _, err := getInferenceProvider()
+	if err != nil {
+		return nil, err
+	}
+	if provider == nil {
+		return mcp.NewToolResultError("Inference is disabled or not configured."), nil
+	}
+
+	if err := provider.PullModel(ctx, modelID); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to pull model: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Successfully initiated pull for model: %s. This may take some time depending on the model size.", modelID)), nil
+}
+
 func queryLocalReasoningHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	prompt, err := request.RequireString("prompt")
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("prompt is required: %v", err)), nil
 	}
 	return runSLM(ctx, request, prompt)
+}
+
+func getInferenceProvider() (inference.InferenceProvider, UserPreferences, error) {
+	prefs, err := loadPreferencesManually()
+	if err != nil {
+		return nil, UserPreferences{}, fmt.Errorf("error loading preferences: %v", err)
+	}
+
+	var provider inference.InferenceProvider
+	switch prefs.InferenceProvider {
+	case "ollama":
+		url := prefs.InferenceURL
+		if url == "" {
+			url = "http://localhost:11434"
+		}
+		provider = inference.NewOllamaProvider(url)
+	case "openai":
+		url := prefs.InferenceURL
+		if url == "" {
+			url = "http://localhost:1234/v1"
+		}
+		provider = inference.NewOpenAIProvider(url)
+	case "lmstudio":
+		url := prefs.InferenceURL
+		if url == "" {
+			url = "http://localhost:1234/api/v1"
+		}
+		provider = inference.NewLMStudioProvider(url)
+	case "disabled":
+		return nil, prefs, nil
+	default:
+		return nil, prefs, nil
+	}
+	return provider, prefs, nil
+}
+
+func savePreferencesManually(prefs UserPreferences) error {
+	var baseDir string
+	if runtime.GOOS == "windows" {
+		baseDir = os.Getenv("LOCALAPPDATA")
+		if baseDir == "" {
+			home, _ := os.UserHomeDir()
+			baseDir = home
+		}
+	} else {
+		baseDir, _ = os.UserHomeDir()
+	}
+
+	dir := filepath.Join(baseDir, "context-sherpa")
+	if runtime.GOOS != "windows" {
+		dir = filepath.Join(baseDir, ".context-sherpa")
+	}
+
+	prefsPath := filepath.Join(dir, "preferences.json")
+	data, err := json.MarshalIndent(prefs, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(prefsPath, data, 0644)
 }
 
 func classifyRepoIntentHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
