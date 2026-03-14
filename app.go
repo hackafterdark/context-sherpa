@@ -290,15 +290,34 @@ func (a *App) DiscoverMarkdownFiles(root string) ([]string, error) {
 	}
 
 	var files []string
+	// Robust skip list for common non-content directories
+	skipDirs := map[string]bool{
+		".git":            true,
+		".svn":            true,
+		".hg":             true,
+		".bzr":            true,
+		"_darcs":          true,
+		".context-sherpa": true,
+		".ssh":            true,
+		".aws":            true,
+		".kube":           true,
+		".env":            true,
+		"node_modules":    true,
+		"vendor":          true,
+		"__pycache__":     true,
+		".idea":           true,
+		".vscode":         true,
+		".history":        true,
+	}
+
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 
-		// Skip hidden directories (like .git, .context-sherpa) and node_modules
 		if info.IsDir() {
 			base := filepath.Base(path)
-			if strings.HasPrefix(base, ".") || base == "node_modules" || base == "vendor" {
+			if skipDirs[base] {
 				return filepath.SkipDir
 			}
 			return nil

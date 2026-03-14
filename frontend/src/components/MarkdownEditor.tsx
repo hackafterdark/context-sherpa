@@ -19,6 +19,7 @@ import {
   codeMirrorPlugin,
   CodeMirrorEditor,
   frontmatterPlugin,
+  InsertFrontmatter,
   tablePlugin,
   imagePlugin,
   InsertTable,
@@ -338,6 +339,8 @@ export default function MarkdownEditor({ markdown, onChange, theme, readOnly = f
                   <CodeToggle />
                   <div className="w-px h-6 bg-base-content/10 mx-1" />
                   <ListsToggle />
+                  <div className="w-px h-6 bg-base-content/10 mx-1" />
+                  <InsertFrontmatter />
                   <div className="w-px h-6 bg-base-content/10 mx-1" />
                   <CreateLink />
                   <InsertImage />
