@@ -147,7 +147,7 @@ func main() {
 			WebviewIsTransparent: true,
 			WindowIsTranslucent:  true,
 			About: &mac.AboutInfo{
-				Title:   "Context-Sherpa",
+				Title:   "Context Sherpa Hub",
 				Message: "© 2026 Hack After Dark",
 			},
 		},
