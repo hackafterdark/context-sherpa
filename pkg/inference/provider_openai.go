@@ -91,22 +91,21 @@ func (p *OpenAIProvider) Generate(ctx context.Context, prompt string, options Ge
 	return result.Choices[0].Message.Content, nil
 }
 
-func (p *OpenAIProvider) TestConnection(ctx context.Context) (string, error) {
-	// Attempt to list models to verify connectivity
+func (p *OpenAIProvider) ListModels(ctx context.Context) ([]string, error) {
 	url := fmt.Sprintf("%s/models", p.BaseURL)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	resp, err := p.Client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to reach provider: %w", err)
+		return nil, fmt.Errorf("failed to reach provider: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("provider returned status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("provider returned status: %d", resp.StatusCode)
 	}
 
 	var result struct {
@@ -116,11 +115,29 @@ func (p *OpenAIProvider) TestConnection(ctx context.Context) (string, error) {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("failed to parse models list: %w", err)
+		return nil, fmt.Errorf("failed to parse models list: %w", err)
 	}
 
-	if len(result.Data) > 0 {
-		return result.Data[0].ID, nil
+	var models []string
+	for _, m := range result.Data {
+		models = append(models, m.ID)
+	}
+
+	return models, nil
+}
+
+func (p *OpenAIProvider) PullModel(ctx context.Context, modelID string) error {
+	return fmt.Errorf("model pulling is not supported by LM Studio / OpenAI providers")
+}
+
+func (p *OpenAIProvider) TestConnection(ctx context.Context) (string, error) {
+	models, err := p.ListModels(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	if len(models) > 0 {
+		return models[0], nil
 	}
 
 	return "Connected", nil

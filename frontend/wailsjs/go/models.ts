@@ -114,6 +114,7 @@ export namespace main {
 	    isMaximized: boolean;
 	    inferenceProvider: string;
 	    inferenceURL: string;
+	    inferenceModel: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new UserPreferences(source);
@@ -129,6 +130,7 @@ export namespace main {
 	        this.isMaximized = source["isMaximized"];
 	        this.inferenceProvider = source["inferenceProvider"];
 	        this.inferenceURL = source["inferenceURL"];
+	        this.inferenceModel = source["inferenceModel"];
 	    }
 	}
 	export class Workspace {

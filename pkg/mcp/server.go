@@ -67,6 +67,7 @@ type UserPreferences struct {
 	IsMaximized       bool   `json:"isMaximized"`
 	InferenceProvider string `json:"inferenceProvider"`
 	InferenceURL      string `json:"inferenceURL"`
+	InferenceModel    string `json:"inferenceModel"`
 }
 
 // CommunityRule represents a rule in the community repository
@@ -2092,9 +2093,15 @@ func runSLM(ctx context.Context, request mcp.CallToolRequest, prompt string) (*m
 		return mcp.NewToolResultError("No inference provider configured. Please set up Ollama or LM Studio in the Hub settings."), nil
 	}
 
+	// Use preferred model if client didn't specify one
+	finalModelID := modelID
+	if finalModelID == "" {
+		finalModelID = prefs.InferenceModel
+	}
+
 	svc := inference.NewInferenceService(provider)
 	res, err := svc.Execute(ctx, inference.InferenceRequest{
-		ModelID:     modelID,
+		ModelID:     finalModelID,
 		Prompt:      prompt,
 		MaxTokens:   maxTokens,
 		Temperature: temperature,

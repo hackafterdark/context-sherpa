@@ -48,6 +48,7 @@ type UserPreferences struct {
 	IsMaximized       bool   `json:"isMaximized"`
 	InferenceProvider string `json:"inferenceProvider"` // "ollama" or "openai"
 	InferenceURL      string `json:"inferenceURL"`
+	InferenceModel    string `json:"inferenceModel"`
 }
 
 // App struct
@@ -1061,8 +1062,8 @@ func (a *App) TestInferenceConnection(providerType string, url string) (string, 
 // GetInferenceModels returns a list of available models from the configured provider
 func (a *App) GetInferenceModels() ([]string, error) {
 	prefs := a.GetPreferences()
-	if prefs.InferenceProvider == "" {
-		return nil, fmt.Errorf("no inference provider configured")
+	if prefs.InferenceProvider == "" || prefs.InferenceProvider == "disabled" {
+		return []string{}, nil
 	}
 
 	var provider inference.InferenceProvider
@@ -1075,14 +1076,18 @@ func (a *App) GetInferenceModels() ([]string, error) {
 		return nil, fmt.Errorf("invalid provider type")
 	}
 
-	// We'll reuse TestConnection for now as it returns a sample model name,
-	// but in a real scenario we'd have a GetAvailableModels method.
-	// For simplicity in this PR, we'll just return a success message or a single model name.
-	resp, err := provider.TestConnection(a.ctx)
-	if err != nil {
-		return nil, err
+	return provider.ListModels(a.ctx)
+}
+
+// PullInferenceModel requests the provider to pull a model (Ollama only)
+func (a *App) PullInferenceModel(modelID string) error {
+	prefs := a.GetPreferences()
+	if prefs.InferenceProvider != "ollama" {
+		return fmt.Errorf("model pulling is only supported for Ollama")
 	}
-	return []string{resp}, nil
+
+	provider := inference.NewOllamaProvider(prefs.InferenceURL)
+	return provider.PullModel(a.ctx, modelID)
 }
 func (a *App) OpenConfigDir() error {
 	path, err := getSherpaConfigDir()

@@ -17,4 +17,8 @@ type InferenceProvider interface {
 	Generate(ctx context.Context, prompt string, options GenOptions) (string, error)
 	// TestConnection verifies that the provider is reachable and functional
 	TestConnection(ctx context.Context) (string, error)
+	// ListModels retrieves a list of available models from the provider
+	ListModels(ctx context.Context) ([]string, error)
+	// PullModel requests the provider to download a new model
+	PullModel(ctx context.Context, modelID string) error
 }

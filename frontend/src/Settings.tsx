@@ -1,11 +1,18 @@
 import { useEffect, useState } from 'react';
-import { InstallAstGrep, GetAstGrepStatus, InstallScipIndexer, GetScipIndexerStatus, OpenConfigDir, DeleteAstGrep, DeleteScipIndexer, GetPreferences, SavePreferences, TestInferenceConnection } from '../wailsjs/go/main/App';
+import { InstallAstGrep, GetAstGrepStatus, InstallScipIndexer, GetScipIndexerStatus, OpenConfigDir, DeleteAstGrep, DeleteScipIndexer, GetPreferences, SavePreferences, TestInferenceConnection, GetInferenceModels, PullInferenceModel } from '../wailsjs/go/main/App';
 import { Icon } from '@iconify/react';
 
 type SettingsProps = {
     theme: string;
     setTheme: (theme: string) => void;
 };
+
+const CURATED_MODELS = [
+    { id: 'qwen2.5:0.5b', name: 'Qwen 2.5 0.5B', description: 'Tiny & Fast' },
+    { id: 'llama3.2:1b', name: 'Llama 3.2 1B', description: 'Efficient' },
+    { id: 'phi3:mini', name: 'Phi-3 Mini', description: 'Strong' },
+    { id: 'mistral:7b', name: 'Mistral 7B', description: 'All-rounder' },
+];
 
 const DeleteAction = ({
     id,
@@ -64,6 +71,9 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
     const [prefs, setPrefs] = useState<any>(null);
     const [isTesting, setIsTesting] = useState(false);
     const [testStatus, setTestStatus] = useState<{ success: boolean; message: string } | null>(null);
+    const [models, setModels] = useState<string[]>([]);
+    const [isPulling, setIsPulling] = useState(false);
+    const [pullModelName, setPullModelName] = useState('');
 
     const loadStatus = async () => {
         try {
@@ -81,6 +91,11 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
 
             const p = await GetPreferences();
             setPrefs(p);
+
+            if (p.inferenceProvider && p.inferenceProvider !== 'disabled') {
+                const m = await GetInferenceModels();
+                setModels(m);
+            }
         } catch (e) {
             console.error("Error fetching tool status:", e);
         }
@@ -169,6 +184,10 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                 inferenceProvider: provider,
                 inferenceURL: url
             });
+
+            // Fetch models after connection
+            const m = await GetInferenceModels();
+            setModels(m);
         } catch (e: any) {
             setTestStatus({
                 success: false,
@@ -176,6 +195,22 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
             });
         } finally {
             setIsTesting(false);
+        }
+    };
+
+    const handlePullModel = async () => {
+        if (!pullModelName) return;
+        setIsPulling(true);
+        try {
+            await PullInferenceModel(pullModelName);
+            const m = await GetInferenceModels();
+            setModels(m);
+            setPullModelName('');
+        } catch (e) {
+            console.error("Failed to pull model:", e);
+            alert("Failed to pull model: " + e);
+        } finally {
+            setIsPulling(false);
         }
     };
 
@@ -442,36 +477,117 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                                     </div>
 
                                     {prefs?.inferenceProvider !== 'disabled' && prefs?.inferenceProvider && (
-                                        <div className="form-control w-full animate-in slide-in-from-top-2 duration-200">
-                                            <label className="label">
-                                                <span className="label-text font-semibold">Endpoint Base URL</span>
-                                            </label>
-                                            <div className="flex gap-2">
-                                                <input
-                                                    type="text"
-                                                    className="input input-bordered input-sm flex-1 font-mono"
-                                                    placeholder={prefs?.inferenceProvider === 'ollama' ? "http://localhost:11434" : "http://localhost:1234/v1"}
-                                                    value={prefs?.inferenceURL || ''}
-                                                    onChange={(e) => handlePreferenceChange('inferenceURL', e.target.value)}
-                                                />
-                                                <button
-                                                    className={`btn btn-sm ${testStatus?.success === true ? 'btn-success' : testStatus?.success === false ? 'btn-error' : 'btn-primary'} ${isTesting ? 'btn-disabled' : ''}`}
-                                                    onClick={handleTestConnection}
-                                                >
-                                                    {isTesting ? (
-                                                        <span className="loading loading-spinner loading-xs"></span>
-                                                    ) : (
-                                                        <Icon icon="lucide:zap" />
-                                                    )}
-                                                    {testStatus?.success ? 'Connected' : 'Test & Save'}
-                                                </button>
-                                            </div>
-                                            {testStatus?.message && (
+                                        <div className="flex flex-col gap-4 animate-in slide-in-from-top-2 duration-200">
+                                            <div className="form-control w-full">
                                                 <label className="label">
-                                                    <span className={`label-text-alt ${testStatus.success ? 'text-success' : 'text-error'} font-medium`}>
-                                                        {testStatus.message}
-                                                    </span>
+                                                    <span className="label-text font-semibold">Endpoint Base URL</span>
                                                 </label>
+                                                <div className="flex gap-2">
+                                                    <input
+                                                        type="text"
+                                                        className="input input-bordered input-sm flex-1 font-mono"
+                                                        placeholder={prefs?.inferenceProvider === 'ollama' ? "http://localhost:11434" : "http://localhost:1234/v1"}
+                                                        value={prefs?.inferenceURL || ''}
+                                                        onChange={(e) => handlePreferenceChange('inferenceURL', e.target.value)}
+                                                    />
+                                                    <button
+                                                        className={`btn btn-sm ${testStatus?.success === true ? 'btn-success' : testStatus?.success === false ? 'btn-error' : 'btn-primary'} ${isTesting ? 'btn-disabled' : ''}`}
+                                                        onClick={handleTestConnection}
+                                                    >
+                                                        {isTesting ? (
+                                                            <span className="loading loading-spinner loading-xs"></span>
+                                                        ) : (
+                                                            <Icon icon="lucide:zap" />
+                                                        )}
+                                                        {testStatus?.success ? 'Connected' : 'Test & Save'}
+                                                    </button>
+                                                </div>
+                                                {testStatus?.message && (
+                                                    <label className="label">
+                                                        <span className={`label-text-alt ${testStatus.success ? 'text-success' : 'text-error'} font-medium`}>
+                                                            {testStatus.message}
+                                                        </span>
+                                                    </label>
+                                                )}
+                                            </div>
+
+                                            {models.length > 0 && (
+                                                <div className="form-control w-full">
+                                                    <label className="label">
+                                                        <span className="label-text font-semibold">Default Model</span>
+                                                    </label>
+                                                    <select
+                                                        className="select select-bordered select-sm w-full"
+                                                        value={prefs?.inferenceModel || ''}
+                                                        onChange={(e) => {
+                                                            const newModel = e.target.value;
+                                                            handlePreferenceChange('inferenceModel', newModel);
+                                                            SavePreferences({ ...prefs, inferenceModel: newModel });
+                                                        }}
+                                                    >
+                                                        <option value="">Select a model...</option>
+                                                        {models.map((m: string) => (
+                                                            <option key={m} value={m}>{m}</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                            )}
+
+                                            {prefs?.inferenceProvider === 'ollama' && (
+                                                <div className="form-control w-full space-y-3">
+                                                    <label className="label pb-0">
+                                                        <span className="label-text font-semibold">Pull New Model (Ollama)</span>
+                                                    </label>
+                                                    
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {CURATED_MODELS.map((m: { id: string; name: string; description: string }) => (
+                                                            <button
+                                                                key={m.id}
+                                                                className="btn btn-xs btn-ghost bg-base-300 hover:bg-base-100 border-base-200"
+                                                                onClick={() => setPullModelName(m.id)}
+                                                                title={m.description}
+                                                            >
+                                                                <Icon icon="lucide:plus" className="w-3 h-3" />
+                                                                {m.name}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+
+                                                    <div className="flex gap-2">
+                                                        <input
+                                                            type="text"
+                                                            className="input input-bordered input-sm flex-1 font-mono text-xs"
+                                                            placeholder="e.g. llama3:8b, mistral"
+                                                            value={pullModelName}
+                                                            onChange={(e) => setPullModelName(e.target.value)}
+                                                        />
+                                                        <button
+                                                            className={`btn btn-sm btn-outline ${isPulling ? 'btn-disabled' : ''}`}
+                                                            onClick={handlePullModel}
+                                                        >
+                                                            {isPulling ? (
+                                                                <span className="loading loading-spinner loading-xs"></span>
+                                                            ) : (
+                                                                <Icon icon="lucide:download-cloud" />
+                                                            )}
+                                                            Pull
+                                                        </button>
+                                                    </div>
+                                                    
+                                                    <div className="p-3 bg-base-200/50 rounded border border-base-300 text-[11px] opacity-80 leading-relaxed">
+                                                        <div className="flex items-start gap-2">
+                                                            <Icon icon="lucide:lightbulb" className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" />
+                                                            <div>
+                                                                <p className="font-semibold text-base-content/90 mb-1">Ollama Model IDs:</p>
+                                                                <ul className="list-disc list-inside space-y-1">
+                                                                    <li>Always use a colon <code className="bg-base-300 px-1 rounded text-warning">:</code> to specify a tag (e.g., <code className="bg-base-300 px-1 rounded text-warning">qwen2.5:0.5b</code>).</li>
+                                                                    <li>Avoid using dashes <code className="bg-base-300 px-1 rounded text-error/70">-</code> in place of the colon.</li>
+                                                                    <li>Find more models at <a href="https://ollama.com/library" target="_blank" rel="noopener noreferrer" className="link link-primary">ollama.com/library</a>.</li>
+                                                                </ul>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
                                             )}
                                         </div>
                                     )}

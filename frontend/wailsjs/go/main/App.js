@@ -86,6 +86,10 @@ export function PickDirectory() {
   return window['go']['main']['App']['PickDirectory']();
 }
 
+export function PullInferenceModel(arg1) {
+  return window['go']['main']['App']['PullInferenceModel'](arg1);
+}
+
 export function ReadMarkdown(arg1) {
   return window['go']['main']['App']['ReadMarkdown'](arg1);
 }

@@ -45,6 +45,8 @@ export function OpenWorkspace(arg1:string):Promise<void>;
 
 export function PickDirectory():Promise<string>;
 
+export function PullInferenceModel(arg1:string):Promise<void>;
+
 export function ReadMarkdown(arg1:string):Promise<string>;
 
 export function RegenerateIndex(arg1:string,arg2:string):Promise<void>;
