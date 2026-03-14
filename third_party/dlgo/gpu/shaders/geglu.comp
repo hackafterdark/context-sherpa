@@ -1,0 +1,23 @@
+#version 450
+
+// GeGLU: out[i] = gelu(gate[i]) * up[i]
+// gelu(x) ≈ 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) buffer Out { float out_data[]; };
+layout(set = 0, binding = 1) buffer Gate { float gate_data[]; };
+layout(set = 0, binding = 2) buffer Up { float up_data[]; };
+
+layout(push_constant) uniform Params {
+    int n;
+};
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= n) return;
+
+    float x = gate_data[idx];
+    float gelu = 0.5 * x * (1.0 + tanh(0.7978845608 * (x + 0.044715 * x * x * x)));
+    out_data[idx] = gelu * up_data[idx];
+}

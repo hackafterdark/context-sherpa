@@ -1,0 +1,104 @@
+#version 450
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_scalar_block_layout : require
+
+layout(local_size_x = 256) in;
+
+struct block_q4_k {
+    float16_t d;
+    float16_t dmin;
+    uint8_t scales[12];
+    uint8_t qs[128];
+};
+
+layout(set = 0, binding = 0) buffer Out { float out_data[]; };
+layout(scalar, set = 0, binding = 1) readonly buffer Weights { block_q4_k blocks[]; };
+layout(set = 0, binding = 2) readonly buffer X { float x_data[]; };
+
+layout(push_constant) uniform Params {
+    int rows;
+    int cols;
+};
+
+shared float partial[8];
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    uint sub_id = tid >> 5;
+    uint sub_tid = tid & 31u;
+    uint row_local = sub_id >> 1;
+    uint sh = sub_id & 1u;
+    uint row = gl_WorkGroupID.x * 4u + row_local;
+
+    if (row >= uint(rows)) return;
+
+    int bpr = cols >> 8;
+    int half_bpr = bpr >> 1;
+    int b_start = int(sh) * half_bpr;
+    int b_end = (sh == 0u) ? half_bpr : bpr;
+
+    float acc = 0.0;
+
+    for (int b = b_start; b < b_end; b++) {
+        uint bi = row * uint(bpr) + uint(b);
+
+        float d = float(blocks[bi].d);
+        float dm = float(blocks[bi].dmin);
+
+        uint s0 = uint(blocks[bi].scales[0]);
+        uint s1 = uint(blocks[bi].scales[1]);
+        uint s2 = uint(blocks[bi].scales[2]);
+        uint s3 = uint(blocks[bi].scales[3]);
+        uint s4 = uint(blocks[bi].scales[4]);
+        uint s5 = uint(blocks[bi].scales[5]);
+        uint s6 = uint(blocks[bi].scales[6]);
+        uint s7 = uint(blocks[bi].scales[7]);
+        uint s8 = uint(blocks[bi].scales[8]);
+        uint s9 = uint(blocks[bi].scales[9]);
+        uint s10 = uint(blocks[bi].scales[10]);
+        uint s11 = uint(blocks[bi].scales[11]);
+
+        float sc[8], mn[8];
+        sc[0] = d * float(s0 & 0x3Fu);
+        sc[1] = d * float(s1 & 0x3Fu);
+        sc[2] = d * float(s2 & 0x3Fu);
+        sc[3] = d * float(s3 & 0x3Fu);
+        mn[0] = dm * float(s4 & 0x3Fu);
+        mn[1] = dm * float(s5 & 0x3Fu);
+        mn[2] = dm * float(s6 & 0x3Fu);
+        mn[3] = dm * float(s7 & 0x3Fu);
+        sc[4] = d * float((s8 & 0x0Fu) | ((s0 >> 6) << 4));
+        sc[5] = d * float((s9 & 0x0Fu) | ((s1 >> 6) << 4));
+        sc[6] = d * float((s10 & 0x0Fu) | ((s2 >> 6) << 4));
+        sc[7] = d * float((s11 & 0x0Fu) | ((s3 >> 6) << 4));
+        mn[4] = dm * float(((s8 >> 4) & 0x0Fu) | ((s4 >> 6) << 4));
+        mn[5] = dm * float(((s9 >> 4) & 0x0Fu) | ((s5 >> 6) << 4));
+        mn[6] = dm * float(((s10 >> 4) & 0x0Fu) | ((s6 >> 6) << 4));
+        mn[7] = dm * float(((s11 >> 4) & 0x0Fu) | ((s7 >> 6) << 4));
+
+        int x_base = b << 8;
+        for (int g = 0; g < 4; g++) {
+            uint qb = uint(blocks[bi].qs[g * 32 + int(sub_tid)]);
+            float lo = float(qb & 0xFu);
+            float hi = float(qb >> 4);
+            float xl = x_data[x_base + g * 64 + int(sub_tid)];
+            float xh = x_data[x_base + g * 64 + 32 + int(sub_tid)];
+            acc += sc[g * 2] * lo * xl + sc[g * 2 + 1] * hi * xh
+                 - mn[g * 2] * xl - mn[g * 2 + 1] * xh;
+        }
+    }
+
+    acc = subgroupAdd(acc);
+
+    if (sub_tid == 0u) {
+        partial[sub_id] = acc;
+    }
+    barrier();
+
+    if (sub_tid == 0u && sh == 0u) {
+        out_data[row] = partial[sub_id] + partial[sub_id + 1u];
+    }
+}

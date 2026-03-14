@@ -4,7 +4,7 @@ import (
 	_ "embed"
 	"flag"
 
-	"github.com/hackafterdark/context-sherpa/internal/mcp"
+	"github.com/hackafterdark/context-sherpa/pkg/mcp"
 )
 
 func main() {
@@ -12,7 +12,8 @@ func main() {
 	verbose := flag.Bool("verbose", false, "Enable verbose logging for debugging")
 	logFile := flag.String("logFile", "", "Path to file where logs will be appended (optional)")
 	astGrepPath := flag.String("astGrepPath", "", "Explicit path to ast-grep binary")
+	client := flag.String("client", "", "Name of the MCP client (optional)")
 	flag.Parse()
 
-	mcp.Start(*projectRoot, *verbose, *logFile, *astGrepPath)
+	mcp.Start(*projectRoot, *verbose, *logFile, *astGrepPath, *client)
 }

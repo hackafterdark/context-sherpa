@@ -1,0 +1,95 @@
+#version 450
+
+// Fused single-head attention using shared memory for scores.
+// One workgroup per head. Supports seq_len up to 4096.
+// Phase 1: compute scores[t] = dot(Q[head], K_cache[t, kv_head]) * scale
+// Phase 2: softmax over scores
+// Phase 3: weighted sum of V_cache -> out[head*head_dim + d]
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) buffer AttnOut { float attn_out[]; };
+layout(set = 0, binding = 1) buffer Q { float q_data[]; };
+layout(set = 0, binding = 2) buffer KCache { float k_cache[]; };
+layout(set = 0, binding = 3) buffer VCache { float v_cache[]; };
+
+layout(push_constant) uniform Params {
+    int num_heads;
+    int num_kv_heads;
+    int head_dim;
+    int kv_dim;
+    int seq_len;
+    float scale;
+};
+
+shared float scores[4096];
+shared float reduce[256];
+
+void main() {
+    uint head = gl_WorkGroupID.x;
+    if (head >= num_heads) return;
+
+    uint tid = gl_LocalInvocationID.x;
+    uint kv_mul = num_heads / num_kv_heads;
+    uint kv_head = head / kv_mul;
+    uint q_base = head * head_dim;
+    uint kv_offset = kv_head * head_dim;
+
+    // Phase 1: compute attention scores
+    for (int t = int(tid); t < seq_len; t += 256) {
+        float dot = 0.0;
+        uint k_base = t * kv_dim + kv_offset;
+        for (int d = 0; d < head_dim; d++) {
+            dot += q_data[q_base + d] * k_cache[k_base + d];
+        }
+        scores[t] = dot * scale;
+    }
+    barrier();
+
+    // Phase 2: softmax over scores[0..seq_len)
+    // Find max
+    float mx = -1.0e30;
+    for (int t = int(tid); t < seq_len; t += 256) {
+        mx = max(mx, scores[t]);
+    }
+    reduce[tid] = mx;
+    barrier();
+    for (uint s = 128; s > 0; s >>= 1) {
+        if (tid < s) reduce[tid] = max(reduce[tid], reduce[tid + s]);
+        barrier();
+    }
+    float max_val = reduce[0];
+    barrier();
+
+    // Exp and sum
+    float my_sum = 0.0;
+    for (int t = int(tid); t < seq_len; t += 256) {
+        float e = exp(scores[t] - max_val);
+        scores[t] = e;
+        my_sum += e;
+    }
+    reduce[tid] = my_sum;
+    barrier();
+    for (uint s = 128; s > 0; s >>= 1) {
+        if (tid < s) reduce[tid] += reduce[tid + s];
+        barrier();
+    }
+    float inv_sum = 1.0 / reduce[0];
+    barrier();
+
+    // Normalize
+    for (int t = int(tid); t < seq_len; t += 256) {
+        scores[t] *= inv_sum;
+    }
+    barrier();
+
+    // Phase 3: weighted sum of V
+    uint out_base = head * head_dim;
+    for (int d = int(tid); d < head_dim; d += 256) {
+        float acc = 0.0;
+        for (int t = 0; t < seq_len; t++) {
+            acc += scores[t] * v_cache[t * kv_dim + kv_offset + d];
+        }
+        attn_out[out_base + d] = acc;
+    }
+}

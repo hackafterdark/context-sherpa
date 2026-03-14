@@ -1,0 +1,19 @@
+#version 450
+
+// Element-wise add: out[i] = a[i] + b[i]
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) buffer Out { float out_data[]; };
+layout(set = 0, binding = 1) buffer A { float a_data[]; };
+layout(set = 0, binding = 2) buffer B { float b_data[]; };
+
+layout(push_constant) uniform Params {
+    int n;
+};
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= n) return;
+    out_data[idx] = a_data[idx] + b_data[idx];
+}

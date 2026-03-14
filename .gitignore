@@ -9,6 +9,13 @@ rules
 context-sherpa
 ast-grep
 sg
+.context-sherpa
+symbols_dump.txt
+*.scip
+
+# Dependencies
+node_modules
+frontend/node_modules
 
 # Binaries for programs and plugins
 *.exe
@@ -22,6 +29,8 @@ sg
 
 # Output of the go coverage tool
 *.out
+coverage
+coverage.txt
 
 # IDE and editor files
 .vscode/
@@ -47,6 +56,7 @@ Thumbs.db
 # Build artifacts
 dist/
 build/
+frontend/dist
 
 # Environment files
 .env

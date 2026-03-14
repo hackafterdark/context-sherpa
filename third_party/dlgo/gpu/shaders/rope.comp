@@ -1,0 +1,66 @@
+#version 450
+
+// Rotary Position Embedding applied to Q and K vectors
+// Supports both standard (interleaved) and neox (split-half) modes.
+// One workgroup per head, threads iterate over rotation pairs.
+
+layout(local_size_x = 128) in;
+
+layout(set = 0, binding = 0) buffer Q { float q_data[]; };
+layout(set = 0, binding = 1) buffer K { float k_data[]; };
+
+layout(push_constant) uniform Params {
+    int num_heads;
+    int num_kv_heads;
+    int head_dim;
+    int pos;
+    float freq_base;
+    int neox;
+};
+
+void main() {
+    uint head = gl_WorkGroupID.x;
+    uint tid = gl_LocalInvocationID.x;
+    int half_dim = head_dim / 2;
+
+    if (int(tid) >= half_dim) return;
+
+    float freq = 1.0 / pow(freq_base, float(tid * 2) / float(head_dim));
+    float angle = float(pos) * freq;
+    float cos_val = cos(angle);
+    float sin_val = sin(angle);
+
+    if (neox != 0) {
+        // Neox style: pairs at (i, i+half_dim)
+        if (head < num_heads) {
+            uint base = head * head_dim;
+            float q0 = q_data[base + tid];
+            float q1 = q_data[base + tid + half_dim];
+            q_data[base + tid] = q0 * cos_val - q1 * sin_val;
+            q_data[base + tid + half_dim] = q0 * sin_val + q1 * cos_val;
+        }
+        if (head < num_kv_heads) {
+            uint base = head * head_dim;
+            float k0 = k_data[base + tid];
+            float k1 = k_data[base + tid + half_dim];
+            k_data[base + tid] = k0 * cos_val - k1 * sin_val;
+            k_data[base + tid + half_dim] = k0 * sin_val + k1 * cos_val;
+        }
+    } else {
+        // Standard interleaved: pairs at (2*i, 2*i+1)
+        if (head < num_heads) {
+            uint base = head * head_dim;
+            float q0 = q_data[base + 2 * tid];
+            float q1 = q_data[base + 2 * tid + 1];
+            q_data[base + 2 * tid] = q0 * cos_val - q1 * sin_val;
+            q_data[base + 2 * tid + 1] = q0 * sin_val + q1 * cos_val;
+        }
+        if (head < num_kv_heads) {
+            uint base = head * head_dim;
+            float k0 = k_data[base + 2 * tid];
+            float k1 = k_data[base + 2 * tid + 1];
+            k_data[base + 2 * tid] = k0 * cos_val - k1 * sin_val;
+            k_data[base + 2 * tid + 1] = k0 * sin_val + k1 * cos_val;
+        }
+    }
+}

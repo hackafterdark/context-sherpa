@@ -1,0 +1,88 @@
+#version 450
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_scalar_block_layout : require
+
+layout(local_size_x = 256) in;
+
+struct block_q6_k {
+    uint8_t ql[128];
+    uint8_t qh[64];
+    int8_t scales[16];
+    float16_t d;
+};
+
+layout(set = 0, binding = 0) buffer Out { float out_data[]; };
+layout(scalar, set = 0, binding = 1) readonly buffer Weights { block_q6_k blocks[]; };
+layout(set = 0, binding = 2) readonly buffer X { float x_data[]; };
+
+layout(push_constant) uniform Params {
+    int rows;
+    int cols;
+};
+
+shared float partial[8];
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    uint sub_id = tid >> 5;
+    uint sub_tid = tid & 31u;
+    uint row_local = sub_id >> 1;
+    uint sh = sub_id & 1u;
+    uint row = gl_WorkGroupID.x * 4u + row_local;
+
+    if (row >= uint(rows)) return;
+
+    int bpr = cols >> 8;
+    int half_bpr = bpr >> 1;
+    int b_start = int(sh) * half_bpr;
+    int b_end = (sh == 0u) ? half_bpr : bpr;
+
+    int l = int(sub_tid);
+    float acc = 0.0;
+
+    for (int b = b_start; b < b_end; b++) {
+        uint bi = row * uint(bpr) + uint(b);
+        float d_val = float(blocks[bi].d);
+        int x_base = b << 8;
+
+        for (int n128 = 0; n128 < 2; n128++) {
+            int ql_off = n128 * 64;
+            int qh_off = n128 * 32;
+
+            uint ql0 = uint(blocks[bi].ql[ql_off + l]);
+            uint ql32 = uint(blocks[bi].ql[ql_off + l + 32]);
+            uint qh_val = uint(blocks[bi].qh[qh_off + l]);
+
+            int q1 = (int(ql0 & 0xFu) | (int((qh_val      ) & 3u) << 4)) - 32;
+            int q2 = (int(ql32 & 0xFu) | (int((qh_val >> 2u) & 3u) << 4)) - 32;
+            int q3 = (int(ql0 >> 4)     | (int((qh_val >> 4u) & 3u) << 4)) - 32;
+            int q4 = (int(ql32 >> 4)    | (int((qh_val >> 6u) & 3u) << 4)) - 32;
+
+            int sc_base = 8 * n128 + l / 16;
+            float sc0 = d_val * float(blocks[bi].scales[sc_base]);
+            float sc2 = d_val * float(blocks[bi].scales[sc_base + 2]);
+            float sc4 = d_val * float(blocks[bi].scales[sc_base + 4]);
+            float sc6 = d_val * float(blocks[bi].scales[sc_base + 6]);
+
+            int pos = x_base + n128 * 128 + l;
+            acc += sc0 * float(q1) * x_data[pos]
+                 + sc2 * float(q2) * x_data[pos + 32]
+                 + sc4 * float(q3) * x_data[pos + 64]
+                 + sc6 * float(q4) * x_data[pos + 96];
+        }
+    }
+
+    acc = subgroupAdd(acc);
+
+    if (sub_tid == 0u) {
+        partial[sub_id] = acc;
+    }
+    barrier();
+
+    if (sub_tid == 0u && sh == 0u) {
+        out_data[row] = partial[sub_id] + partial[sub_id + 1u];
+    }
+}

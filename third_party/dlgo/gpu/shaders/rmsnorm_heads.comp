@@ -1,0 +1,43 @@
+#version 450
+
+// Per-head RMSNorm: each workgroup normalizes one head in-place.
+// data[head*head_dim + i] = (data[head*head_dim + i] / rms) * weight[i]
+// weight is shared across all heads (size = head_dim).
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) buffer Data { float data_buf[]; };
+layout(set = 0, binding = 1) buffer Weight { float w_data[]; };
+
+layout(push_constant) uniform Params {
+    int head_dim;
+    float eps;
+};
+
+shared float sdata[256];
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    uint head = gl_WorkGroupID.x;
+    uint base = head * uint(head_dim);
+
+    float ss = 0.0;
+    for (int i = int(tid); i < head_dim; i += 256) {
+        float v = data_buf[base + uint(i)];
+        ss += v * v;
+    }
+    sdata[tid] = ss;
+    barrier();
+
+    for (uint s = 128; s > 0; s >>= 1) {
+        if (tid < s) sdata[tid] += sdata[tid + s];
+        barrier();
+    }
+
+    float inv_rms = 1.0 / sqrt(sdata[0] / float(head_dim) + eps);
+    barrier();
+
+    for (int i = int(tid); i < head_dim; i += 256) {
+        data_buf[base + uint(i)] *= inv_rms * w_data[i];
+    }
+}

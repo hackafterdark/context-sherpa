@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+@plugin "daisyui" {
+  themes: light, dark, dracula;
+}
+
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+}
+
+.symbol-gutter-highlight {
+  border-left: 4px solid var(--color-primary);
+  opacity: 0.8;
+  margin-left: 2px;
+}

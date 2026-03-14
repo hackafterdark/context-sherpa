@@ -107,7 +107,25 @@ To ensure a smooth and transparent development process, agents must adhere to th
         -   **Agent Action (Correct)**: "I was unable to find the `go-fuzz` library using my tools. Would you like me to proceed by using the standard `testing` package instead, or can you provide a specific version or import path for `go-fuzz`?"
 
 
-## 7. MCP Tool Usage Conventions
+## 7. Advanced Code Intelligence (SCIP)
+
+This project uses **SCIP (Symbolic Code Intelligence Protocol)** to provide precise, cross-file navigation and relational mapping. Agents must leverage these tools to maintain high accuracy when exploring the codebase.
+
+### 7.1 Symbolic-First Research
+- **Rule**: Before using `grep_search` or `find_by_name`, agents **MUST** attempt to resolve context using the following MCP tools:
+    - `mcp_context-sherpa_initialize_scip`: To ensure the index is up-to-date.
+    - `mcp_context-sherpa_search_definitions`: To find where a symbol (function, class, variable) is defined.
+    - `mcp_context-sherpa_get_symbol_map`: To see all references and relationships for a specific symbol.
+- **Goal**: Using symbolic data prevents "hallucinating" relationships based on text matches alone and is significantly faster in large projects.
+
+### 7.2 Re-indexing Routine
+- **Requirement**: Always perform or suggest a re-index (`initialize_scip`) after:
+    - Any significant refactor that changes exported signatures.
+    - Adding new files or complex components.
+    - Switching between significantly different branches.
+- **Backend & Frontend**: Remember that both the Go backend and the TypeScript/React frontend can be indexed. Use the `language` parameter to keep both maps fresh.
+
+## 8. MCP Tool Usage Conventions
 
 To effectively manage the `ast-grep` linting rules, the agent must follow a specific workflow. This ensures that changes are intentional, validated, and approved by the user.
 
