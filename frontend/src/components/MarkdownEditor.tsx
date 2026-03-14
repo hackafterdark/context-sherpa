@@ -21,9 +21,7 @@ import {
   frontmatterPlugin,
   InsertFrontmatter,
   tablePlugin,
-  imagePlugin,
   InsertTable,
-  InsertImage
 } from '@mdxeditor/editor';
 import '@mdxeditor/editor/style.css';
 import { useRef, Component, ErrorInfo, ReactNode, useEffect } from 'react';
@@ -317,7 +315,6 @@ export default function MarkdownEditor({ markdown, onChange, theme, readOnly = f
             markdownShortcutPlugin(),
             tablePlugin(),
             frontmatterPlugin(),
-            imagePlugin(),
             codeBlockPlugin({
               codeBlockEditorDescriptors: [
                 {
@@ -343,7 +340,6 @@ export default function MarkdownEditor({ markdown, onChange, theme, readOnly = f
                   <InsertFrontmatter />
                   <div className="w-px h-6 bg-base-content/10 mx-1" />
                   <CreateLink />
-                  <InsertImage />
                   <InsertTable />
                   <InsertCodeBlock />
                 </>
