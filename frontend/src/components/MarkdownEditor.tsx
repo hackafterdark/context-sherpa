@@ -63,7 +63,7 @@ const editorStyles = `
     display: flex !important;
     flex-direction: column !important;
     overflow: hidden;
-    overflow-y: scroll !important;
+    overflow-y: auto !important;
     min-height: 0 !important;
     background-color: transparent !important;
   }
@@ -192,6 +192,18 @@ const editorStyles = `
     border-radius: 8px !important;
     color: var(--color-base-content) !important;
     z-index: 99999 !important;
+  }
+
+  /* Prevent invisible portal containers from adding height */
+  .mdxeditor-popup-container:empty {
+    display: none !important;
+  }
+
+  /* Ensure the popup container itself stays out of document flow */
+  .mdxeditor-popup-container {
+    position: absolute !important;
+    top: 0;
+    left: 0;
   }
 
   [data-radix-portal] [role="option"],
