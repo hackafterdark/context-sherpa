@@ -49,7 +49,7 @@ function App() {
         <Layout activeTab={activeTab} setActiveTab={setActiveTab}>
             {activeTab === 'home' && <Home onVisualize={openAtlas} />}
             {activeTab === 'atlas' && <Atlas workspaceRoot={atlasWorkspace} onWorkspaceChange={setAtlasWorkspace} />}
-            {activeTab === 'skills' && <Skills workspaceRoot={atlasWorkspace} onWorkspaceChange={setAtlasWorkspace} />}
+            {activeTab === 'skills' && <Skills workspaceRoot={atlasWorkspace} onWorkspaceChange={setAtlasWorkspace} theme={theme} />}
             {activeTab === 'help' && <Help />}
             {activeTab === 'settings' && <Settings theme={theme} setTheme={setTheme} />}
         </Layout>

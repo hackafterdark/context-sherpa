@@ -8,6 +8,7 @@ import SkillCatalog from './components/SkillCatalog';
 type SkillsProps = {
     workspaceRoot: string;
     onWorkspaceChange: (root: string) => void;
+    theme: string;
 };
 
 const DRAFT_PREFIX = 'hub-skill-draft:';
@@ -21,7 +22,7 @@ const normalizeText = (text: string) => {
         .trim();                                // Trim flanking whitespace
 };
 
-export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps) {
+export default function Skills({ workspaceRoot, onWorkspaceChange, theme }: SkillsProps) {
     const [currentPath, setCurrentPath] = useState('');
     const [content, setContent] = useState('');
     const [originalContent, setOriginalContent] = useState('');
@@ -306,6 +307,7 @@ export default function Skills({ workspaceRoot, onWorkspaceChange }: SkillsProps
                                     key={currentPath.toLowerCase()}
                                     markdown={content}
                                     onChange={handleContentChange}
+                                    theme={theme}
                                 />
                             </div>
                         ) : (

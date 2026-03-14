@@ -52,6 +52,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
 type MarkdownEditorProps = {
   markdown: string;
   onChange: (markdown: string) => void;
+  theme: string;
   readOnly?: boolean;
 };
 
@@ -121,61 +122,112 @@ const editorStyles = `
   [data-mdx-editor-code-block-language-select] select,
   .mdxeditor select,
   .mdxeditor-code-block-language-select select { 
-    background-color: #2d2f33 !important; 
-    color: #f3f4f6 !important;
-    border: 1px solid rgba(255, 255, 255, 0.3) !important;
+    background-color: var(--color-base-200) !important;
+    color: var(--color-base-content) !important;
+    // border: 1px solid rgba(255, 255, 255, 0.3) !important;
     border-radius: 0.375rem;
     font-size: 0.75rem;
     padding: 0.25rem 0.6rem !important;
     min-width: 100px;
     cursor: pointer;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
   }
+    
+  .mdxeditor [role="combobox"] {
+    color: var(--color-base-content) !important;
+    background-color: var(--color-base-200) !important;
+  }
+
+  .mdxeditor-select-content {
+    color: var(--color-base-content) !important;
+    background-color: var(--color-base-200) !important;
+  } 
 
   /* Specific fix for the language dropdown in code blocks - matching their structure */
   [class*="CodeBlockEditor_languageSelect"] {
-     background-color: #1a1b1e !important;
-     color: #f3f4f6 !important;
-     border: 1px solid #444 !important;
+    background-color: #1a1b1e !important;
+    color: #f3f4f6 !important;
+    border: 1px solid #444 !important;
   }
 
-  /* Popups (Radix) - aggressive overrides to fix contrast inside portals */
-  [data-radix-portal] [role="menu"],
+  /* MDXEditor Theming - Mapping DaisyUI 5 to Radix variables */
+  .mdxeditor-theme-wrapper {
+    --baseBase: var(--color-base-100) !important;
+    --baseBgSubtle: var(--color-base-200) !important;
+    --baseBg: var(--color-base-100) !important;
+    --baseBgHover: var(--color-base-300) !important;
+    --baseBgActive: var(--color-base-100) !important;
+    --baseLine: var(--color-base-300) !important;
+    --baseBorder: var(--color-base-300) !important;
+    --baseBorderHover: var(--color-base-content) !important;
+    --baseSolid: var(--color-base-300) !important;
+    --baseSolidHover: var(--color-base-200) !important;
+    --baseText: var(--color-base-content) !important;
+    --baseTextContrast: var(--color-base-100) !important;
+    
+    --accentBase: var(--color-primary) !important;
+    --accentBgSubtle: color-mix(in srgb, var(--color-primary) 15%, transparent) !important;
+    --accentBg: color-mix(in srgb, var(--color-primary) 30%, transparent) !important;
+    --accentBgHover: color-mix(in srgb, var(--color-primary) 45%, transparent) !important;
+    --accentBgActive: color-mix(in srgb, var(--color-primary) 60%, transparent) !important;
+    --accentLine: var(--color-primary) !important;
+    --accentBorder: var(--color-primary) !important;
+    --accentBorderHover: var(--color-primary) !important;
+    --accentSolid: var(--color-primary) !important;
+    --accentSolidHover: var(--color-primary) !important;
+    --accentText: var(--color-base-content) !important;
+    --accentTextContrast: var(--color-primary-content) !important;
+  }
+
+  /* Portal Styling - Ensuring legality across all themes */
   [data-radix-portal] [role="listbox"],
+  [data-radix-portal] [role="menu"],
   [data-radix-portal] [role="combobox"],
   [data-radix-portal] [data-radix-select-content],
   [data-radix-portal] [data-radix-popper-content-wrapper],
   .mdxeditor-popup-container { 
-    background-color: #1a1b1e !important;
-    border: 1px solid rgba(255, 255, 255, 0.4) !important;
-    box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 1) !important;
+    background-color: var(--color-base-200) !important;
+    border: 1px solid var(--color-base-300) !important;
+    box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.5) !important;
     padding: 6px !important;
-    border-radius: 10px !important;
-    color: #ffffff !important;
+    border-radius: 8px !important;
+    color: var(--color-base-content) !important;
     z-index: 99999 !important;
-    position: fixed !important; /* Prevent it from affecting document flow */
   }
-  
+
   [data-radix-portal] [role="option"],
   [data-radix-portal] [role="menuitem"],
-  [data-radix-portal] [data-radix-collection-item],
-  [data-radix-portal] [role="menuitemcheckbox"],
   [data-radix-portal] * {
-    color: #ffffff !important;
+    color: var(--color-base-content) !important;
+    font-size: 0.85rem !important;
   }
 
   [data-radix-portal] [role="option"][data-highlighted],
   [data-radix-portal] [role="menuitem"][data-highlighted],
-  [data-radix-portal] [data-state="checked"],
-  .mdxeditor-popup-container [data-highlighted] {
-    background-color: var(--color-primary) !important;
+  [data-radix-portal] [data-state="checked"] {
+    background-color:  var(--color-primary) !important;
     color: var(--color-primary-content) !important;
+  }
+
+  /* CodeMirror background should match editor bg in light mode, but stay dark in dark modes */
+  .dark-theme .cm-editor {
+    background-color: #1a1b1e !important;
+  }
+  
+  /* Fallback for light mode code editor */
+  .mdxeditor-theme-wrapper:not(.dark-theme) .cm-editor {
+    background-color: var(--color-base-200) !important;
+    color: var(--color-base-content) !important;
+  }
+
+  .mdxeditor-theme-wrapper .dark-theme .cm-editor {
+    background-color: var(--color-base-200) !important;
+    color: color(display-p3 0.93 0.933 0.94)
   }
 
   /* Extreme fix for native selects inside the editor */
   select option {
-    background-color: #1a1b1e !important;
-    color: #ffffff !important;
+    background-color: var(--color-base-200) !important;
+    color: var(--color-base-content) !important;
   }
 
   .prose h1 { font-size: 2.25rem; font-weight: 800; margin-top: 1.5rem; color: var(--color-primary); }
@@ -204,7 +256,7 @@ const editorStyles = `
   }
 `;
 
-export default function MarkdownEditor({ markdown, onChange, readOnly = false }: MarkdownEditorProps) {
+export default function MarkdownEditor({ markdown, onChange, theme, readOnly = false }: MarkdownEditorProps) {
   const editorRef = useRef<MDXEditorMethods>(null);
 
   // Robust normalization for equality check
@@ -236,7 +288,7 @@ export default function MarkdownEditor({ markdown, onChange, readOnly = false }:
 
   return (
     <ErrorBoundary>
-      <div className="flex-1 w-full flex flex-col bg-base-100 min-h-0 overflow-hidden relative border border-base-content/10 rounded-xl">
+      <div className={`flex-1 w-full flex flex-col bg-base-100 min-h-0 overflow-hidden relative border border-base-content/10 rounded-xl mdxeditor-theme-wrapper ${theme === 'light' ? '' : 'dark-theme'}`}>
         <style>{editorStyles}</style>
         <MDXEditor
           ref={editorRef}
@@ -283,8 +335,8 @@ export default function MarkdownEditor({ markdown, onChange, readOnly = false }:
               )
             })
           ]}
-          className="dark-theme flex-1 min-h-0"
-          contentEditableClassName="prose prose-invert max-w-none outline-none p-12 pb-[50vh] text-base-content scroll-mt-20"
+          className={`flex-1 min-h-0 ${theme === 'light' ? '' : 'dark-theme'}`}
+          contentEditableClassName={`prose max-w-none outline-none p-12 pb-[50vh] text-base-content scroll-mt-20 ${theme === 'light' ? '' : 'prose-invert'}`}
         />
       </div>
     </ErrorBoundary>
