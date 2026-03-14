@@ -16,13 +16,14 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux/amd64
-            build_args: "-tags webkit2gtk_4_1"
+            # We use a dedicated variable for just the tag value
+            tags: "webkit2gtk_4_1"
           - os: macos-latest
             platform: darwin/universal
-            build_args: ""
+            tags: "production"
           - os: windows-latest
             platform: windows/amd64
-            build_args: ""
+            tags: "production"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -58,24 +59,30 @@ jobs:
         env:
           APP_BUILD_MODE: "true"
           CGO_ENABLED: 1
+        # 1. We move the tags flag explicitly into the command
+        # 2. We use -skipfrontend because we already built it (faster/cleaner)
         run: |
-          wails build -platform ${{ matrix.platform }} ${{ matrix.build_args }}
+          wails build -platform ${{ matrix.platform }} -tags ${{ matrix.tags }} -skipfrontend
 
       - name: Rename and Prepare Artifacts (Linux/macOS)
         if: matrix.os != 'windows-latest'
         run: |
           mkdir -p output
-          cp build/bin/* output/
-          cd output
-          for f in *; do mv "$f" "gui-${{ github.ref_name }}-$f"; done
+          if [ -d "build/bin" ]; then
+            cp build/bin/* output/
+            cd output
+            for f in *; do mv "$f" "gui-${{ github.ref_name }}-$f"; done
+          fi
 
       - name: Rename and Prepare Artifacts (Windows)
         if: matrix.os == 'windows-latest'
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path output
-          Copy-Item -Path build/bin/* -Destination output -Recurse
-          Get-ChildItem -Path output | ForEach-Object { Move-Item $_.FullName "output/gui-$($env:GITHUB_REF_NAME)-$($_.Name)" }
+          if (Test-Path "build/bin") {
+            Copy-Item -Path build/bin/* -Destination output -Recurse
+            Get-ChildItem -Path output | ForEach-Object { Move-Item $_.FullName "output/gui-$($env:GITHUB_REF_NAME)-$($_.Name)" }
+          }
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
