@@ -1050,6 +1050,8 @@ func (a *App) TestInferenceConnection(providerType string, url string) (string, 
 		provider = inference.NewOllamaProvider(url)
 	case "openai":
 		provider = inference.NewOpenAIProvider(url)
+	case "lmstudio":
+		provider = inference.NewLMStudioProvider(url)
 	case "disabled":
 		return "Disabled", nil
 	default:
@@ -1072,6 +1074,8 @@ func (a *App) GetInferenceModels() ([]string, error) {
 		provider = inference.NewOllamaProvider(prefs.InferenceURL)
 	case "openai":
 		provider = inference.NewOpenAIProvider(prefs.InferenceURL)
+	case "lmstudio":
+		provider = inference.NewLMStudioProvider(prefs.InferenceURL)
 	default:
 		return nil, fmt.Errorf("invalid provider type")
 	}
@@ -1079,14 +1083,20 @@ func (a *App) GetInferenceModels() ([]string, error) {
 	return provider.ListModels(a.ctx)
 }
 
-// PullInferenceModel requests the provider to pull a model (Ollama only)
+// PullInferenceModel requests the provider to pull a model
 func (a *App) PullInferenceModel(modelID string) error {
 	prefs := a.GetPreferences()
-	if prefs.InferenceProvider != "ollama" {
-		return fmt.Errorf("model pulling is only supported for Ollama")
+	var provider inference.InferenceProvider
+
+	switch prefs.InferenceProvider {
+	case "ollama":
+		provider = inference.NewOllamaProvider(prefs.InferenceURL)
+	case "lmstudio":
+		provider = inference.NewLMStudioProvider(prefs.InferenceURL)
+	default:
+		return fmt.Errorf("model pulling is not supported for provider: %s", prefs.InferenceProvider)
 	}
 
-	provider := inference.NewOllamaProvider(prefs.InferenceURL)
 	return provider.PullModel(a.ctx, modelID)
 }
 func (a *App) OpenConfigDir() error {

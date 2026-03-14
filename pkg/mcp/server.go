@@ -2087,6 +2087,12 @@ func runSLM(ctx context.Context, request mcp.CallToolRequest, prompt string) (*m
 			url = "http://localhost:1234/v1"
 		}
 		provider = inference.NewOpenAIProvider(url)
+	case "lmstudio":
+		url := prefs.InferenceURL
+		if url == "" {
+			url = "http://localhost:1234/api/v1"
+		}
+		provider = inference.NewLMStudioProvider(url)
 	case "disabled":
 		return mcp.NewToolResultText("Semantic reasoning is currently disabled in the Hub settings. Please select an inference provider (Ollama or LM Studio) to use this tool."), nil
 	default:

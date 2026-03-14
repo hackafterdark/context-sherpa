@@ -152,6 +152,9 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
         const newPrefs = { ...prefs, [key]: value };
         setPrefs(newPrefs);
         setTestStatus(null);
+        if (key === 'inferenceProvider') {
+            setModels([]);
+        }
 
         // Auto-save if disabling inference or if value is 'disabled'
         if (value === 'disabled' || (key === 'inferenceProvider' && value === 'disabled')) {
@@ -167,10 +170,16 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
         if (!prefs) return;
         setIsTesting(true);
         setTestStatus(null);
+        setModels([]);
 
         try {
             const provider = prefs.inferenceProvider || 'ollama';
-            const url = prefs.inferenceURL || (provider === 'ollama' ? 'http://localhost:11434' : 'http://localhost:1234/v1');
+            let url = prefs.inferenceURL;
+            if (!url) {
+                if (provider === 'ollama') url = 'http://localhost:11434';
+                else if (provider === 'lmstudio') url = 'http://localhost:1234/api/v1';
+                else url = 'http://localhost:1234/v1'; // openai default
+            }
 
             const modelName = await TestInferenceConnection(provider, url);
             setTestStatus({
@@ -214,8 +223,6 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
         }
     };
 
-
-
     const handleToolDelete = async (type: 'ast-grep' | 'scip-go' | 'scip-typescript' | 'scip-python' | string) => {
         if (confirmDelete !== type) {
             setConfirmDelete(type);
@@ -236,7 +243,6 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
             alert("Deletion failed: " + e);
         }
     };
-
 
     return (
         <div className="flex flex-col gap-6 animate-in fade-in duration-300 max-w-5xl">
@@ -458,6 +464,16 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                                                     type="radio"
                                                     name="provider"
                                                     className="radio radio-primary radio-sm"
+                                                    checked={prefs?.inferenceProvider === 'lmstudio'}
+                                                    onChange={() => handlePreferenceChange('inferenceProvider', 'lmstudio')}
+                                                />
+                                                <span className="label-text">LM Studio (Native)</span>
+                                            </label>
+                                            <label className="label cursor-pointer gap-2">
+                                                <input
+                                                    type="radio"
+                                                    name="provider"
+                                                    className="radio radio-primary radio-sm"
                                                     checked={prefs?.inferenceProvider === 'openai'}
                                                     onChange={() => handlePreferenceChange('inferenceProvider', 'openai')}
                                                 />
@@ -486,7 +502,7 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                                                     <input
                                                         type="text"
                                                         className="input input-bordered input-sm flex-1 font-mono"
-                                                        placeholder={prefs?.inferenceProvider === 'ollama' ? "http://localhost:11434" : "http://localhost:1234/v1"}
+                                                        placeholder={prefs?.inferenceProvider === 'ollama' ? "http://localhost:11434" : prefs?.inferenceProvider === 'lmstudio' ? "http://localhost:1234/api/v1" : "http://localhost:1234/v1"}
                                                         value={prefs?.inferenceURL || ''}
                                                         onChange={(e) => handlePreferenceChange('inferenceURL', e.target.value)}
                                                     />
@@ -511,7 +527,7 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                                                 )}
                                             </div>
 
-                                            {models.length > 0 && (
+                                            {(models || []).length > 0 && (
                                                 <div className="form-control w-full">
                                                     <label className="label">
                                                         <span className="label-text font-semibold">Default Model</span>
@@ -526,17 +542,17 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                                                         }}
                                                     >
                                                         <option value="">Select a model...</option>
-                                                        {models.map((m: string) => (
+                                                        {(models || []).map((m: string) => (
                                                             <option key={m} value={m}>{m}</option>
                                                         ))}
                                                     </select>
                                                 </div>
                                             )}
 
-                                            {prefs?.inferenceProvider === 'ollama' && (
+                                            {(prefs?.inferenceProvider === 'ollama' || prefs?.inferenceProvider === 'lmstudio') && (
                                                 <div className="form-control w-full space-y-3">
                                                     <label className="label pb-0">
-                                                        <span className="label-text font-semibold">Pull New Model (Ollama)</span>
+                                                        <span className="label-text font-semibold">Pull New Model ({prefs?.inferenceProvider === 'ollama' ? 'Ollama' : 'LM Studio'})</span>
                                                     </label>
                                                     
                                                     <div className="flex flex-wrap gap-2">
@@ -557,7 +573,7 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                                                         <input
                                                             type="text"
                                                             className="input input-bordered input-sm flex-1 font-mono text-xs"
-                                                            placeholder="e.g. llama3:8b, mistral"
+                                                            placeholder={prefs?.inferenceProvider === 'ollama' ? "e.g. llama3:8b, mistral" : "e.g. bartowski/Llama-3.2-1B-Instruct-GGUF"}
                                                             value={pullModelName}
                                                             onChange={(e) => setPullModelName(e.target.value)}
                                                         />
@@ -574,16 +590,26 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                                                         </button>
                                                     </div>
                                                     
-                                                    <div className="p-3 bg-base-200/50 rounded border border-base-300 text-[11px] opacity-80 leading-relaxed">
+                                                     <div className="p-3 bg-base-200/50 rounded border border-base-300 text-[11px] opacity-80 leading-relaxed">
                                                         <div className="flex items-start gap-2">
                                                             <Icon icon="lucide:lightbulb" className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" />
                                                             <div>
-                                                                <p className="font-semibold text-base-content/90 mb-1">Ollama Model IDs:</p>
-                                                                <ul className="list-disc list-inside space-y-1">
-                                                                    <li>Always use a colon <code className="bg-base-300 px-1 rounded text-warning">:</code> to specify a tag (e.g., <code className="bg-base-300 px-1 rounded text-warning">qwen2.5:0.5b</code>).</li>
-                                                                    <li>Avoid using dashes <code className="bg-base-300 px-1 rounded text-error/70">-</code> in place of the colon.</li>
-                                                                    <li>Find more models at <a href="https://ollama.com/library" target="_blank" rel="noopener noreferrer" className="link link-primary">ollama.com/library</a>.</li>
-                                                                </ul>
+                                                                {prefs?.inferenceProvider === 'ollama' ? (
+                                                                    <>
+                                                                        <p className="font-semibold text-base-content/90 mb-1">Ollama Model IDs:</p>
+                                                                        <ul className="list-disc list-inside space-y-1">
+                                                                            <li>Always use a colon <code className="bg-base-300 px-1 rounded text-warning">:</code> to specify a tag (e.g., <code className="bg-base-300 px-1 rounded text-warning">qwen2.5:0.5b</code>).</li>
+                                                                            <li>Avoid using dashes <code className="bg-base-300 px-1 rounded text-error/70">-</code> in place of the colon.</li>
+                                                                            <li>Find more models at <a href="https://ollama.com/library" target="_blank" rel="noopener noreferrer" className="link link-primary">ollama.com/library</a>.</li>
+                                                                        </ul>
+                                                                    </>
+                                                                ) : (
+                                                                    <>
+                                                                        <p className="font-semibold text-base-content/90 mb-1">LM Studio Model IDs:</p>
+                                                                        <p>Specify the full model ID (e.g. <code className="bg-base-300 px-1 rounded">bartowski/Llama-3.2-1B-Instruct-GGUF</code>).
+                                                                        Models will be downloaded to your library path.</p>
+                                                                    </>
+                                                                )}
                                                             </div>
                                                         </div>
                                                     </div>
@@ -605,7 +631,8 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                                         <p className="font-semibold mb-1">How to connect:</p>
                                         <ul className="list-disc list-inside space-y-1 opacity-70">
                                             <li><strong>Ollama</strong>: Ensure Ollama is running. Default is <code className="text-xs">http://localhost:11434</code>.</li>
-                                            <li><strong>LM Studio</strong>: Load a model and enable "Local Server". Default is <code className="text-xs">http://localhost:1234/v1</code>.</li>
+                                            <li><strong>LM Studio (Native)</strong>: Enable "Local Server" in LM Studio. Supports model discovery and pulling. Default is <code className="text-xs">http://localhost:1234/api/v1</code>.</li>
+                                            <li><strong>LM Studio (Compatible)</strong>: Use for older versions or other OpenAI-compatible APIs. Default is <code className="text-xs">http://localhost:1234/v1</code>.</li>
                                         </ul>
                                     </div>
                                 </div>
@@ -617,4 +644,3 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
         </div>
     );
 }
-

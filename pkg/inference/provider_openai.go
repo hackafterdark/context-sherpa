@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -17,6 +19,15 @@ type OpenAIProvider struct {
 
 // NewOpenAIProvider creates a new OpenAI compatible provider
 func NewOpenAIProvider(baseURL string) *OpenAIProvider {
+	// If the URL is provided but missing the version suffix, add /v1
+	// (Common for LM Studio and other local OpenAI-compatible servers)
+	if u, err := url.Parse(baseURL); err == nil {
+		if u.Path == "" || u.Path == "/" {
+			u.Path = "/v1"
+			baseURL = u.String()
+		}
+	}
+
 	return &OpenAIProvider{
 		BaseURL: baseURL,
 		Client: &http.Client{
@@ -75,13 +86,31 @@ func (p *OpenAIProvider) Generate(ctx context.Context, prompt string, options Ge
 	}
 	defer resp.Body.Close()
 
-	var result openAICompletionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return "", err
 	}
 
-	if result.Error != nil {
-		return "", fmt.Errorf("openai error: %s", result.Error.Message)
+	if resp.StatusCode != http.StatusOK {
+		var errRes struct {
+			Error interface{} `json:"error"`
+		}
+		if err := json.Unmarshal(bodyBytes, &errRes); err == nil {
+			switch v := errRes.Error.(type) {
+			case string:
+				return "", fmt.Errorf("openai error: %s", v)
+			case map[string]interface{}:
+				if msg, ok := v["message"].(string); ok {
+					return "", fmt.Errorf("openai error: %s", msg)
+				}
+			}
+		}
+		return "", fmt.Errorf("openai returned status: %d, body: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result openAICompletionResponse
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
+		return "", fmt.Errorf("failed to parse openai response: %w (body: %s)", err, string(bodyBytes))
 	}
 
 	if len(result.Choices) == 0 {
@@ -118,7 +147,7 @@ func (p *OpenAIProvider) ListModels(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("failed to parse models list: %w", err)
 	}
 
-	var models []string
+	var models []string = []string{}
 	for _, m := range result.Data {
 		models = append(models, m.ID)
 	}

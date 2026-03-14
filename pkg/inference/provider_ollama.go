@@ -108,7 +108,7 @@ func (p *OllamaProvider) ListModels(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("failed to parse ollama models: %w", err)
 	}
 
-	var models []string
+	var models []string = []string{}
 	for _, m := range result.Models {
 		models = append(models, m.Name)
 	}
