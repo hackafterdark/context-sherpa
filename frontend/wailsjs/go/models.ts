@@ -8,8 +8,7 @@ export namespace inference {
 	    downloaded: boolean;
 	    downloadUrl: string;
 	    description: string;
-	    // Go type: time
-	    lastUsed: any;
+	    lastUsed: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ModelInfo(source);
@@ -24,26 +23,8 @@ export namespace inference {
 	        this.downloaded = source["downloaded"];
 	        this.downloadUrl = source["downloadUrl"];
 	        this.description = source["description"];
-	        this.lastUsed = this.convertValues(source["lastUsed"], null);
+	        this.lastUsed = source["lastUsed"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 
 }
@@ -151,8 +132,7 @@ export namespace main {
 	    root: string;
 	    client: string;
 	    state: string;
-	    // Go type: time
-	    lastSeen: any;
+	    lastSeen: string;
 	    isManaged: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -165,27 +145,9 @@ export namespace main {
 	        this.root = source["root"];
 	        this.client = source["client"];
 	        this.state = source["state"];
-	        this.lastSeen = this.convertValues(source["lastSeen"], null);
+	        this.lastSeen = source["lastSeen"];
 	        this.isManaged = source["isManaged"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 
 }

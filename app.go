@@ -30,12 +30,12 @@ import (
 
 // Workspace represents a detected workspace from a Node
 type Workspace struct {
-	PID       int       `json:"pid"`
-	Root      string    `json:"root"`
-	Client    string    `json:"client"`
-	State     string    `json:"state"`
-	LastSeen  time.Time `json:"lastSeen"`
-	IsManaged bool      `json:"isManaged"`
+	PID       int    `json:"pid"`
+	Root      string `json:"root"`
+	Client    string `json:"client"`
+	State     string `json:"state"`
+	LastSeen  string `json:"lastSeen"`
+	IsManaged bool   `json:"isManaged"`
 }
 
 // UserPreferences represents persistent user settings
@@ -147,7 +147,7 @@ func (a *App) tryAcquireHubLock() bool {
 	lock := mcp.HubLock{
 		PID:       os.Getpid(),
 		Port:      9000,
-		StartTime: time.Now(),
+		StartTime: time.Now().Format(time.RFC3339),
 	}
 	data, _ := json.MarshalIndent(lock, "", "  ")
 
@@ -194,7 +194,7 @@ func (a *App) initDatabase() {
 			var lastSeen string
 			var isManaged int
 			if err := rows.Scan(&ws.Root, &ws.Client, &lastSeen, &isManaged); err == nil {
-				ws.LastSeen, _ = time.Parse(time.RFC3339, lastSeen)
+				ws.LastSeen = lastSeen
 				ws.IsManaged = isManaged == 1
 				ws.State = "offline"
 				a.workspaces = append(a.workspaces, ws)
@@ -243,7 +243,7 @@ func (a *App) RegisterWorkspace(path string) error {
 	found := false
 	for i, ws := range a.workspaces {
 		if ws.Root == absPath {
-			a.workspaces[i].LastSeen = time.Now()
+			a.workspaces[i].LastSeen = time.Now().Format(time.RFC3339)
 			a.workspaces[i].IsManaged = true
 			found = true
 			break
@@ -254,7 +254,7 @@ func (a *App) RegisterWorkspace(path string) error {
 			Root:      absPath,
 			Client:    "manual",
 			State:     "offline",
-			LastSeen:  time.Now(),
+			LastSeen:  time.Now().Format(time.RFC3339),
 			IsManaged: true,
 		})
 	}
@@ -754,7 +754,7 @@ func (a *App) startHubServer() {
 		found := false
 		for i, existing := range a.workspaces {
 			if existing.Root == ws.Root && existing.PID == ws.PID {
-				ws.LastSeen = time.Now()
+				ws.LastSeen = time.Now().Format(time.RFC3339)
 				if ws.State == "offline" {
 					ws.State = "active"
 				}
@@ -765,7 +765,7 @@ func (a *App) startHubServer() {
 		}
 
 		if !found {
-			ws.LastSeen = time.Now()
+			ws.LastSeen = time.Now().Format(time.RFC3339)
 			a.workspaces = append(a.workspaces, ws)
 		}
 
@@ -777,7 +777,7 @@ func (a *App) startHubServer() {
 				ON CONFLICT(root) DO UPDATE SET
 					client = excluded.client,
 					last_seen = excluded.last_seen
-			`, ws.Root, ws.Client, ws.LastSeen.Format(time.RFC3339))
+			`, ws.Root, ws.Client, ws.LastSeen)
 			if err != nil {
 				fmt.Printf("Hub: Failed to persist workspace to DB: %v\n", err)
 			}
@@ -1581,15 +1581,17 @@ func (a *App) startSweeper() {
 		newWorkspaces := make([]Workspace, 0)
 
 		for _, ws := range a.workspaces {
+			lastSeenTime, _ := time.Parse(time.RFC3339, ws.LastSeen)
+
 			// Stage 2: Remove dead dynamic nodes after 2 minutes of silence
-			if !ws.IsManaged && time.Since(ws.LastSeen) > 120*time.Second {
+			if !ws.IsManaged && time.Since(lastSeenTime) > 120*time.Second {
 				fmt.Printf("Hub: Sweeper removing dead dynamic workspace: %s (PID: %d)\n", ws.Root, ws.PID)
 				updated = true
 				continue
 			}
 
 			// Stage 1: Mark as offline after 60s
-			if ws.State != "offline" && time.Since(ws.LastSeen) > 60*time.Second {
+			if ws.State != "offline" && time.Since(lastSeenTime) > 60*time.Second {
 				ws.State = "offline"
 				fmt.Printf("Hub: Sweeper marking workspace as offline: %s (PID: %d)\n", ws.Root, ws.PID)
 				updated = true
@@ -1613,7 +1615,7 @@ func (a *App) updateHubLock() {
 	lock := mcp.HubLock{
 		PID:       os.Getpid(),
 		Port:      9000,
-		StartTime: time.Now(), // Using StartTime as LastHeartbeat for simplicity
+		StartTime: time.Now().Format(time.RFC3339), // Using StartTime as LastHeartbeat for simplicity
 	}
 	data, _ := json.MarshalIndent(lock, "", "  ")
 	_ = os.WriteFile(lockPath, data, 0644)

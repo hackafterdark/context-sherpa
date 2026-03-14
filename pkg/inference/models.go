@@ -1,19 +1,18 @@
 package inference
 
 import (
-	"time"
 )
 
 // ModelInfo represents metadata about a local model
 type ModelInfo struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Size        int64     `json:"size"`
-	Path        string    `json:"path"`
-	Downloaded  bool      `json:"downloaded"`
-	DownloadURL string    `json:"downloadUrl"`
-	Description string    `json:"description"`
-	LastUsed    time.Time `json:"lastUsed"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Size        int64  `json:"size"`
+	Path        string `json:"path"`
+	Downloaded  bool   `json:"downloaded"`
+	DownloadURL string `json:"downloadUrl"`
+	Description string `json:"description"`
+	LastUsed    string `json:"lastUsed"`
 }
 
 // InferenceRequest represents a request to the Local SLM

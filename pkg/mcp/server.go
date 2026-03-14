@@ -24,9 +24,9 @@ import (
 
 // HubLock represents the metadata stored in the hub.lock file
 type HubLock struct {
-	PID       int       `json:"pid"`
-	Port      int       `json:"port"`
-	StartTime time.Time `json:"startTime"`
+	PID       int    `json:"pid"`
+	Port      int    `json:"port"`
+	StartTime string `json:"startTime"`
 }
 
 // GetHubLockPath returns the platform-specific path to the hub.lock file

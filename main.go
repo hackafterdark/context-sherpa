@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -14,17 +15,36 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
+	"runtime/debug"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
 
+func initDebugLog(path string) *os.File {
+	if path == "" {
+		path = "production_debug.log"
+	}
+	logFile, _ := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if logFile != nil {
+		log.SetOutput(logFile)
+		log.Println("--- NEW LOG SESSION ---")
+	}
+	return logFile
+}
+
 func main() {
-	// 1. Smart Entry Point: Check for Headless / MCP mode
+	// 1. Setup panic recovery first
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC RECOVERED: %v\nStack Trace:\n%s", r, string(debug.Stack()))
+			fmt.Printf("PANIC RECOVERED: %v\n", r)
+		}
+	}()
+
+	// 2. Parse flags early to check for debug/logging options
 	isMCPMode := false
 	mcpFlag := flag.Bool("mcp", false, "Run in headless MCP server mode")
-
-	// Also parse legacy flags from cmd/context-sherpa/main.go
 	workspaceRoot := flag.String("workspaceRoot", "", "Workspace root directory (defaults to current working directory)")
 	projectRoot := flag.String("projectRoot", "", "Workspace root directory (legacy alias for workspaceRoot)")
 	verbose := flag.Bool("verbose", false, "Enable verbose logging for debugging")
@@ -38,20 +58,32 @@ func main() {
 	modelID := flag.String("model-id", "", "ID for the model being downloaded (default: filename)")
 
 	// Ignore errors from flag parsing as wails dev uses its own flags sometimes
-	// We parse os.Args manually or use flag.CommandLine.Parse
 	_ = flag.CommandLine.Parse(os.Args[1:])
 
-	if *mcpFlag {
-		isMCPMode = true
-	} else {
-		// Detect pipe/redirect
-		fi, _ := os.Stdin.Stat()
-		if (fi.Mode() & os.ModeCharDevice) == 0 {
-			isMCPMode = true
+	// 3. Optional Early Logging
+	if *verbose || *logFile != "" {
+		f := initDebugLog(*logFile)
+		if f != nil {
+			defer f.Close()
 		}
 	}
 
-	// 2. Dispatch
+	log.Println("Main: Starting Context-Sherpa...")
+
+	// 4. Smart Entry Point: Check for Headless / MCP mode
+	if *mcpFlag {
+		isMCPMode = true
+	} else {
+		// Detect pipe/redirect - safely check for stdin presence
+		// In Windows GUI mode without a console, Stdin.Stat() can fail
+		if fi, err := os.Stdin.Stat(); err == nil && fi != nil {
+			if (fi.Mode() & os.ModeCharDevice) == 0 {
+				isMCPMode = true
+			}
+		}
+	}
+
+	// 5. Dispatch
 	if isMCPMode {
 		log.Println("Starting Context-Sherpa in Headless (MCP) Mode...")
 
