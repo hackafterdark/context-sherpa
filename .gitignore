@@ -57,6 +57,8 @@ Thumbs.db
 dist/
 build/
 frontend/dist
+# But do NOT ignore the .gitkeep file
+!frontend/dist/.gitkeep
 
 # Environment files
 .env

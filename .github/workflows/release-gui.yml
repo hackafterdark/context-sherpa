@@ -16,10 +16,13 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux/amd64
+            build_args: "-tags webkit2gtk_4_1"
           - os: macos-latest
             platform: darwin/universal
+            build_args: ""
           - os: windows-latest
             platform: windows/amd64
+            build_args: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -56,7 +59,7 @@ jobs:
           APP_BUILD_MODE: "true"
           CGO_ENABLED: 1
         run: |
-          wails build -platform ${{ matrix.platform }}
+          wails build -platform ${{ matrix.platform }} ${{ matrix.build_args }}
 
       - name: Rename and Prepare Artifacts (Linux/macOS)
         if: matrix.os != 'windows-latest'
