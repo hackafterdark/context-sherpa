@@ -2232,32 +2232,75 @@ func (a *App) FocusWorkspaceClient(mcpPid int) error {
 		return fmt.Errorf("invalid PID")
 	}
 
-	editorPid := a.findEditorPid(mcpPid)
-	if editorPid == 0 {
-		return fmt.Errorf("could not identify editor process for PID %d", mcpPid)
+	fmt.Printf("Hub: Debug: Starting window focus for MCP PID %d\n", mcpPid)
+
+	// 1. Collect process ancestry
+	ancestry := make([]int, 0)
+	current := mcpPid
+	visited := make(map[int]bool)
+	
+	// List of recognized editor process names (substring match, case-insensitive)
+	// 'antigravity' removed to avoid stopping at windowless background processes
+	editors := []string{"code", "cursor", "vscodium", "windsurf", "zed", "sublime", "notepad"}
+
+	var bestEditorPid int
+
+	for i := 0; i < 20; i++ {
+		if current <= 0 || visited[current] {
+			break
+		}
+		visited[current] = true
+		ancestry = append(ancestry, current)
+
+		name := strings.ToLower(a.getProcessName(current))
+		fmt.Printf("Hub: Debug: Ancestry Lvl %d: PID %d (%s)\n", i, current, name)
+
+		if bestEditorPid == 0 {
+			for _, ed := range editors {
+				if strings.Contains(name, ed) {
+					bestEditorPid = current
+					fmt.Printf("Hub: Debug: Identified best editor candidate: PID %d (%s)\n", current, name)
+					break
+				}
+			}
+		}
+
+		next := a.getParentPid(current)
+		if next == current || next <= 0 {
+			break
+		}
+		current = next
 	}
 
-	fmt.Printf("Hub: Focusing client window for editor PID %d (spawned by MCP PID %d)\n", editorPid, mcpPid)
-
+	// 2. Perform platform-specific focus search
 	switch runtime.GOOS {
 	case "windows":
-		return a.focusWindows(editorPid)
+		return a.focusWindowsInAncestry(ancestry, bestEditorPid)
 	case "darwin":
-		// macOS: Use osascript to set frontmost property
-		cmd := fmt.Sprintf("tell application \"System Events\" to set frontmost of every process whose unix id is %d to true", editorPid)
+		targetPid := bestEditorPid
+		if targetPid == 0 && len(ancestry) > 0 {
+			targetPid = ancestry[len(ancestry)-1]
+		}
+		if targetPid == 0 {
+			return fmt.Errorf("no target process identified for focus")
+		}
+		cmd := fmt.Sprintf("tell application \"System Events\" to set frontmost of every process whose unix id is %d to true", targetPid)
 		return exec.Command("osascript", "-e", cmd).Run()
 	case "linux":
-		// Linux: Attempt wmctrl first, then xdotool
-		// wmctrl -ia $(wmctrl -lp | awk -v pid=<PID> '$3==pid {print $1}')
-		focusCmd := fmt.Sprintf("wmctrl -ia $(wmctrl -lp | awk -v pid=%d '$3==pid {print $1}')", editorPid)
+		targetPid := bestEditorPid
+		if targetPid == 0 && len(ancestry) > 0 {
+			targetPid = ancestry[len(ancestry)-1]
+		}
+		if targetPid == 0 {
+			return fmt.Errorf("no target process identified for focus")
+		}
+		focusCmd := fmt.Sprintf("wmctrl -ia $(wmctrl -lp | awk -v pid=%d '$3==pid {print $1}')", targetPid)
 		err := exec.Command("sh", "-c", focusCmd).Run()
 		if err != nil {
-			// Fallback to xdotool
-			focusCmd = fmt.Sprintf("xdotool windowactivate $(xdotool search --pid %d | tail -1)", editorPid)
+			focusCmd = fmt.Sprintf("xdotool windowactivate $(xdotool search --pid %d | tail -1)", targetPid)
 			err = exec.Command("sh", "-c", focusCmd).Run()
 		}
 		if err != nil {
-			// Notification fallback if utilities are missing
 			wailsRuntime.MessageDialog(a.ctx, wailsRuntime.MessageDialogOptions{
 				Type:    wailsRuntime.InfoDialog,
 				Title:   "Focus Client",
@@ -2270,42 +2313,8 @@ func (a *App) FocusWorkspaceClient(mcpPid int) error {
 	}
 }
 
-// findEditorPid walks up the process tree starting from startPid until it finds a known editor process.
+// remove unused findEditorPid
 func (a *App) findEditorPid(startPid int) int {
-	fmt.Printf("Hub: Debug: Starting editor PID search for MCP PID %d\n", startPid)
-	
-	currentPid := startPid
-	visited := make(map[int]bool)
-
-	// List of recognized editor process names (substring match, case-insensitive)
-	editors := []string{"code", "cursor", "vscodium", "windsurf", "antigravity", "zed"}
-
-	// Max depth to prevent infinite loops
-	for i := 0; i < 20; i++ {
-		if currentPid <= 0 || visited[currentPid] {
-			break
-		}
-		visited[currentPid] = true
-
-		name := a.getProcessName(currentPid)
-		nameLower := strings.ToLower(name)
-		fmt.Printf("Hub: Debug: Lvl %d: PID %d, Name: %s\n", i, currentPid, name)
-
-		for _, editor := range editors {
-			if strings.Contains(nameLower, editor) {
-				fmt.Printf("Hub: Debug: Found match! Editor name contains '%s'. Selected PID: %d\n", editor, currentPid)
-				return currentPid
-			}
-		}
-
-		ppid := a.getParentPid(currentPid)
-		if ppid == currentPid || ppid <= 0 {
-			break
-		}
-		currentPid = ppid
-	}
-	
-	fmt.Printf("Hub: Debug: Failed to find editor process in chain for PID %d\n", startPid)
 	return 0
 }
 
@@ -2353,8 +2362,8 @@ func (a *App) getParentPid(pid int) int {
 	return 0
 }
 
-// focusWindows implements the Windows-specific window focusing logic using WinAPI.
-func (a *App) focusWindows(targetPid int) error {
+// focusWindowsInAncestry searches for visible windows owned by any process in the ancestry chain.
+func (a *App) focusWindowsInAncestry(ancestry []int, bestPid int) error {
 	user32 := syscall.NewLazyDLL("user32.dll")
 	setForegroundWindow := user32.NewProc("SetForegroundWindow")
 	enumWindows := user32.NewProc("EnumWindows")
@@ -2362,25 +2371,45 @@ func (a *App) focusWindows(targetPid int) error {
 	isWindowVisible := user32.NewProc("IsWindowVisible")
 	showWindow := user32.NewProc("ShowWindow")
 
-	var targetHwnd uintptr
+	var bestHwnd uintptr
+	var fallbackHwnd uintptr
+	
+	ancestryMap := make(map[int]bool)
+	for _, pid := range ancestry {
+		ancestryMap[pid] = true
+	}
 
 	cb := syscall.NewCallback(func(hwnd uintptr, lparam uintptr) uintptr {
+		visible, _, _ := isWindowVisible.Call(hwnd)
+		if visible == 0 {
+			return 1
+		}
+
 		var lpdwProcessId uint32
 		getWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&lpdwProcessId)))
+		pid := int(lpdwProcessId)
 
-		if int(lpdwProcessId) == targetPid {
-			visible, _, _ := isWindowVisible.Call(hwnd)
-			if visible != 0 {
-				targetHwnd = hwnd
-				return 0 // stop enumeration
-			}
+		if pid == bestPid {
+			bestHwnd = hwnd
+			return 0 // found the best one
 		}
-		return 1 // continue enumeration
+
+		if ancestryMap[pid] && fallbackHwnd == 0 {
+			fallbackHwnd = hwnd
+		}
+		
+		return 1
 	})
 
 	enumWindows.Call(cb, 0)
 
+	targetHwnd := bestHwnd
+	if targetHwnd == 0 {
+		targetHwnd = fallbackHwnd
+	}
+
 	if targetHwnd != 0 {
+		fmt.Printf("Hub: Debug: Found matching window (HWND %v). Bringing to front...\n", targetHwnd)
 		// Restore if minimized (SW_RESTORE = 9)
 		showWindow.Call(targetHwnd, 9)
 		// Set to foreground
@@ -2388,7 +2417,7 @@ func (a *App) focusWindows(targetPid int) error {
 		return nil
 	}
 
-	return fmt.Errorf("could not find visible window for PID %d", targetPid)
+	return fmt.Errorf("could not find visible window in process ancestry (%v)", ancestry)
 }
 
 func detectLanguage(docs []*scip.Document) string {
