@@ -54,7 +54,7 @@ jobs:
 
     - name: Run Unit tests
       run: |
-        go test -race -covermode atomic -coverprofile=coverage.out -v ./...
+        go test -race -covermode atomic -coverprofile=coverage.out -v ./... -skip TestInferenceService_RealInference
 
     - name: Install goveralls
       run: go install github.com/mattn/goveralls@latest

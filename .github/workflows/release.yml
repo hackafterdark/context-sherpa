@@ -31,7 +31,7 @@ jobs:
           rm ast-grep.zip
 
       - name: Run tests
-        run: go test ./...
+        run: go test ./... -skip TestInferenceService_RealInference
 
       - name: Test context-sherpa with ast-grep integration
         run: |

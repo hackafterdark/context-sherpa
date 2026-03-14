@@ -4,6 +4,7 @@ package quant
 
 /*
 #cgo CFLAGS: -O3 -march=native
+#cgo LDFLAGS: -lm
 
 #include <stdint.h>
 
