@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/hackafterdark/context-sherpa/pkg/inference"
+	"github.com/hackafterdark/context-sherpa/pkg/sysutils"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	scip "github.com/sourcegraph/scip/bindings/go/scip"
@@ -396,7 +397,7 @@ Example: "Create a rule to catch SQL injection" → generates ast-grep YAML rule
 		// Don't exit here - let the MCP tools handle the error when actually used
 	} else {
 		// Log ast-grep version for debugging and verification
-		versionCmd := exec.Command(sgPath, "--version")
+		versionCmd := sysutils.SilentCommand(sgPath, "--version")
 		if versionOutput, err := versionCmd.Output(); err == nil {
 			customLogger.Printf("Using ast-grep: %s", strings.TrimSpace(string(versionOutput)))
 		} else {
@@ -565,9 +566,9 @@ func detectClientName() string {
 		var cmd *exec.Cmd
 		if runtime.GOOS == "windows" {
 			// On Windows, tasklist or wmic can be used. tasklist is more common.
-			cmd = exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", ppid), "/FO", "CSV", "/NH")
+			cmd = sysutils.SilentCommand("tasklist", "/FI", fmt.Sprintf("PID eq %d", ppid), "/FO", "CSV", "/NH")
 		} else {
-			cmd = exec.Command("ps", "-p", fmt.Sprintf("%d", ppid), "-o", "comm=")
+			cmd = sysutils.SilentCommand("ps", "-p", fmt.Sprintf("%d", ppid), "-o", "comm=")
 		}
 
 		if output, err := cmd.Output(); err == nil {
@@ -809,8 +810,11 @@ func IndexWorkspace(workspaceRoot string, language string) error {
 		binDir = filepath.Join(homeDir, ".context-sherpa", "bin")
 	}
 
+	absOutput := filepath.Join(workspaceRoot, ".context-sherpa", fmt.Sprintf("index-%s.scip", language))
+	indexerArgs := []string{}
+	indexPath := ""
+
 	if language == "go" {
-		// Use scip-go. Try to find it in PATH or context-sherpa/bin
 		indexerName := "scip-go"
 		if runtime.GOOS == "windows" {
 			indexerName += ".exe"
@@ -821,20 +825,13 @@ func IndexWorkspace(workspaceRoot string, language string) error {
 		if _, err := os.Stat(localBin); err == nil {
 			indexerPath = localBin
 		}
-
-		absOutput := filepath.Join(workspaceRoot, ".context-sherpa", fmt.Sprintf("index-%s.scip", language))
-		cmd = exec.Command(indexerPath, "--project-root", workspaceRoot, "--repository-root", workspaceRoot, "--output", absOutput)
-		cmd.Dir = workspaceRoot
+		indexPath = indexerPath
+		indexerArgs = []string{"--project-root", workspaceRoot, "--repository-root", workspaceRoot, "--output", absOutput}
 	} else {
-		// Try to find managed indexer for other languages
 		indexerName := "scip-" + language
-
-		// Priority paths
 		var pathsToTry []string
 		if runtime.GOOS == "windows" {
-			// Local bin might have .exe (e.g. if we compiled it)
 			pathsToTry = append(pathsToTry, filepath.Join(binDir, indexerName+".exe"))
-			// NPM bin usually has .cmd or .ps1
 			pathsToTry = append(pathsToTry, filepath.Join(binDir, "node_modules", ".bin", indexerName+".cmd"))
 			pathsToTry = append(pathsToTry, filepath.Join(binDir, "node_modules", ".bin", indexerName+".ps1"))
 		} else {
@@ -842,7 +839,6 @@ func IndexWorkspace(workspaceRoot string, language string) error {
 			pathsToTry = append(pathsToTry, filepath.Join(binDir, "node_modules", ".bin", indexerName))
 		}
 
-		indexPath := ""
 		for _, p := range pathsToTry {
 			if _, err := os.Stat(p); err == nil {
 				indexPath = p
@@ -859,20 +855,28 @@ func IndexWorkspace(workspaceRoot string, language string) error {
 		if indexPath == "" {
 			return fmt.Errorf("indexer for %s not found. Please install it via the Context-Sherpa Dashboard", language)
 		}
-
-		absOutput := filepath.Join(workspaceRoot, ".context-sherpa", fmt.Sprintf("index-%s.scip", language))
-
-		// On Windows, if we are running a .cmd or .ps1, we might need to invoke it via cmd /c
-		if runtime.GOOS == "windows" && (strings.HasSuffix(indexPath, ".cmd") || strings.HasSuffix(indexPath, ".ps1")) {
-			verboseLog("Running indexer via cmd /c: %s index --output %s", indexPath, absOutput)
-			cmd = exec.Command("cmd", "/c", indexPath, "index", "--output", absOutput)
-		} else {
-			verboseLog("Running indexer: %s index --output %s", indexPath, absOutput)
-			cmd = exec.Command(indexPath, "index", "--output", absOutput)
-		}
-		cmd.Dir = workspaceRoot
-
+		indexerArgs = []string{"index", "--output", absOutput}
 	}
+
+	if runtime.GOOS == "windows" {
+		ext := strings.ToLower(filepath.Ext(indexPath))
+		if ext == ".ps1" {
+			verboseLog("Running indexer via powershell: %s %s", indexPath, strings.Join(indexerArgs, " "))
+			fullArgs := append([]string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", indexPath}, indexerArgs...)
+			cmd = sysutils.SilentCommand("powershell", fullArgs...)
+		} else if ext == ".cmd" || ext == ".bat" {
+			verboseLog("Running indexer via cmd /c: %s %s", indexPath, strings.Join(indexerArgs, " "))
+			fullArgs := append([]string{"/c", indexPath}, indexerArgs...)
+			cmd = sysutils.SilentCommand("cmd", fullArgs...)
+		} else {
+			verboseLog("Running indexer: %s %s", indexPath, strings.Join(indexerArgs, " "))
+			cmd = sysutils.SilentCommand(indexPath, indexerArgs...)
+		}
+	} else {
+		verboseLog("Running indexer: %s %s", indexPath, strings.Join(indexerArgs, " "))
+		cmd = sysutils.SilentCommand(indexPath, indexerArgs...)
+	}
+	cmd.Dir = workspaceRoot
 
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("indexing failed: %v\nOutput: %s", err, string(output))
@@ -995,7 +999,7 @@ func scanCodeHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 		return mcp.NewToolResultError(fmt.Sprintf("Error finding ast-grep binary: %v", err)), nil
 	}
 
-	cmd := exec.Command(sgPath, "scan", "--config", resolvedSgconfigPath, tmpfile.Name(), "--json")
+	cmd := sysutils.SilentCommand(sgPath, "scan", "--config", resolvedSgconfigPath, tmpfile.Name(), "--json")
 	cmd.Dir = workspaceRoot // Run ast-grep from the workspace root
 	output, err := cmd.Output()
 	if err != nil {
@@ -1260,7 +1264,7 @@ func scanFileBatch(files []string, sgconfigStr, workspaceRoot, sgPath string) (s
 	args = append(args, files...)
 	args = append(args, "--json")
 
-	cmd := exec.Command(sgPath, args...)
+	cmd := sysutils.SilentCommand(sgPath, args...)
 	cmd.Dir = workspaceRoot
 
 	output, err := cmd.Output()
@@ -1361,7 +1365,7 @@ func findWorkspaceRoot(startPath string) (string, error) {
 	// 2. Search for git root
 	tempDir = dir
 	// Try git rev-parse first
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd := sysutils.SilentCommand("git", "rev-parse", "--show-toplevel")
 	cmd.Dir = dir
 	if gitOutput, err := cmd.Output(); err == nil {
 		gitRoot := strings.TrimSpace(string(gitOutput))

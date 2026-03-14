@@ -17,11 +17,11 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/hackafterdark/context-sherpa/pkg/database"
 	"github.com/hackafterdark/context-sherpa/pkg/inference"
 	"github.com/hackafterdark/context-sherpa/pkg/mcp"
+	"github.com/hackafterdark/context-sherpa/pkg/sysutils"
 	scip "github.com/sourcegraph/scip/bindings/go/scip"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"google.golang.org/protobuf/proto"
@@ -110,7 +110,7 @@ func isProcessRunning(pid int) bool {
 
 	// platform specific check
 	if runtime.GOOS == "windows" {
-		cmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/NH")
+		cmd := sysutils.SilentCommand("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/NH")
 		out, err := cmd.Output()
 		if err != nil {
 			return false
@@ -484,15 +484,29 @@ func (a *App) RunIndexingTask(workspacePath string) error {
 			_ = os.MkdirAll(filepath.Join(target.Path, ".context-sherpa"), 0755)
 
 			var cmd *exec.Cmd
+			indexerArgs := []string{}
 			if target.Lang == "go" {
-				cmd = exec.Command(toolPath, "--project-root", ".", "--repository-root", ".", "--output", scipRelPath)
+				indexerArgs = []string{"--project-root", ".", "--repository-root", ".", "--output", scipRelPath}
 			} else {
-				// For scip-typescript and scip-python
-				if runtime.GOOS == "windows" && (strings.HasSuffix(toolPath, ".cmd") || strings.HasSuffix(toolPath, ".ps1") || strings.HasSuffix(toolPath, ".bat")) {
-					cmd = exec.Command("cmd", "/c", toolPath, "index", "--output", scipRelPath)
+				// For scip-typescript, scip-python, etc.
+				indexerArgs = []string{"index", "--output", scipRelPath}
+			}
+
+			if runtime.GOOS == "windows" {
+				ext := strings.ToLower(filepath.Ext(toolPath))
+				if ext == ".ps1" {
+					// Use powershell for .ps1 files
+					fullArgs := append([]string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", toolPath}, indexerArgs...)
+					cmd = sysutils.SilentCommand("powershell", fullArgs...)
+				} else if ext == ".cmd" || ext == ".bat" {
+					// Use cmd /c for .cmd and .bat files
+					fullArgs := append([]string{"/c", toolPath}, indexerArgs...)
+					cmd = sysutils.SilentCommand("cmd", fullArgs...)
 				} else {
-					cmd = exec.Command(toolPath, "index", "--output", scipRelPath)
+					cmd = sysutils.SilentCommand(toolPath, indexerArgs...)
 				}
+			} else {
+				cmd = sysutils.SilentCommand(toolPath, indexerArgs...)
 			}
 			cmd.Dir = target.Path
 
@@ -897,7 +911,7 @@ func (a *App) GetAstGrepStatus() map[string]interface{} {
 		result["installed"] = true
 		result["path"] = targetPath
 
-		cmd := exec.Command(targetPath, "--version")
+		cmd := sysutils.SilentCommand(targetPath, "--version")
 		if output, err := cmd.CombinedOutput(); err == nil {
 			// Take the first line and trim
 			v := strings.Split(strings.TrimSpace(string(output)), "\n")[0]
@@ -909,7 +923,7 @@ func (a *App) GetAstGrepStatus() map[string]interface{} {
 			result["installed"] = true
 			result["path"] = path
 
-			cmd := exec.Command(path, "--version")
+			cmd := sysutils.SilentCommand(path, "--version")
 			if output, err := cmd.CombinedOutput(); err == nil {
 				v := strings.Split(strings.TrimSpace(string(output)), "\n")[0]
 				result["version"] = v
@@ -1025,11 +1039,11 @@ func (a *App) OpenConfigDir() error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":
-		cmd = exec.Command("explorer", path)
+		cmd = sysutils.SilentCommand("explorer", path)
 	case "darwin":
-		cmd = exec.Command("open", path)
+		cmd = sysutils.SilentCommand("open", path)
 	default: // linux
-		cmd = exec.Command("xdg-open", path)
+		cmd = sysutils.SilentCommand("xdg-open", path)
 	}
 
 	return cmd.Start()
@@ -1050,11 +1064,11 @@ func (a *App) OpenBinDir() error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":
-		cmd = exec.Command("explorer", path)
+		cmd = sysutils.SilentCommand("explorer", path)
 	case "darwin":
-		cmd = exec.Command("open", path)
+		cmd = sysutils.SilentCommand("open", path)
 	default: // linux
-		cmd = exec.Command("xdg-open", path)
+		cmd = sysutils.SilentCommand("xdg-open", path)
 	}
 
 	return cmd.Start()
@@ -1119,7 +1133,7 @@ func (a *App) GetScipIndexerStatus(language string) map[string]interface{} {
 
 	if result["installed"].(bool) {
 		// Try to get version
-		cmd := exec.Command(result["path"].(string), "--version")
+		cmd := sysutils.SilentCommand(result["path"].(string), "--version")
 		if output, err := cmd.CombinedOutput(); err == nil {
 			// Use the first line and trim
 			v := strings.Split(strings.TrimSpace(string(output)), "\n")[0]
@@ -1149,7 +1163,7 @@ func (a *App) InstallScipIndexer(language string) (string, error) {
 		}
 
 		// Install locally to bin directory
-		cmd := exec.Command("npm", "install", "--prefix", binDir, npmPkg)
+		cmd := sysutils.SilentCommand("npm", "install", "--prefix", binDir, npmPkg)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			return "", fmt.Errorf("npm install failed: %v\nOutput: %s", err, string(output))
 		}
@@ -1353,7 +1367,7 @@ func (a *App) DeleteScipIndexer(language string) error {
 		npmPkg := "@sourcegraph/scip-" + language
 		if _, err := exec.LookPath("npm"); err == nil {
 			// Uninstall from our local prefix
-			cmd := exec.Command("npm", "uninstall", "--prefix", binDir, npmPkg)
+			cmd := sysutils.SilentCommand("npm", "uninstall", "--prefix", binDir, npmPkg)
 			cmd.Run()
 		}
 	}
@@ -1465,11 +1479,11 @@ func (a *App) OpenWorkspace(root string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":
-		cmd = exec.Command("explorer", root)
+		cmd = sysutils.SilentCommand("explorer", root)
 	case "darwin":
-		cmd = exec.Command("open", root)
+		cmd = sysutils.SilentCommand("open", root)
 	default: // linux and others
-		cmd = exec.Command("xdg-open", root)
+		cmd = sysutils.SilentCommand("xdg-open", root)
 	}
 	return cmd.Run()
 }
@@ -2241,10 +2255,6 @@ func (a *App) FocusWorkspaceClient(mcpPid int) error {
 	current := mcpPid
 	visited := make(map[int]bool)
 	
-	// List of recognized editor process names (substring match, case-insensitive)
-	// 'antigravity' removed to avoid stopping at windowless background processes
-	editors := []string{"code", "cursor", "vscodium", "windsurf", "zed", "sublime", "notepad"}
-
 	var bestEditorPid int
 
 	for i := 0; i < 20; i++ {
@@ -2254,65 +2264,39 @@ func (a *App) FocusWorkspaceClient(mcpPid int) error {
 		visited[current] = true
 		ancestry = append(ancestry, current)
 
-		name := strings.ToLower(a.getProcessName(current))
+		name := strings.ToLower(sysutils.GetProcessName(current))
 		fmt.Printf("Hub: Debug: Ancestry Lvl %d: PID %d (%s)\n", i, current, name)
 
-		if bestEditorPid == 0 {
-			for _, ed := range editors {
-				if strings.Contains(name, ed) {
-					bestEditorPid = current
-					fmt.Printf("Hub: Debug: Identified best editor candidate: PID %d (%s)\n", current, name)
-					break
-				}
-			}
+		if bestEditorPid == 0 && sysutils.IsEditor(name) {
+			bestEditorPid = current
+			fmt.Printf("Hub: Debug: Identified best editor candidate: PID %d (%s)\n", current, name)
 		}
 
-		next := a.getParentPid(current)
+		next := sysutils.GetParentPid(current)
 		if next == current || next <= 0 {
 			break
 		}
 		current = next
 	}
 
-	// 2. Perform platform-specific focus search
-	switch runtime.GOOS {
-	case "windows":
-		return a.focusWindowsInAncestry(ancestry, bestEditorPid)
-	case "darwin":
-		targetPid := bestEditorPid
-		if targetPid == 0 && len(ancestry) > 0 {
-			targetPid = ancestry[len(ancestry)-1]
-		}
-		if targetPid == 0 {
-			return fmt.Errorf("no target process identified for focus")
-		}
-		cmd := fmt.Sprintf("tell application \"System Events\" to set frontmost of every process whose unix id is %d to true", targetPid)
-		return exec.Command("osascript", "-e", cmd).Run()
-	case "linux":
-		targetPid := bestEditorPid
-		if targetPid == 0 && len(ancestry) > 0 {
-			targetPid = ancestry[len(ancestry)-1]
-		}
-		if targetPid == 0 {
-			return fmt.Errorf("no target process identified for focus")
-		}
-		focusCmd := fmt.Sprintf("wmctrl -ia $(wmctrl -lp | awk -v pid=%d '$3==pid {print $1}')", targetPid)
-		err := exec.Command("sh", "-c", focusCmd).Run()
-		if err != nil {
-			focusCmd = fmt.Sprintf("xdotool windowactivate $(xdotool search --pid %d | tail -1)", targetPid)
-			err = exec.Command("sh", "-c", focusCmd).Run()
-		}
-		if err != nil {
-			wailsRuntime.MessageDialog(a.ctx, wailsRuntime.MessageDialogOptions{
-				Type:    wailsRuntime.InfoDialog,
-				Title:   "Focus Client",
-				Message: "Please install 'wmctrl' or 'xdotool' to enable automatic window focusing on Linux.",
-			})
-		}
-		return err
-	default:
-		return fmt.Errorf("platform %s not supported for window focusing", runtime.GOOS)
+	// 2. Perform platform-specific focus search using sysutils
+	err := sysutils.FocusWindow(ancestry, bestEditorPid)
+	if err != nil && runtime.GOOS == "linux" {
+		wailsRuntime.MessageDialog(a.ctx, wailsRuntime.MessageDialogOptions{
+			Type:    wailsRuntime.InfoDialog,
+			Title:   "Focus Client",
+			Message: sysutils.GetWindowFocusError(),
+		})
 	}
+	return err
+}
+
+func (a *App) getProcessName(pid int) string {
+	return sysutils.GetProcessName(pid)
+}
+
+func (a *App) getParentPid(pid int) int {
+	return sysutils.GetParentPid(pid)
 }
 
 // remove unused findEditorPid
@@ -2320,107 +2304,8 @@ func (a *App) findEditorPid(startPid int) int {
 	return 0
 }
 
-func (a *App) getProcessName(pid int) string {
-	if runtime.GOOS == "windows" {
-		// Try to use tasklist with a specific filter for speed
-		cmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/NH", "/FO", "CSV")
-		out, err := cmd.Output()
-		if err == nil {
-			// Format: "Image Name","PID","Session Name","Session#","Mem Usage"
-			parts := strings.Split(string(out), ",")
-			if len(parts) > 0 {
-				return strings.Trim(parts[0], "\"")
-			}
-		}
-	} else {
-		out, err := exec.Command("ps", "-p", fmt.Sprintf("%d", pid), "-o", "comm=").Output()
-		if err == nil {
-			return strings.TrimSpace(string(out))
-		}
-	}
-	return ""
-}
-
-func (a *App) getParentPid(pid int) int {
-	if runtime.GOOS == "windows" {
-		// Using powershell for PPID is more reliable than wmic which is sometimes deprecated/missing
-		// We use a compact command to minimize shell startup time impact
-		cmd := exec.Command("powershell", "-NoProfile", "-Command", fmt.Sprintf("(Get-CimInstance Win32_Process -Filter \"ProcessId = %d\").ParentProcessId", pid))
-		out, err := cmd.Output()
-		if err == nil {
-			var ppid int
-			fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &ppid)
-			return ppid
-		}
-	} else {
-		// Unix: use ps to get PPID
-		out, err := exec.Command("ps", "-p", fmt.Sprintf("%d", pid), "-o", "ppid=").Output()
-		if err == nil {
-			var ppid int
-			fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &ppid)
-			return ppid
-		}
-	}
-	return 0
-}
-
-// focusWindowsInAncestry searches for visible windows owned by any process in the ancestry chain.
-func (a *App) focusWindowsInAncestry(ancestry []int, bestPid int) error {
-	user32 := syscall.NewLazyDLL("user32.dll")
-	setForegroundWindow := user32.NewProc("SetForegroundWindow")
-	enumWindows := user32.NewProc("EnumWindows")
-	getWindowThreadProcessId := user32.NewProc("GetWindowThreadProcessId")
-	isWindowVisible := user32.NewProc("IsWindowVisible")
-	showWindow := user32.NewProc("ShowWindow")
-
-	var bestHwnd uintptr
-	var fallbackHwnd uintptr
-	
-	ancestryMap := make(map[int]bool)
-	for _, pid := range ancestry {
-		ancestryMap[pid] = true
-	}
-
-	cb := syscall.NewCallback(func(hwnd uintptr, lparam uintptr) uintptr {
-		visible, _, _ := isWindowVisible.Call(hwnd)
-		if visible == 0 {
-			return 1
-		}
-
-		var lpdwProcessId uint32
-		getWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&lpdwProcessId)))
-		pid := int(lpdwProcessId)
-
-		if pid == bestPid {
-			bestHwnd = hwnd
-			return 0 // found the best one
-		}
-
-		if ancestryMap[pid] && fallbackHwnd == 0 {
-			fallbackHwnd = hwnd
-		}
-		
-		return 1
-	})
-
-	enumWindows.Call(cb, 0)
-
-	targetHwnd := bestHwnd
-	if targetHwnd == 0 {
-		targetHwnd = fallbackHwnd
-	}
-
-	if targetHwnd != 0 {
-		fmt.Printf("Hub: Debug: Found matching window (HWND %v). Bringing to front...\n", targetHwnd)
-		// Restore if minimized (SW_RESTORE = 9)
-		showWindow.Call(targetHwnd, 9)
-		// Set to foreground
-		setForegroundWindow.Call(targetHwnd)
-		return nil
-	}
-
-	return fmt.Errorf("could not find visible window in process ancestry (%v)", ancestry)
-}
+// Re-implement focusWindowsInAncestry as a wrapper if needed or remove it.
+// Here we remove it since it's now in sysutils.
 
 func detectLanguage(docs []*scip.Document) string {
 
