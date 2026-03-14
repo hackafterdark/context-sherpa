@@ -22,6 +22,10 @@ export function DownloadModel(arg1, arg2) {
   return window['go']['main']['App']['DownloadModel'](arg1, arg2);
 }
 
+export function FocusWorkspaceClient(arg1) {
+  return window['go']['main']['App']['FocusWorkspaceClient'](arg1);
+}
+
 export function GetAstGrepStatus() {
   return window['go']['main']['App']['GetAstGrepStatus']();
 }

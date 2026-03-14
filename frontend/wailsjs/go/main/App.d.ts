@@ -13,6 +13,8 @@ export function DiscoverMarkdownFiles(arg1:string):Promise<Array<main.MarkdownEn
 
 export function DownloadModel(arg1:string,arg2:string):Promise<void>;
 
+export function FocusWorkspaceClient(arg1:number):Promise<void>;
+
 export function GetAstGrepStatus():Promise<Record<string, any>>;
 
 export function GetDownloadProgress(arg1:string):Promise<number>;

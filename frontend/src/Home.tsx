@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { Icon } from '@iconify/react';
-import { GetWorkspaces, OpenWorkspace, PickDirectory, RegisterWorkspace, RunIndexingTask } from '../wailsjs/go/main/App';
+import { GetWorkspaces, OpenWorkspace, PickDirectory, RegisterWorkspace, RunIndexingTask, FocusWorkspaceClient } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
 type Workspace = {
@@ -19,6 +19,7 @@ type IndexingStatus = {
 export default function Home({ onVisualize }: { onVisualize: (root: string) => void }) {
     const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
     const [indexing, setIndexing] = useState<IndexingStatus | null>(null);
+    const [focusingPid, setFocusingPid] = useState<number | null>(null);
     const logEndRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -89,6 +90,18 @@ export default function Home({ onVisualize }: { onVisualize: (root: string) => v
         }
     };
 
+    const handleFocusClient = async (pid: number) => {
+        if (!pid) return;
+        setFocusingPid(pid);
+        try {
+            await FocusWorkspaceClient(pid);
+        } catch (e) {
+            console.error("Error focusing client:", e);
+        } finally {
+            setTimeout(() => setFocusingPid(null), 1000);
+        }
+    };
+
     return (
         <div className="flex flex-col gap-6 animate-in fade-in duration-300 max-w-5xl">
             <div className="flex justify-between items-center">
@@ -135,7 +148,20 @@ export default function Home({ onVisualize }: { onVisualize: (root: string) => v
                                                 <td className="font-mono text-xs max-w-xs truncate" title={ws.root}>
                                                     {ws.root}
                                                 </td>
-                                                <td><span className="badge badge-ghost badge-sm">{ws.client}</span></td>
+                                                <td>
+                                                    <button 
+                                                        onClick={() => handleFocusClient(ws.pid)}
+                                                        disabled={!ws.pid || ws.state === 'offline'}
+                                                        className={`badge badge-sm cursor-pointer transition-all duration-200 border-none hover:brightness-90 active:scale-95 ${
+                                                            focusingPid === ws.pid 
+                                                                ? 'badge-primary animate-pulse' 
+                                                                : 'badge-ghost'
+                                                        }`}
+                                                        title={ws.pid ? "Focus Editor" : "No process information"}
+                                                    >
+                                                        {focusingPid === ws.pid ? 'Focusing...' : ws.client}
+                                                    </button>
+                                                </td>
                                                 <td>
                                                     <span className={`badge badge-sm ${ws.state === 'active' ? 'badge-success' :
                                                         ws.state === 'offline' ? 'badge-ghost' :
