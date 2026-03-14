@@ -30,13 +30,13 @@ jobs:
     - name: Verify build works
       run: |
         go build ./...
-        go build -o context-sherpa ./cmd/context-sherpa
+        go build -o context-sherpa-mcp ./cmd/context-sherpa
 
     - name: Test context-sherpa with ast-grep integration
       run: |
         echo "Testing context-sherpa binary with ast-grep..."
         # Run context-sherpa with ast-grep for 5 seconds then kill it
-        timeout 5s ./context-sherpa --astGrepPath=./ast-grep > context-sherpa.log 2>&1 &
+        timeout 5s ./context-sherpa-mcp --astGrepPath=./ast-grep > context-sherpa.log 2>&1 &
         SERVER_PID=$!
         # Wait for startup messages
         sleep 2

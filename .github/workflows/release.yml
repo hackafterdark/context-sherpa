@@ -37,9 +37,9 @@ jobs:
         run: |
           echo "Testing context-sherpa binary with ast-grep..."
           # Build context-sherpa binary first
-          go build -o context-sherpa ./cmd/context-sherpa
+          go build -o context-sherpa-mcp ./cmd/context-sherpa
           # Run context-sherpa with ast-grep for 5 seconds then kill it
-          timeout 5s ./context-sherpa --astGrepPath=./ast-grep > context-sherpa.log 2>&1 &
+          timeout 5s ./context-sherpa-mcp --astGrepPath=./ast-grep > context-sherpa.log 2>&1 &
           SERVER_PID=$!
           # Wait for startup messages
           sleep 2
@@ -131,7 +131,7 @@ jobs:
           Expand-Archive -Path ast-grep.zip -DestinationPath ./temp_extract -Force
           $exeFile = Get-ChildItem -Path ./temp_extract -Recurse -Filter *.exe | Select-Object -First 1
           if ($exeFile) {
-              # Copy the .exe file to project root (alongside context-sherpa.exe binary)
+              # Copy the .exe file to project root (alongside context-sherpa-mcp.exe binary)
               Copy-Item -Path $exeFile.FullName -Destination "ast-grep.exe" -Force
               Write-Host "Copied $($exeFile.Name) to project root as ast-grep.exe"
           } else {
@@ -150,7 +150,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           echo "Building for OS: $GOOS, ARCH: $GOARCH, Version: $VERSION"
-          ${{ matrix.goos == 'windows' && 'go build -ldflags "-X main.version=$env:VERSION -s -w" -o context-sherpa-$env:GOOS-$env:GOARCH.exe ./cmd/context-sherpa' || 'go build -ldflags "-X main.version=$VERSION -s -w" -o context-sherpa-$GOOS-$GOARCH ./cmd/context-sherpa' }}
+          ${{ matrix.goos == 'windows' && 'go build -ldflags "-X main.version=$env:VERSION -s -w" -o context-sherpa-mcp-$env:GOOS-$env:GOARCH.exe ./cmd/context-sherpa' || 'go build -ldflags "-X main.version=$VERSION -s -w" -o context-sherpa-mcp-$GOOS-$GOARCH ./cmd/context-sherpa' }}
 
       # Can't test for platforms other than linux x86_64 as that's what the action is running in. Will need to think of other solutions here.
       #
@@ -158,7 +158,7 @@ jobs:
       #   if: matrix.os != 'windows-latest'
       #   run: |
       #     echo "Testing context-sherpa binary with ast-grep on ${{ matrix.os }}..."
-      #     BINARY_NAME="context-sherpa-${{ matrix.goos }}-${{ matrix.goarch }}"
+      #     BINARY_NAME="context-sherpa-mcp-${{ matrix.goos }}-${{ matrix.goarch }}"
       #     echo "Binary name: $BINARY_NAME"
       #     # Run context-sherpa with ast-grep for 5 seconds then kill it
       #     timeout 5s ./$BINARY_NAME --astGrepPath=./ast-grep > context-sherpa.log 2>&1 &
@@ -180,7 +180,7 @@ jobs:
       #   shell: powershell
       #   run: |
       #     Write-Host "Testing context-sherpa binary with ast-grep on ${{ matrix.os }}..."
-      #     $BINARY_NAME = "context-sherpa-$env:GOOS-$env:GOARCH.exe"
+      #     $BINARY_NAME = "context-sherpa-mcp-$env:GOOS-$env:GOARCH.exe"
       #     Write-Host "Binary name: $BINARY_NAME"
       #     # Run context-sherpa with ast-grep for 5 seconds then kill it
       #     $proc = Start-Process -FilePath $BINARY_NAME -ArgumentList "--astGrepPath=ast-grep.exe" -PassThru -RedirectStandardOutput context-sherpa.log -RedirectStandardError context-sherpa.log -NoNewWindow
@@ -199,7 +199,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: binaries-${{ matrix.os }}-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: ${{ matrix.goos == 'windows' && 'context-sherpa-windows-*.exe' || 'context-sherpa-*' }}
+          path: ${{ matrix.goos == 'windows' && 'context-sherpa-mcp-windows-*.exe' || 'context-sherpa-mcp-*' }}
 
   create-release:
     name: Create Release
@@ -218,17 +218,17 @@ jobs:
       - name: Generate checksums
         run: |
           cd binaries
-          sha256sum context-sherpa-* > checksums.txt
+          sha256sum context-sherpa-mcp-* > checksums.txt
 
       - name: Create release archive
         run: |
-          tar -czf context-sherpa-${{ github.ref_name }}.tar.gz binaries/
+          tar -czf context-sherpa-mcp-${{ github.ref_name }}.tar.gz binaries/
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            binaries/context-sherpa-*
+            binaries/context-sherpa-mcp-*
             binaries/checksums.txt
-            context-sherpa-${{ github.ref_name }}.tar.gz
+            context-sherpa-mcp-${{ github.ref_name }}.tar.gz
           generate_release_notes: true
