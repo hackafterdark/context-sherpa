@@ -110,6 +110,20 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class MarkdownEntry {
+	    path: string;
+	    frontMatter: Record<string, string>;
+	
+	    static createFrom(source: any = {}) {
+	        return new MarkdownEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.frontMatter = source["frontMatter"];
+	    }
+	}
 	export class UserPreferences {
 	    theme: string;
 	

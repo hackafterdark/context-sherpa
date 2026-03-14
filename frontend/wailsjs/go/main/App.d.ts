@@ -9,7 +9,7 @@ export function DeleteModel(arg1:string):Promise<void>;
 
 export function DeleteScipIndexer(arg1:string):Promise<void>;
 
-export function DiscoverMarkdownFiles(arg1:string):Promise<Array<string>>;
+export function DiscoverMarkdownFiles(arg1:string):Promise<Array<main.MarkdownEntry>>;
 
 export function DownloadModel(arg1:string,arg2:string):Promise<void>;
 

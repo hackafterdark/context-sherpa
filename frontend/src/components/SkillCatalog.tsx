@@ -5,6 +5,7 @@ import { DiscoverMarkdownFiles } from '../../wailsjs/go/main/App';
 type MarkdownFile = {
     path: string;
     name: string;
+    frontMatter?: Record<string, string>;
 };
 
 type SkillCatalogProps = {
@@ -27,22 +28,23 @@ export default function SkillCatalog({ workspaceRoot, onFileSelect, currentFileP
     const refreshCatalog = async () => {
         setLoading(true);
         try {
-            const rawFilePaths = await DiscoverMarkdownFiles(workspaceRoot);
+            const rawResults = await DiscoverMarkdownFiles(workspaceRoot);
 
             // Strictly filter for SKILL.md and AGENTS.md (recursive)
-            const filePaths = rawFilePaths.filter((p: string) => {
-                const base = p.split(/[\\/]/).pop()?.toUpperCase();
+            const filteredResults = rawResults.filter((entry: any) => {
+                const base = entry.path.split(/[\\/]/).pop()?.toUpperCase();
                 return base === 'SKILL.MD' || base === 'AGENTS.MD';
             });
 
-            const discoveredFiles: MarkdownFile[] = filePaths.map((path: string) => {
-                const relative = path.startsWith(workspaceRoot)
-                    ? path.slice(workspaceRoot.length).replace(/^[\\/]/, '')
-                    : path;
+            const discoveredFiles: MarkdownFile[] = filteredResults.map((entry: any) => {
+                const relative = entry.path.startsWith(workspaceRoot)
+                    ? entry.path.slice(workspaceRoot.length).replace(/^[\\/]/, '')
+                    : entry.path;
 
                 return {
-                    path,
-                    name: relative
+                    path: entry.path,
+                    name: relative,
+                    frontMatter: entry.frontMatter
                 };
             });
             setFiles(discoveredFiles);
@@ -53,9 +55,13 @@ export default function SkillCatalog({ workspaceRoot, onFileSelect, currentFileP
         }
     };
 
-    const filteredFiles = files.filter(file =>
-        file.name.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const filteredFiles = files.filter(file => {
+        const query = searchTerm.toLowerCase();
+        const inName = file.name.toLowerCase().includes(query);
+        const inFrontMatterName = file.frontMatter?.name?.toLowerCase().includes(query);
+        const inFrontMatterDesc = file.frontMatter?.description?.toLowerCase().includes(query);
+        return inName || inFrontMatterName || inFrontMatterDesc;
+    });
 
     return (
         <div className="w-80 bg-base-300 flex flex-col h-full border-r border-base-content/10">

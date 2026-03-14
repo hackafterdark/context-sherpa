@@ -24,6 +24,7 @@ import (
 	scip "github.com/sourcegraph/scip/bindings/go/scip"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"google.golang.org/protobuf/proto"
+	"gopkg.in/yaml.v3"
 )
 
 // Workspace represents a detected workspace from a Node
@@ -49,6 +50,12 @@ type App struct {
 	downloader *inference.Downloader
 	inference  *inference.InferenceService
 	db         *database.DB
+}
+
+// MarkdownEntry represents a markdown file with optional front-matter metadata
+type MarkdownEntry struct {
+	Path        string            `json:"path"`
+	FrontMatter map[string]string `json:"frontMatter"`
 }
 
 // NewApp creates a new App application struct
@@ -283,13 +290,13 @@ func (a *App) WriteMarkdown(path string, content string) error {
 	return nil
 }
 
-// DiscoverMarkdownFiles recursively scans a workspace for .md files.
-func (a *App) DiscoverMarkdownFiles(root string) ([]string, error) {
+// DiscoverMarkdownFiles recursively scans a workspace for .md files and extracts front-matter.
+func (a *App) DiscoverMarkdownFiles(root string) ([]MarkdownEntry, error) {
 	if !a.isPathInWorkspace(root) {
 		return nil, fmt.Errorf("access denied: path is outside of registered workspaces")
 	}
 
-	var files []string
+	var results []MarkdownEntry
 	// Robust skip list for common non-content directories
 	skipDirs := map[string]bool{
 		".git":            true,
@@ -324,7 +331,14 @@ func (a *App) DiscoverMarkdownFiles(root string) ([]string, error) {
 		}
 
 		if strings.ToLower(filepath.Ext(path)) == ".md" {
-			files = append(files, path)
+			entry := MarkdownEntry{Path: path}
+
+			// Try to extract front-matter
+			if fm, err := a.extractFrontMatter(path); err == nil {
+				entry.FrontMatter = fm
+			}
+
+			results = append(results, entry)
 		}
 		return nil
 	})
@@ -333,7 +347,49 @@ func (a *App) DiscoverMarkdownFiles(root string) ([]string, error) {
 		return nil, fmt.Errorf("failed to scan for markdown files: %w", err)
 	}
 
-	return files, nil
+	return results, nil
+}
+
+// extractFrontMatter reads the beginning of a file and attempts to parse YAML front-matter
+func (a *App) extractFrontMatter(path string) (map[string]string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	// Read first 4KB (usually enough for front-matter)
+	buf := make([]byte, 4096)
+	n, err := file.Read(buf)
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+	content := string(buf[:n])
+
+	// Check if it starts with ---
+	if !strings.HasPrefix(content, "---\n") && !strings.HasPrefix(content, "---\r\n") {
+		return nil, fmt.Errorf("no front-matter prefix")
+	}
+
+	// Find the closing ---
+	// Start searching after the first ---
+	startSearch := 4
+	if strings.HasPrefix(content, "---\r\n") {
+		startSearch = 5
+	}
+
+	endIdx := strings.Index(content[startSearch:], "---")
+	if endIdx == -1 {
+		return nil, fmt.Errorf("no front-matter closer")
+	}
+
+	yamlContent := content[startSearch : startSearch+endIdx]
+	var fm map[string]string
+	if err := yaml.Unmarshal([]byte(yamlContent), &fm); err != nil {
+		return nil, err
+	}
+
+	return fm, nil
 }
 
 // isPathInWorkspace checks if the given path is within any registered workspace.
