@@ -57,6 +57,18 @@ type SgConfig struct {
 	RuleDirs []string `yaml:"ruleDirs"`
 }
 
+// UserPreferences represents persistent user settings
+type UserPreferences struct {
+	Theme             string `json:"theme"`
+	WindowWidth       int    `json:"windowWidth"`
+	WindowHeight      int    `json:"windowHeight"`
+	WindowX           int    `json:"windowX"`
+	WindowY           int    `json:"windowY"`
+	IsMaximized       bool   `json:"isMaximized"`
+	InferenceProvider string `json:"inferenceProvider"`
+	InferenceURL      string `json:"inferenceURL"`
+}
+
 // CommunityRule represents a rule in the community repository
 type CommunityRule struct {
 	ID          string   `json:"id"`
@@ -2053,12 +2065,34 @@ func runSLM(ctx context.Context, request mcp.CallToolRequest, prompt string) (*m
 		}
 	}
 
-	modelsDir, err := getSherpaModelsDir()
+	// Read preferences directly from file to get the latest settings
+	// (MCP server runs in a separate process from the Hub)
+	prefs, err := loadPreferencesManually()
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error finding models directory: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("Error loading preferences: %v", err)), nil
 	}
 
-	svc := inference.NewInferenceService(modelsDir)
+	var provider inference.InferenceProvider
+	switch prefs.InferenceProvider {
+	case "ollama":
+		url := prefs.InferenceURL
+		if url == "" {
+			url = "http://localhost:11434"
+		}
+		provider = inference.NewOllamaProvider(url)
+	case "openai":
+		url := prefs.InferenceURL
+		if url == "" {
+			url = "http://localhost:1234/v1"
+		}
+		provider = inference.NewOpenAIProvider(url)
+	case "disabled":
+		return mcp.NewToolResultText("Semantic reasoning is currently disabled in the Hub settings. Please select an inference provider (Ollama or LM Studio) to use this tool."), nil
+	default:
+		return mcp.NewToolResultError("No inference provider configured. Please set up Ollama or LM Studio in the Hub settings."), nil
+	}
+
+	svc := inference.NewInferenceService(provider)
 	res, err := svc.Execute(ctx, inference.InferenceRequest{
 		ModelID:     modelID,
 		Prompt:      prompt,
@@ -2071,6 +2105,39 @@ func runSLM(ctx context.Context, request mcp.CallToolRequest, prompt string) (*m
 	}
 
 	return mcp.NewToolResultText(res.Text), nil
+}
+
+// loadPreferencesManually reads the preferences.json file directly.
+// This is necessary because the MCP server is a separate binary.
+func loadPreferencesManually() (UserPreferences, error) {
+	var baseDir string
+	if runtime.GOOS == "windows" {
+		baseDir = os.Getenv("LOCALAPPDATA")
+		if baseDir == "" {
+			home, _ := os.UserHomeDir()
+			baseDir = home
+		}
+	} else {
+		baseDir, _ = os.UserHomeDir()
+	}
+
+	dir := filepath.Join(baseDir, "context-sherpa")
+	if runtime.GOOS != "windows" {
+		dir = filepath.Join(baseDir, ".context-sherpa")
+	}
+
+	prefsPath := filepath.Join(dir, "preferences.json")
+	data, err := os.ReadFile(prefsPath)
+	if err != nil {
+		return UserPreferences{}, err
+	}
+
+	var prefs UserPreferences
+	if err := json.Unmarshal(data, &prefs); err != nil {
+		return UserPreferences{}, err
+	}
+
+	return prefs, nil
 }
 
 func queryLocalReasoningHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

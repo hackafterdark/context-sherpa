@@ -23,6 +23,8 @@ export function GetFileContent(arg1:string,arg2:string):Promise<string>;
 
 export function GetGraphData(arg1:string):Promise<main.GraphData>;
 
+export function GetInferenceModels():Promise<Array<string>>;
+
 export function GetPreferences():Promise<main.UserPreferences>;
 
 export function GetScipIndexerStatus(arg1:string):Promise<Record<string, any>>;
@@ -56,5 +58,7 @@ export function RunInference(arg1:string,arg2:string):Promise<string>;
 export function SavePreferences(arg1:main.UserPreferences):Promise<void>;
 
 export function SearchForIndexes(arg1:string):Promise<Array<string>>;
+
+export function TestInferenceConnection(arg1:string,arg2:string):Promise<string>;
 
 export function WriteMarkdown(arg1:string,arg2:string):Promise<void>;

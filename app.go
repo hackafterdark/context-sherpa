@@ -40,12 +40,14 @@ type Workspace struct {
 
 // UserPreferences represents persistent user settings
 type UserPreferences struct {
-	Theme        string `json:"theme"`
-	WindowWidth  int    `json:"windowWidth"`
-	WindowHeight int    `json:"windowHeight"`
-	WindowX      int    `json:"windowX"`
-	WindowY      int    `json:"windowY"`
-	IsMaximized  bool   `json:"isMaximized"`
+	Theme             string `json:"theme"`
+	WindowWidth       int    `json:"windowWidth"`
+	WindowHeight      int    `json:"windowHeight"`
+	WindowX           int    `json:"windowX"`
+	WindowY           int    `json:"windowY"`
+	IsMaximized       bool   `json:"isMaximized"`
+	InferenceProvider string `json:"inferenceProvider"` // "ollama" or "openai"
+	InferenceURL      string `json:"inferenceURL"`
 }
 
 // App struct
@@ -89,7 +91,22 @@ func (a *App) startup(ctx context.Context) {
 		configDir, _ := getSherpaConfigDir()
 		modelsDir := filepath.Join(configDir, "models")
 		a.downloader = inference.NewDownloader(modelsDir)
-		a.inference = inference.NewInferenceService(modelsDir)
+
+		// Set up provider based on preferences
+		var provider inference.InferenceProvider
+		switch prefs.InferenceProvider {
+		case "ollama":
+			provider = inference.NewOllamaProvider(prefs.InferenceURL)
+		case "openai":
+			provider = inference.NewOpenAIProvider(prefs.InferenceURL)
+		case "disabled":
+			// Explicitly disabled
+			provider = nil
+		default:
+			// No provider configured yet or invalid
+			provider = nil
+		}
+		a.inference = inference.NewInferenceService(provider)
 
 		// Initialize Hub Database
 		a.initDatabase()
@@ -1024,7 +1041,49 @@ func (a *App) SavePreferences(prefs UserPreferences) error {
 	return os.WriteFile(prefsPath, data, 0644)
 }
 
-// OpenConfigDir opens the Context-Sherpa root config directory in the OS file explorer
+// TestInferenceConnection verifies that an inference provider is reachable
+func (a *App) TestInferenceConnection(providerType string, url string) (string, error) {
+	var provider inference.InferenceProvider
+	switch providerType {
+	case "ollama":
+		provider = inference.NewOllamaProvider(url)
+	case "openai":
+		provider = inference.NewOpenAIProvider(url)
+	case "disabled":
+		return "Disabled", nil
+	default:
+		return "", fmt.Errorf("invalid provider type: %s", providerType)
+	}
+
+	return provider.TestConnection(a.ctx)
+}
+
+// GetInferenceModels returns a list of available models from the configured provider
+func (a *App) GetInferenceModels() ([]string, error) {
+	prefs := a.GetPreferences()
+	if prefs.InferenceProvider == "" {
+		return nil, fmt.Errorf("no inference provider configured")
+	}
+
+	var provider inference.InferenceProvider
+	switch prefs.InferenceProvider {
+	case "ollama":
+		provider = inference.NewOllamaProvider(prefs.InferenceURL)
+	case "openai":
+		provider = inference.NewOpenAIProvider(prefs.InferenceURL)
+	default:
+		return nil, fmt.Errorf("invalid provider type")
+	}
+
+	// We'll reuse TestConnection for now as it returns a sample model name,
+	// but in a real scenario we'd have a GetAvailableModels method.
+	// For simplicity in this PR, we'll just return a success message or a single model name.
+	resp, err := provider.TestConnection(a.ctx)
+	if err != nil {
+		return nil, err
+	}
+	return []string{resp}, nil
+}
 func (a *App) OpenConfigDir() error {
 	path, err := getSherpaConfigDir()
 	if err != nil {

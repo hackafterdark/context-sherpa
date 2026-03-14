@@ -3,7 +3,6 @@ module github.com/hackafterdark/context-sherpa
 go 1.25.0
 
 require (
-	github.com/computerex/dlgo v0.0.0-20260307104002-f4ceb55e9093
 	github.com/sourcegraph/scip/bindings/go/scip v0.0.0-20260226120010-b469379fcb42
 	github.com/stretchr/testify v1.11.1
 	github.com/wailsapp/wails/v2 v2.11.0
@@ -62,5 +61,3 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
-
-replace github.com/computerex/dlgo => ./third_party/dlgo

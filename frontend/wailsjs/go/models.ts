@@ -112,6 +112,8 @@ export namespace main {
 	    windowX: number;
 	    windowY: number;
 	    isMaximized: boolean;
+	    inferenceProvider: string;
+	    inferenceURL: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new UserPreferences(source);
@@ -125,6 +127,8 @@ export namespace main {
 	        this.windowX = source["windowX"];
 	        this.windowY = source["windowY"];
 	        this.isMaximized = source["isMaximized"];
+	        this.inferenceProvider = source["inferenceProvider"];
+	        this.inferenceURL = source["inferenceURL"];
 	    }
 	}
 	export class Workspace {

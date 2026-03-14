@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { InstallAstGrep, GetAstGrepStatus, InstallScipIndexer, GetScipIndexerStatus, OpenConfigDir, ListLocalModels, DownloadModel, GetDownloadProgress, DeleteModel, DeleteAstGrep, DeleteScipIndexer } from '../wailsjs/go/main/App';
+import { InstallAstGrep, GetAstGrepStatus, InstallScipIndexer, GetScipIndexerStatus, OpenConfigDir, DeleteAstGrep, DeleteScipIndexer, GetPreferences, SavePreferences, TestInferenceConnection } from '../wailsjs/go/main/App';
 import { Icon } from '@iconify/react';
 
 type SettingsProps = {
@@ -61,12 +61,9 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
     const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
     const [isScipPyInstalling, setIsScipPyInstalling] = useState(false);
 
-    const [localModels, setLocalModels] = useState<any[]>([]);
-    const [downloadingModels, setDownloadingModels] = useState<Record<string, number>>({});
-    const [curatedModels] = useState([
-        { id: 'smollm2-135m', name: 'SmolLM2-135M (GGUF)', type: 'Tiny', size: '145MB', url: 'https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q8_0.gguf' },
-        { id: 'qwen2.5-coder-0.5b', name: 'Qwen2.5-Coder-0.5B (GGUF)', type: 'Standard', size: '380MB', url: 'https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf' },
-    ]);
+    const [prefs, setPrefs] = useState<any>(null);
+    const [isTesting, setIsTesting] = useState(false);
+    const [testStatus, setTestStatus] = useState<{ success: boolean; message: string } | null>(null);
 
     const loadStatus = async () => {
         try {
@@ -82,10 +79,8 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
             const pyStatus = await GetScipIndexerStatus('python');
             setScipPyInfo(pyStatus as any);
 
-            const models = await ListLocalModels();
-            setLocalModels(models || []);
-
-
+            const p = await GetPreferences();
+            setPrefs(p);
         } catch (e) {
             console.error("Error fetching tool status:", e);
         }
@@ -138,16 +133,53 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
         }
     };
 
+    const handlePreferenceChange = async (key: string, value: any) => {
+        const newPrefs = { ...prefs, [key]: value };
+        setPrefs(newPrefs);
+        setTestStatus(null);
 
-
-    const handleModelDownload = async (model: any) => {
-        try {
-            await DownloadModel(model.id, model.url);
-            setDownloadingModels(prev => ({ ...prev, [model.id]: 0.1 })); // Start tracking
-        } catch (e) {
-            console.error("Failed to start download:", e);
+        // Auto-save if disabling inference or if value is 'disabled'
+        if (value === 'disabled' || (key === 'inferenceProvider' && value === 'disabled')) {
+            try {
+                await SavePreferences(newPrefs);
+            } catch (e) {
+                console.error("Failed to auto-save disabled state:", e);
+            }
         }
     };
+
+    const handleTestConnection = async () => {
+        if (!prefs) return;
+        setIsTesting(true);
+        setTestStatus(null);
+
+        try {
+            const provider = prefs.inferenceProvider || 'ollama';
+            const url = prefs.inferenceURL || (provider === 'ollama' ? 'http://localhost:11434' : 'http://localhost:1234/v1');
+
+            const modelName = await TestInferenceConnection(provider, url);
+            setTestStatus({
+                success: true,
+                message: `Connected: Found ${modelName}`
+            });
+
+            // Auto-save on successful test
+            await SavePreferences({
+                ...prefs,
+                inferenceProvider: provider,
+                inferenceURL: url
+            });
+        } catch (e: any) {
+            setTestStatus({
+                success: false,
+                message: (e as string).toString()
+            });
+        } finally {
+            setIsTesting(false);
+        }
+    };
+
+
 
     const handleToolDelete = async (type: 'ast-grep' | 'scip-go' | 'scip-typescript' | 'scip-python' | string) => {
         if (confirmDelete !== type) {
@@ -162,8 +194,6 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
                 await DeleteAstGrep();
             } else if (type.startsWith('scip-')) {
                 await DeleteScipIndexer(type.replace('scip-', ''));
-            } else {
-                await DeleteModel(type);
             }
             await loadStatus();
         } catch (e) {
@@ -172,66 +202,6 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
         }
     };
 
-    useEffect(() => {
-        // Listen for completion events from backend
-        // Use window.runtime or window.Wails if available
-        const runtime = (window as any).runtime;
-        if (!runtime) return;
-
-        const unlistenComplete = runtime.EventsOn("model-download-complete", (id: string) => {
-            setDownloadingModels(prev => {
-                const next = { ...prev };
-                delete next[id];
-                return next;
-            });
-            loadStatus();
-        });
-
-        const unlistenFailed = runtime.EventsOn("model-download-failed", (data: { modelId: string, error: string }) => {
-            setDownloadingModels(prev => {
-                const next = { ...prev };
-                delete next[data.modelId];
-                return next;
-            });
-            alert(`Download failed for ${data.modelId}: ${data.error}`);
-        });
-
-        return () => {
-            unlistenComplete();
-            unlistenFailed();
-        };
-    }, []);
-
-    useEffect(() => {
-        const activeDownloads = Object.keys(downloadingModels);
-        if (activeDownloads.length === 0) return;
-
-        const interval = setInterval(async () => {
-            const newProgress: Record<string, number> = { ...downloadingModels };
-            let changed = false;
-
-            for (const id of activeDownloads) {
-                try {
-                    const p = await GetDownloadProgress(id);
-                    if (p > 0 && p < 1 && p !== downloadingModels[id]) {
-                        newProgress[id] = p;
-                        changed = true;
-                    }
-                    if (p >= 1) {
-                        delete newProgress[id];
-                        changed = true;
-                        loadStatus();
-                    }
-                } catch (e) {
-                    console.error("Failed to fetch progress", e);
-                }
-            }
-
-            if (changed) setDownloadingModels(newProgress);
-        }, 1000);
-
-        return () => clearInterval(interval);
-    }, [downloadingModels]);
 
     return (
         <div className="flex flex-col gap-6 animate-in fade-in duration-300 max-w-5xl">
@@ -420,81 +390,110 @@ export default function Settings({ theme, setTheme }: SettingsProps) {
 
 
 
-                    {/* Semantic Reasoning (Local SLM) */}
+                    {/* External Inference Provider (Ollama & LM Studio) */}
                     <div className="flex flex-col gap-3">
                         <div className="flex items-center gap-2">
                             <Icon icon="lucide:brain" className="text-accent w-5 h-5" />
-                            <h3 className="font-bold text-lg">Semantic Reasoning (Local SLM)</h3>
+                            <h3 className="font-bold text-lg">External Inference Provider</h3>
                         </div>
                         <p className="text-base-content/60 text-sm">
-                            Sandboxed local small language models for semantic tasks like summarization and intent routing.
+                            Configure an external LLM provider like Ollama or LM Studio to enable semantic reasoning.
                         </p>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
-                            {curatedModels.map((model) => {
-                                const localInfo = localModels.find(m => m.id === model.id);
-                                const isDownloaded = !!localInfo;
-                                const progress = downloadingModels[model.id];
-
-                                return (
-                                    <div key={model.id} className="border border-base-200 rounded-lg p-4 bg-base-200/30 flex flex-col gap-3">
-                                        <div className="flex items-center justify-between">
-                                            <div className="flex flex-col gap-0.5 min-w-0">
-                                                <span className="font-semibold text-sm truncate">{model.name}</span>
-                                                <span className="text-[10px] opacity-60">{model.type} • {model.size}</span>
-                                                {localInfo?.path && (
-                                                    <span className="text-[10px] font-mono truncate opacity-60 cursor-help mt-1" title={localInfo.path}>
-                                                        {localInfo.path}
-                                                    </span>
-                                                )}
-                                            </div>
-                                            {isDownloaded ? (
-                                                <div className="badge badge-success badge-sm gap-1 py-2 flex-shrink-0">
-                                                    <Icon icon="lucide:check" className="w-3 h-3" />
-                                                    Downloaded
-                                                </div>
-                                            ) : progress !== undefined ? (
-                                                <div className="badge badge-ghost badge-sm py-2 animate-pulse flex-shrink-0">Downloading...</div>
-                                            ) : (
-                                                <div className="badge badge-ghost badge-sm py-2 opacity-50 flex-shrink-0">Not Present</div>
-                                            )}
-                                        </div>
-
-                                        {progress !== undefined && (
-                                            <progress className="progress progress-accent w-full" value={progress * 100} max="100"></progress>
-                                        )}
-
-                                        <div className="mt-auto pt-2 border-t border-base-200/50">
-                                            {isDownloaded ? (
-                                                <DeleteAction
-                                                    id={model.id}
-                                                    confirmDelete={confirmDelete}
-                                                    onDelete={handleToolDelete}
-                                                    label="Delete"
-                                                    className="w-full"
+                        <div className="grid grid-cols-1 gap-4 mt-2">
+                            <div className="border border-base-200 rounded-lg p-6 bg-base-200/30 flex flex-col gap-6">
+                                <div className="flex flex-col gap-4">
+                                    <div className="form-control">
+                                        <label className="label">
+                                            <span className="label-text font-semibold">Inference Engine</span>
+                                        </label>
+                                        <div className="flex gap-4">
+                                            <label className="label cursor-pointer gap-2">
+                                                <input
+                                                    type="radio"
+                                                    name="provider"
+                                                    className="radio radio-primary radio-sm"
+                                                    checked={prefs?.inferenceProvider === 'ollama'}
+                                                    onChange={() => handlePreferenceChange('inferenceProvider', 'ollama')}
                                                 />
-                                            ) : (
-                                                <button
-                                                    className={`btn btn-sm w-full ${progress !== undefined ? 'btn-disabled' : 'btn-outline btn-accent'}`}
-                                                    onClick={() => handleModelDownload(model)}
-                                                >
-                                                    {progress !== undefined ? (
-                                                        <>
-                                                            <span className="loading loading-spinner loading-xs"></span>
-                                                            Downloading...
-                                                        </>
-                                                    ) : (
-                                                        <>
-                                                            <Icon icon="lucide:download" className="w-4 h-4" />
-                                                            Download Model
-                                                        </>
-                                                    )}
-                                                </button>
-                                            )}
+                                                <span className="label-text">Ollama</span>
+                                            </label>
+                                            <label className="label cursor-pointer gap-2">
+                                                <input
+                                                    type="radio"
+                                                    name="provider"
+                                                    className="radio radio-primary radio-sm"
+                                                    checked={prefs?.inferenceProvider === 'openai'}
+                                                    onChange={() => handlePreferenceChange('inferenceProvider', 'openai')}
+                                                />
+                                                <span className="label-text">LM Studio (OpenAI Compatible)</span>
+                                            </label>
+                                            <label className="label cursor-pointer gap-2">
+                                                <input
+                                                    type="radio"
+                                                    name="provider"
+                                                    className="radio radio-primary radio-sm"
+                                                    checked={prefs?.inferenceProvider === 'disabled' || !prefs?.inferenceProvider}
+                                                    onChange={() => handlePreferenceChange('inferenceProvider', 'disabled')}
+                                                />
+                                                <span className="label-text">Disabled</span>
+                                            </label>
                                         </div>
                                     </div>
-                                );
-                            })}
+
+                                    {prefs?.inferenceProvider !== 'disabled' && prefs?.inferenceProvider && (
+                                        <div className="form-control w-full animate-in slide-in-from-top-2 duration-200">
+                                            <label className="label">
+                                                <span className="label-text font-semibold">Endpoint Base URL</span>
+                                            </label>
+                                            <div className="flex gap-2">
+                                                <input
+                                                    type="text"
+                                                    className="input input-bordered input-sm flex-1 font-mono"
+                                                    placeholder={prefs?.inferenceProvider === 'ollama' ? "http://localhost:11434" : "http://localhost:1234/v1"}
+                                                    value={prefs?.inferenceURL || ''}
+                                                    onChange={(e) => handlePreferenceChange('inferenceURL', e.target.value)}
+                                                />
+                                                <button
+                                                    className={`btn btn-sm ${testStatus?.success === true ? 'btn-success' : testStatus?.success === false ? 'btn-error' : 'btn-primary'} ${isTesting ? 'btn-disabled' : ''}`}
+                                                    onClick={handleTestConnection}
+                                                >
+                                                    {isTesting ? (
+                                                        <span className="loading loading-spinner loading-xs"></span>
+                                                    ) : (
+                                                        <Icon icon="lucide:zap" />
+                                                    )}
+                                                    {testStatus?.success ? 'Connected' : 'Test & Save'}
+                                                </button>
+                                            </div>
+                                            {testStatus?.message && (
+                                                <label className="label">
+                                                    <span className={`label-text-alt ${testStatus.success ? 'text-success' : 'text-error'} font-medium`}>
+                                                        {testStatus.message}
+                                                    </span>
+                                                </label>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {prefs?.inferenceProvider === 'disabled' && (
+                                        <div className="p-4 bg-base-200/50 rounded-lg flex items-center justify-center border border-dashed border-base-300">
+                                            <p className="text-sm opacity-50 italic">Semantic reasoning tools (query_local_reasoning, etc.) will be disabled.</p>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="p-4 bg-base-300/50 rounded-lg flex items-start gap-3 border border-base-200">
+                                    <Icon icon="lucide:info" className="text-info w-5 h-5 mt-0.5 flex-shrink-0" />
+                                    <div className="text-sm">
+                                        <p className="font-semibold mb-1">How to connect:</p>
+                                        <ul className="list-disc list-inside space-y-1 opacity-70">
+                                            <li><strong>Ollama</strong>: Ensure Ollama is running. Default is <code className="text-xs">http://localhost:11434</code>.</li>
+                                            <li><strong>LM Studio</strong>: Load a model and enable "Local Server". Default is <code className="text-xs">http://localhost:1234/v1</code>.</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>

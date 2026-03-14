@@ -42,6 +42,10 @@ export function GetGraphData(arg1) {
   return window['go']['main']['App']['GetGraphData'](arg1);
 }
 
+export function GetInferenceModels() {
+  return window['go']['main']['App']['GetInferenceModels']();
+}
+
 export function GetPreferences() {
   return window['go']['main']['App']['GetPreferences']();
 }
@@ -108,6 +112,10 @@ export function SavePreferences(arg1) {
 
 export function SearchForIndexes(arg1) {
   return window['go']['main']['App']['SearchForIndexes'](arg1);
+}
+
+export function TestInferenceConnection(arg1, arg2) {
+  return window['go']['main']['App']['TestInferenceConnection'](arg1, arg2);
 }
 
 export function WriteMarkdown(arg1, arg2) {
