@@ -52,6 +52,9 @@ jobs:
           npm run build
 
       - name: Build Wails App
+        env:
+          APP_BUILD_MODE: "true"
+          CGO_ENABLED: 1
         run: |
           wails build -platform ${{ matrix.platform }}
 

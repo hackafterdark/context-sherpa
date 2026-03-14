@@ -9,13 +9,14 @@ import (
 	"os"
 	"path/filepath"
 
+	"runtime/debug"
+
 	"github.com/hackafterdark/context-sherpa/pkg/inference"
 	"github.com/hackafterdark/context-sherpa/pkg/mcp"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
-	"runtime/debug"
 )
 
 //go:embed all:frontend/dist
@@ -34,6 +35,10 @@ func initDebugLog(path string) *os.File {
 }
 
 func main() {
+	if os.Getenv("APP_BUILD_MODE") == "true" {
+		// Just initialize what's needed for bindings and exit
+		return
+	}
 	// 1. Setup panic recovery first
 	defer func() {
 		if r := recover(); r != nil {
