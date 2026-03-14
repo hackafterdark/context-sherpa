@@ -117,10 +117,10 @@ export default function SkillCatalog({ workspaceRoot, onFileSelect, currentFileP
                                         />
                                     </div>
                                     <div className="min-w-0 flex-1">
-                                        <div className="truncate text-xs font-bold">{fileName}</div>
-                                        {dirName && (
-                                            <div className="text-[10px] opacity-40 truncate font-normal leading-tight mt-0.5">
-                                                {dirName}
+                                        <div className="truncate text-[13px] font-bold">{fileName}</div>
+                                        {(file.frontMatter?.name || dirName) && (
+                                            <div className="text-xs opacity-50 truncate font-normal leading-tight mt-0.5">
+                                                {file.frontMatter?.name || dirName}
                                             </div>
                                         )}
                                     </div>
