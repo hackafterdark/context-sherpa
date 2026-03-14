@@ -41,7 +41,10 @@ function App() {
         document.documentElement.setAttribute('data-theme', theme);
         // Only persist if we've successfully loaded initial state
         if (loaded) {
-            SavePreferences({ theme });
+            GetPreferences().then((prefs) => {
+                prefs.theme = theme;
+                SavePreferences(prefs);
+            });
         }
     }, [theme, loaded]);
 

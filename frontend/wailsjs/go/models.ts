@@ -126,6 +126,11 @@ export namespace main {
 	}
 	export class UserPreferences {
 	    theme: string;
+	    windowWidth: number;
+	    windowHeight: number;
+	    windowX: number;
+	    windowY: number;
+	    isMaximized: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new UserPreferences(source);
@@ -134,6 +139,11 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.theme = source["theme"];
+	        this.windowWidth = source["windowWidth"];
+	        this.windowHeight = source["windowHeight"];
+	        this.windowX = source["windowX"];
+	        this.windowY = source["windowY"];
+	        this.isMaximized = source["isMaximized"];
 	    }
 	}
 	export class Workspace {

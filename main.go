@@ -105,16 +105,32 @@ func main() {
 	// Create an instance of the app structure
 	app := NewApp()
 
+	// Load preferences for window state
+	prefs := app.GetPreferences()
+	if prefs.WindowWidth == 0 {
+		prefs.WindowWidth = 1024
+	}
+	if prefs.WindowHeight == 0 {
+		prefs.WindowHeight = 768
+	}
+
+	windowStartState := options.Normal
+	if prefs.IsMaximized {
+		windowStartState = options.Maximised
+	}
+
 	// Create application with options
 	err := wails.Run(&options.App{
-		Title:  "Context Sherpa Hub",
-		Width:  1024,
-		Height: 768,
+		Title:            "Context Sherpa Hub",
+		Width:            prefs.WindowWidth,
+		Height:           prefs.WindowHeight,
+		WindowStartState: windowStartState,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
 		OnStartup:        app.startup,
+		OnBeforeClose:    app.BeforeClose,
 		OnShutdown:       app.Shutdown,
 		Bind: []interface{}{
 			app,

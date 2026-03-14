@@ -39,7 +39,12 @@ type Workspace struct {
 
 // UserPreferences represents persistent user settings
 type UserPreferences struct {
-	Theme string `json:"theme"`
+	Theme        string `json:"theme"`
+	WindowWidth  int    `json:"windowWidth"`
+	WindowHeight int    `json:"windowHeight"`
+	WindowX      int    `json:"windowX"`
+	WindowY      int    `json:"windowY"`
+	IsMaximized  bool   `json:"isMaximized"`
 }
 
 // App struct
@@ -67,6 +72,12 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.workspaces = make([]Workspace, 0)
+
+	// Restore window position if not maximized
+	prefs := a.GetPreferences()
+	if !prefs.IsMaximized && (prefs.WindowX != 0 || prefs.WindowY != 0) {
+		wailsRuntime.WindowSetPosition(a.ctx, prefs.WindowX, prefs.WindowY)
+	}
 
 	// Ensure we have a clean start by checking lock liveness
 	if a.tryAcquireHubLock() {
@@ -685,6 +696,31 @@ func (a *App) PickDirectory() (string, error) {
 	return wailsRuntime.OpenDirectoryDialog(a.ctx, wailsRuntime.OpenDialogOptions{
 		Title: "Select Workspace Directory",
 	})
+}
+
+// BeforeClose is called when the application is about to close.
+// It returns true to prevent closing, or false to allow it.
+func (a *App) BeforeClose(ctx context.Context) bool {
+	// Save window state before shutdown
+	width, height := wailsRuntime.WindowGetSize(ctx)
+	x, y := wailsRuntime.WindowGetPosition(ctx)
+	isMaximized := wailsRuntime.WindowIsMaximised(ctx)
+
+	// Avoid saving zero sizes
+	if width > 0 && height > 0 {
+		prefs := a.GetPreferences()
+		prefs.WindowWidth = width
+		prefs.WindowHeight = height
+		prefs.WindowX = x
+		prefs.WindowY = y
+		prefs.IsMaximized = isMaximized
+
+		if err := a.SavePreferences(prefs); err != nil {
+			fmt.Printf("Hub: Failed to save window preferences: %v\n", err)
+		}
+	}
+
+	return false // allow close
 }
 
 func (a *App) Shutdown(ctx context.Context) {
