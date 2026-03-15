@@ -111,7 +111,7 @@ Add Context Sherpa to your AI agent's `mcp_settings.json`:
 Context Sherpa is built on a three-layer "Tiered Inference" strategy that balances speed, cost, and intelligence:
 
 - **Tier 1: Deterministic Logic (SCIP / ast-grep)**: Instant, 0-token cost structural mapping. Precise symbolic analysis that provides the ground truth for your codebase.
-- **Tier 2: Local Semantic Reasoning (Ollama / LM Studio)**: Low-latency code distillation, intent classification, and privacy-safe logic checks. Powered by Integrated Local Reasoning on your own hardware.
+- **Tier 2: Integrated Local Reasoning (Ollama / LM Studio)**: local distillation and semantic triage on your own hardware. This layer offsets costs and drastically reduces the token burden on Tier 3 frontier models.
 - **Tier 3: Strategic Frontier Intelligence (Claude / Gemini)**: High-level architectural planning and complex refactoring directed by the "Big Brain" (your primary agent).
 
 By offloading Tier 1 and Tier 2 tasks to Context Sherpa, you save up to 90% in token costs while significantly increasing the accuracy of Tier 3 strategic work.

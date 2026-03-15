@@ -2,8 +2,9 @@ import { Icon } from '@iconify/react';
 
 const Help = () => {
     const mcpTools = [
-        { name: 'list_local_models', desc: 'List available local SLMs and their status.' },
-        { name: 'switch_local_model', desc: 'Changes the active model in the Hub.' },
+        { name: 'list_local_models', desc: 'List available models from the configured local inference engine (Ollama/LM Studio).' },
+        { name: 'switch_local_model', desc: 'Changes the preferred model in the Hub settings.' },
+        { name: 'pull_inference_model', desc: 'Requests the local inference engine to download a new model.' },
         { name: 'query_local_reasoning', desc: '(The Fallback) Open-ended semantic question tool.' },
         { name: 'classify_repo_intent', desc: '(The Router) Decides which Sherpa tool fits a query best (Symbolic, Structural, or Semantic).' },
         { name: 'summarize_code_intent', desc: '3-sentence functional summary of code (Inputs, Outputs, Side-effects).' },
@@ -108,7 +109,7 @@ const Help = () => {
                             </p>
                             <ul className="text-sm text-base-content/70 list-disc pl-5 mt-1 space-y-1">
                                 <li><strong>SCIP Tools:</strong> Download 3rd party indexers for Go, TypeScript, Python, and more.</li>
-                                <li><strong>Local SLMs:</strong> Manage and download small local models for semantic code reasoning.</li>
+                                <li><strong>Integrated Local Reasoning:</strong> Connect to <a href="https://ollama.com/" target="_blank" rel="noopener noreferrer" className="link link-primary">Ollama</a> or <a href="https://lmstudio.ai/" target="_blank" rel="noopener noreferrer" className="link link-primary">LM Studio</a> to enable <strong>Tiered Inference</strong>.</li>
                                 <li><strong>ast-grep:</strong> Install or update the core pattern-matching engine used for code scanning.</li>
                             </ul>
                         </div>
@@ -149,9 +150,9 @@ const Help = () => {
             <footer className="mt-4 pt-8 border-t border-base-content/10 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-base-content/50">
                 <div className="flex items-center gap-2">
                     <Icon icon="lucide:github" />
-                    <a 
-                        href="https://github.com/hackafterdark/context-sherpa" 
-                        target="_blank" 
+                    <a
+                        href="https://github.com/hackafterdark/context-sherpa"
+                        target="_blank"
                         rel="noopener noreferrer"
                         className="hover:text-primary transition-colors underline decoration-primary/30 underline-offset-4"
                     >
@@ -159,9 +160,9 @@ const Help = () => {
                     </a>
                 </div>
                 <div>
-                    Built by <a 
-                        href="https://www.hackafterdark.com/" 
-                        target="_blank" 
+                    Built by <a
+                        href="https://www.hackafterdark.com/"
+                        target="_blank"
                         rel="noopener noreferrer"
                         className="font-semibold hover:text-primary transition-colors"
                     >
