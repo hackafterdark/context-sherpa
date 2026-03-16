@@ -140,6 +140,9 @@ func normalizeDriveLetter(path string) string {
 // toScipPath transforms an input path into a SCIP-compatible relative path.
 // It ensures that relative input paths are resolved against the workspaceRoot.
 func toScipPath(workspaceRoot, inputPath string) string {
+	// Normalize inputPath to use forward slashes for consistency across platforms
+	inputPath = filepath.ToSlash(inputPath)
+
 	// 1. Force Root to Absolute, Cleaned, and Normalized
 	absRoot, err := filepath.Abs(workspaceRoot)
 	if err == nil {
