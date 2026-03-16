@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,9 +10,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/hackafterdark/context-sherpa/pkg/inference"
@@ -107,6 +111,9 @@ var communityRulesRepo = "https://raw.githubusercontent.com/hackafterdark/contex
 // workspaceRootOverride stores the custom workspace root directory when specified via command-line argument
 var workspaceRootOverride string
 
+// sessionWorkspaceRoot stores the auto-discovered workspace root for the current session
+var sessionWorkspaceRoot string
+
 // astGrepPathOverride stores the custom ast-grep binary path when specified via command-line argument
 var astGrepPathOverride string
 
@@ -122,17 +129,64 @@ func getCommunityRulesRepoURL() string {
 	return communityRulesRepo
 }
 
+// normalizeDriveLetter ensures that Windows drive letters are consistently uppercase.
+func normalizeDriveLetter(path string) string {
+	if runtime.GOOS == "windows" && len(path) > 1 && path[1] == ':' {
+		return strings.ToUpper(string(path[0])) + path[1:]
+	}
+	return path
+}
+
+// toScipPath transforms an input path into a SCIP-compatible relative path.
+// It ensures that relative input paths are resolved against the workspaceRoot.
+func toScipPath(workspaceRoot, inputPath string) string {
+	// 1. Force Root to Absolute, Cleaned, and Normalized
+	absRoot, err := filepath.Abs(workspaceRoot)
+	if err == nil {
+		absRoot = normalizeDriveLetter(filepath.Clean(absRoot))
+	} else {
+		absRoot = normalizeDriveLetter(filepath.Clean(workspaceRoot))
+	}
+
+	// 2. Resolve inputPath relative to workspaceRoot if it's not absolute
+	fullPath := inputPath
+	if !filepath.IsAbs(inputPath) {
+		fullPath = filepath.Join(absRoot, inputPath)
+	}
+	fullPath = normalizeDriveLetter(filepath.Clean(fullPath))
+
+	// 3. Force to Absolute and Normalize for comparison
+	absPath, err := filepath.Abs(fullPath)
+	if err != nil {
+		return filepath.ToSlash(inputPath)
+	}
+	absPath = normalizeDriveLetter(absPath)
+
+	// 4. Relativize
+	rel, err := filepath.Rel(absRoot, absPath)
+	res := ""
+	if err != nil {
+		res = filepath.ToSlash(inputPath)
+	} else {
+		res = filepath.ToSlash(rel)
+	}
+
+	return res
+}
+
+
 // Start initializes and starts the MCP server.
 func Start(workspaceRoot string, verbose bool, logFilePath string, astGrepPath string, clientName string) {
 	if workspaceRoot == "" {
 		// Attempt to auto-discover workspace root starting from current working directory
-		if root, err := findWorkspaceRoot(""); err == nil {
+		if root, err := findWorkspaceRoot("", ""); err == nil {
 			workspaceRoot = root
-			verboseLog("Auto-discovered workspace root: %s", workspaceRoot)
+			if customLogger != nil {
+				customLogger.Printf("Auto-discovered workspace root: %s", workspaceRoot)
+			}
 		}
-	}
-
-	if workspaceRoot != "" {
+	} else {
+		// Only override if explicitly passed via argument
 		workspaceRootOverride = workspaceRoot
 	}
 	if astGrepPath != "" {
@@ -205,15 +259,21 @@ func Start(workspaceRoot string, verbose bool, logFilePath string, astGrepPath s
 
 	// --- Workspace Initialization ---
 	// Attempt to resolve workspace root early for local state and registration
-	resolvedRoot, err := findWorkspaceRoot("")
+	resolvedRoot, err := findWorkspaceRoot("", "")
 	if err == nil {
-		// 1. Initialize local state (.context-sherpa/ folder)
-		if err := initLocalState(resolvedRoot); err != nil {
-			customLogger.Printf("Warning: Failed to initialize local state: %v\n", err)
-		}
+		// SAFETY: NEVER register a workspace if it's a marker-less system folder.
+		// findWorkspaceRoot already checks this, but we reinforce it here.
+		if !isSystemDir(resolvedRoot) {
+			// 1. Initialize local state (.context-sherpa/ folder)
+			if err := initLocalState(resolvedRoot); err != nil {
+				customLogger.Printf("Warning: Failed to initialize local state: %v\n", err)
+			}
 
-		// 2. Register with Hub (Master Hub Ping)
-		go registerWithHub(resolvedRoot, clientName)
+			// 2. Register with Hub (Master Hub Ping)
+			go registerWithHub(resolvedRoot, clientName)
+		} else {
+			customLogger.Printf("Warning: Workspace root '%s' ignored (system/application folder without markers)\n", resolvedRoot)
+		}
 	} else {
 		customLogger.Printf("Warning: Could not resolve workspace root on startup: %v\n", err)
 	}
@@ -361,10 +421,13 @@ Example: "Create a rule to catch SQL injection" → generates ast-grep YAML rule
 
 	// Add list_symbols_in_file tool
 	listSymbolsInFileTool := mcp.NewTool("list_symbols_in_file",
-		mcp.WithDescription("Lists all classes, functions, and variables defined in a specific file using the symbolic index."),
+		mcp.WithDescription("Lists symbols in a file with enriched metadata. Limited to 50 definitions with truncated docstrings. Can be 'distilled' into a semantic summary."),
 		mcp.WithString("file_path",
 			mcp.Required(),
 			mcp.Description("File path relative to workspace root (e.g., 'pkg/mcp/server.go')."),
+		),
+		mcp.WithBoolean("distill",
+			mcp.Description("If true, uses a local SLM to provide a categorized 'Table of Contents' summary."),
 		),
 		mcp.WithString("workspaceRoot",
 			mcp.Description("Optional workspace root directory to index. If omitted, it will try to auto-detect the workspace root."),
@@ -425,8 +488,25 @@ Example: "Create a rule to catch SQL injection" → generates ast-grep YAML rule
 
 	customLogger.Println("Starting MCP server...")
 
-	// Start the stdio server
-	if err := server.ServeStdio(s); err != nil {
+	// Wrap stdin with a SniffingReader to capture the rootUri from the handshake
+	// non-blockingly during the session.
+	sniffingStdin := &SniffingReader{r: os.Stdin}
+
+	// Manual transport setup to allow custom stdin (sniffing)
+	stdioSvr := server.NewStdioServer(s)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Signal handling for graceful shutdown (standard MCP pattern)
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		<-sigChan
+		cancel()
+	}()
+
+	// Use our sniffing stdin
+	if err := stdioSvr.Listen(ctx, sniffingStdin, os.Stdout); err != nil {
 		customLogger.Printf("Server error: %v\n", err)
 	}
 }
@@ -447,6 +527,12 @@ func initLocalState(workspaceRoot string) error {
 
 // registerWithHub pings the Master Hub to register this workspace
 func registerWithHub(workspaceRoot string, clientName string) {
+	// SAFETY: Absolutely block registration of system folders.
+	if isSystemDir(workspaceRoot) {
+		verboseLog("registerWithHub: blocking registration of system directory: %s", workspaceRoot)
+		return
+	}
+
 	// 1. Discover the Hub via lock file
 	lockPath := GetHubLockPath()
 	var hubPort int = 9000 // Default fallback
@@ -516,17 +602,17 @@ func getSymbolMapHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
 		}
 	}
 
-	workspaceRoot, err := findWorkspaceRoot(workspaceRootArg)
+	workspaceRoot, err := findWorkspaceRoot(workspaceRootArg, "")
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to resolve workspace root: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to resolve workspace root: %v. Hint: Check if the .context-sherpa folder exists in your project root.", err)), nil
 	}
 
 	indexes, err := loadSCIPIndexes(workspaceRoot)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to load SCIP indexes: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to load SCIP indexes: %v. Hint: Check if the .context-sherpa folder exists in your project root.", err)), nil
 	}
 	if len(indexes) == 0 {
-		return mcp.NewToolResultError("SCIP index not found. Please index the workspace first via the Dashboard."), nil
+		return mcp.NewToolResultError("SCIP index not found. Please index the workspace first via the Dashboard. Hint: Check if the .context-sherpa folder exists in your project root."), nil
 	}
 
 	// Search for symbol across all indexes
@@ -613,48 +699,166 @@ func listSymbolsInFileHandler(ctx context.Context, req mcp.CallToolRequest) (*mc
 		return mcp.NewToolResultError(fmt.Sprintf("file_path is required: %v", err)), nil
 	}
 
+	distill := false
 	workspaceRootArg := ""
 	if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
+		if d, ok := args["distill"].(bool); ok {
+			distill = d
+		}
 		if wr, ok := args["workspaceRoot"].(string); ok && wr != "" {
 			workspaceRootArg = wr
 		}
 	}
 
-	workspaceRoot, err := findWorkspaceRoot(workspaceRootArg)
+	workspaceRoot, err := findWorkspaceRoot(workspaceRootArg, filePath)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to resolve workspace root: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to resolve workspace root: %v. Hint: Check if the .context-sherpa folder exists in your project root.", err)), nil
 	}
 
 	indexes, err := loadSCIPIndexes(workspaceRoot)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to load SCIP indexes: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to load SCIP indexes: %v. Hint: Check if the .context-sherpa folder exists in your project root.", err)), nil
 	}
 	if len(indexes) == 0 {
-		return mcp.NewToolResultError("SCIP index not found. Please index the workspace first via the Dashboard."), nil
+		return mcp.NewToolResultError("SCIP index not found. Please index the workspace first via the Dashboard. Hint: Check if the .context-sherpa folder exists in your project root."), nil
 	}
 	verboseLog("listSymbolsInFileHandler: loaded %d indexes", len(indexes))
 
-	// Normalize input path to match SCIP's internal format (use forward slashes consistently)
-	inputPath := filepath.ToSlash(filePath)
+	// Normalize input path to match SCIP's internal format
+	inputPath := toScipPath(workspaceRoot, filePath)
 	verboseLog("listSymbolsInFileHandler: searching for '%s' (inputPath), original: '%s'", inputPath, filePath)
 
 	var symbols []map[string]interface{}
+	symbolCount := 0
+	const maxSymbols = 50
+
 	for idxNum, index := range indexes {
 		verboseLog("Searching index %d, documents: %d", idxNum, len(index.Documents))
 		for _, doc := range index.Documents {
 			rel := filepath.ToSlash(doc.RelativePath)
+
 			if rel == inputPath {
 				verboseLog("listSymbolsInFileHandler: matched file '%s' in index %d", rel, idxNum)
+
+				// Map symbols from both ExternalSymbols and Document symbols for lookup
+				symbolMap := make(map[string]*scip.SymbolInformation)
+				for _, sym := range index.ExternalSymbols {
+					symbolMap[sym.Symbol] = sym
+				}
+				for _, sym := range doc.Symbols {
+					symbolMap[sym.Symbol] = sym
+				}
+
 				for _, occ := range doc.Occurrences {
+					// Stop if we hit the symbol budget
+					if symbolCount >= maxSymbols {
+						break
+					}
+
 					// Only include definitions (Role 1)
 					isDef := occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0
 
 					if isDef {
+						displayName := ""
+						kind := ""
+
+						parsed, err := scip.ParseSymbol(occ.Symbol)
+						if err == nil && len(parsed.Descriptors) > 0 {
+							// The last descriptor is the leaf (Method, Type, Term, etc.)
+							leaf := parsed.Descriptors[len(parsed.Descriptors)-1]
+
+							// Skip Namespaces (Packages) as definitions
+							if leaf.Suffix == scip.Descriptor_Namespace {
+								continue
+							}
+							displayName = leaf.Name
+
+							// Determine kind from SCIP descriptor
+							switch leaf.Suffix {
+							case scip.Descriptor_Type:
+								kind = "Struct/Type"
+							case scip.Descriptor_Term:
+								kind = "Variable/Field"
+							case scip.Descriptor_Method:
+								kind = "Method"
+							case scip.Descriptor_Macro:
+								kind = "Macro"
+							case scip.Descriptor_Parameter:
+								kind = "Parameter"
+							}
+						}
+
+						// Fallback if parsing failed or didn't yield a name
+						if displayName == "" {
+							displayName = occ.Symbol
+							// Handle scip-go symbols which have space-separated parts
+							if idx := strings.LastIndex(displayName, " "); idx != -1 {
+								displayName = displayName[idx+1:]
+							}
+							if idx := strings.LastIndex(displayName, "/"); idx != -1 {
+								displayName = displayName[idx+1:]
+							}
+							// Strip SCIP suffixes
+							displayName = strings.TrimSuffix(displayName, ".")
+							displayName = strings.TrimSuffix(displayName, "#")
+							displayName = strings.TrimSuffix(displayName, "()")
+							displayName = strings.TrimSuffix(displayName, ":")
+							if strings.HasPrefix(displayName, "`") && strings.HasSuffix(displayName, "`") {
+								displayName = displayName[1 : len(displayName)-1]
+							}
+						}
+
 						symbolInfo := map[string]interface{}{
+							"name":   displayName,
 							"symbol": occ.Symbol,
 							"line":   occ.Range[0] + 1,
 						}
+
+						// Metadata enrichment if details available in index
+						if sym, ok := symbolMap[occ.Symbol]; ok {
+							if sym.Kind != scip.SymbolInformation_UnspecifiedKind {
+								kind = sym.Kind.String()
+							}
+
+							// Documentation Truncation: 120 chars, max 2 lines
+							if len(sym.Documentation) > 0 {
+								doc := strings.Join(sym.Documentation, "\n")
+								lines := strings.Split(doc, "\n")
+								maxLines := 2
+								if len(lines) < maxLines {
+									maxLines = len(lines)
+								}
+								docSummary := strings.Join(lines[:maxLines], "\n")
+								if len(docSummary) > 120 {
+									docSummary = docSummary[:117] + "..."
+								}
+								symbolInfo["documentation"] = docSummary
+							}
+
+							// Signature
+							if sym.SignatureDocumentation != nil && sym.SignatureDocumentation.Language != "" {
+								symbolInfo["signature"] = sym.SignatureDocumentation.Text
+							} else if len(sym.Documentation) > 0 {
+								// Fallback: Check if first line of doc looks like a signature
+								firstLine := strings.TrimSpace(strings.Split(sym.Documentation[0], "\n")[0])
+								if strings.HasPrefix(firstLine, "func ") || strings.HasPrefix(firstLine, "type ") || strings.HasPrefix(firstLine, "var ") || strings.HasPrefix(firstLine, "const ") {
+									symbolInfo["signature"] = firstLine
+								}
+							}
+						}
+
+						// Final fallback for kind if still empty
+						if kind == "" {
+							if strings.HasSuffix(occ.Symbol, "().") || strings.HasSuffix(occ.Symbol, "()") {
+								kind = "Function/Method"
+							} else if strings.HasSuffix(occ.Symbol, "#") {
+								kind = "Type/Struct"
+							}
+						}
+						symbolInfo["kind"] = kind
+
 						symbols = append(symbols, symbolInfo)
+						symbolCount++
 					}
 				}
 				break
@@ -664,6 +868,28 @@ func listSymbolsInFileHandler(ctx context.Context, req mcp.CallToolRequest) (*mc
 
 	if len(symbols) == 0 {
 		return mcp.NewToolResultText(fmt.Sprintf("No symbols found in file: %s", filePath)), nil
+	}
+
+	if distill {
+		// Prompt Compression: Condensed Tab-Separated format
+		var sb strings.Builder
+		sb.WriteString("KIND | NAME | SIGNATURE | DOC\n")
+		for _, s := range symbols {
+			kind := s["kind"].(string)
+			name := s["name"].(string)
+			sig := ""
+			if v, ok := s["signature"].(string); ok {
+				sig = v
+			}
+			doc := ""
+			if v, ok := s["documentation"].(string); ok {
+				doc = v
+			}
+			sb.WriteString(fmt.Sprintf("%s | %s | %s | %s\n", kind, name, sig, strings.ReplaceAll(doc, "\n", " ")))
+		}
+
+		prompt := fmt.Sprintf("Analyze the following list of symbols found in file '%s'. Provide a semantic 'Table of Contents' by grouping symbols into logical categories (e.g., API Handlers, State Management, Utility Functions). Include a 1-paragraph overview of the file's primary responsibility.\n\nSymbols:\n%s", filePath, sb.String())
+		return runSLM(ctx, req, prompt)
 	}
 
 	jsonRes, _ := json.MarshalIndent(symbols, "", "  ")
@@ -683,17 +909,17 @@ func searchDefinitionsHandler(ctx context.Context, req mcp.CallToolRequest) (*mc
 		}
 	}
 
-	workspaceRoot, err := findWorkspaceRoot(workspaceRootArg)
+	workspaceRoot, err := findWorkspaceRoot(workspaceRootArg, "")
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to resolve workspace root: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to resolve workspace root: %v. Hint: Check if the .context-sherpa folder exists in your project root.", err)), nil
 	}
 
 	indexes, err := loadSCIPIndexes(workspaceRoot)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to load SCIP indexes: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to load SCIP indexes: %v. Hint: Check if the .context-sherpa folder exists in your project root.", err)), nil
 	}
 	if len(indexes) == 0 {
-		return mcp.NewToolResultError("SCIP index not found. Please index the workspace first via the Dashboard."), nil
+		return mcp.NewToolResultError("SCIP index not found. Please index the workspace first via the Dashboard. Hint: Check if the .context-sherpa folder exists in your project root."), nil
 	}
 
 	var definitions []map[string]interface{}
@@ -731,23 +957,9 @@ func initializeScipHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 		}
 	}
 
-	workspaceRoot := ""
-	if workspaceRootArg == "" {
-		wr, err := findWorkspaceRoot("")
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to resolve workspace root: %v", err)), nil
-		}
-		workspaceRoot = wr
-	} else {
-		// Normalize explicit path
-		if abs, err := filepath.Abs(workspaceRootArg); err == nil {
-			workspaceRoot = abs
-		} else {
-			workspaceRoot = workspaceRootArg
-		}
-		if runtime.GOOS == "windows" && len(workspaceRoot) > 1 && workspaceRoot[1] == ':' {
-			workspaceRoot = strings.ToUpper(string(workspaceRoot[0])) + workspaceRoot[1:]
-		}
+	workspaceRoot, err := findWorkspaceRoot(workspaceRootArg, "")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to resolve workspace root: %v. Hint: Check if the .context-sherpa folder exists in your project root.", err)), nil
 	}
 
 	language := ""
@@ -783,10 +995,13 @@ func initializeScipHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 
 // IndexWorkspace indexes the workspace for the given language.
 func IndexWorkspace(workspaceRoot string, language string) error {
-	// 0. Use canonical absolute path
+	// 0. Use canonical absolute path, Cleaned and Uppercased Drive
 	if abs, err := filepath.Abs(workspaceRoot); err == nil {
-		workspaceRoot = abs
+		workspaceRoot = filepath.Clean(abs)
+	} else {
+		workspaceRoot = filepath.Clean(workspaceRoot)
 	}
+
 	// Normalization: use uppercase drive letter on Windows for consistency
 	if runtime.GOOS == "windows" && len(workspaceRoot) > 1 && workspaceRoot[1] == ':' {
 		workspaceRoot = strings.ToUpper(string(workspaceRoot[0])) + workspaceRoot[1:]
@@ -888,16 +1103,26 @@ func IndexWorkspace(workspaceRoot string, language string) error {
 			cmd = sysutils.SilentCommand("cmd", fullArgs...)
 		} else {
 			verboseLog("Running indexer: %s %s", indexPath, strings.Join(indexerArgs, " "))
+			// DEBUG: log to stderr
+			fmt.Fprintf(os.Stderr, "DEBUG: indexing: dir=%q path=%q args=%q\n", workspaceRoot, indexPath, strings.Join(indexerArgs, " "))
 			cmd = sysutils.SilentCommand(indexPath, indexerArgs...)
 		}
 	} else {
 		verboseLog("Running indexer: %s %s", indexPath, strings.Join(indexerArgs, " "))
+		// DEBUG: log to stderr
+		fmt.Fprintf(os.Stderr, "DEBUG: indexing: dir=%q path=%q args=%q\n", workspaceRoot, indexPath, strings.Join(indexerArgs, " "))
 		cmd = sysutils.SilentCommand(indexPath, indexerArgs...)
 	}
 	cmd.Dir = workspaceRoot
+	verboseLog("IndexWorkspace: running command: %s %s (in %s)", indexPath, strings.Join(indexerArgs, " "), workspaceRoot)
 
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("indexing failed: %v\nOutput: %s", err, string(output))
+		gomodPath := filepath.Join(workspaceRoot, "go.mod")
+		hasGomod := "exists"
+		if _, serr := os.Stat(gomodPath); serr != nil {
+			hasGomod = "MISSING"
+		}
+		return fmt.Errorf("indexing failed: %v\nCWD: %q\ngo.mod expected at: %q (%s)\nOutput: %s", err, workspaceRoot, gomodPath, hasGomod, string(output))
 	}
 
 	return nil
@@ -985,7 +1210,7 @@ func scanCodeHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	// --- END DEBUG LOGGING ---
 
 	// Find the workspace root where sgconfig.yml is located
-	workspaceRoot, err = findWorkspaceRoot("")
+	workspaceRoot, err = findWorkspaceRoot("", "")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -1061,7 +1286,7 @@ func scanPathHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	// --- END DEBUG LOGGING ---
 
 	// Find the workspace root where sgconfig.yml is located
-	workspaceRoot, err = findWorkspaceRoot(path)
+	workspaceRoot, err = findWorkspaceRoot(path, path)
 
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -1329,74 +1554,166 @@ func addOrUpdateRuleHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 
 // findWorkspaceRoot finds the workspace root by searching for sgconfig.yml
 // or .git in the requested directory and its parent directories.
-func findWorkspaceRoot(startPath string) (string, error) {
+func findWorkspaceRoot(startPath string, hintPath string) (string, error) {
 	var dir string
 
-	if workspaceRootOverride != "" {
-		dir = workspaceRootOverride
-	} else if startPath != "" {
+	if startPath != "" {
 		dir = startPath
+		if customLogger != nil {
+			customLogger.Printf("findWorkspaceRoot: using startPath: %s", dir)
+		}
+	} else if sessionWorkspaceRoot != "" {
+		if customLogger != nil {
+			customLogger.Printf("findWorkspaceRoot: using cached session root: %s", sessionWorkspaceRoot)
+		}
+		return sessionWorkspaceRoot, nil
+	} else if hintPath != "" {
+		dir = hintPath
+		if customLogger != nil {
+			customLogger.Printf("findWorkspaceRoot: using hintPath: %s", dir)
+		}
+	} else if workspaceRootOverride != "" {
+		dir = workspaceRootOverride
+		if customLogger != nil {
+			customLogger.Printf("findWorkspaceRoot: using workspaceRootOverride: %s", dir)
+		}
+	} else if envRoot := os.Getenv("MCP_WORKSPACE_ROOT"); envRoot != "" {
+		dir = envRoot
+		if customLogger != nil {
+			customLogger.Printf("findWorkspaceRoot: using MCP_WORKSPACE_ROOT env: %s", dir)
+		}
+	} else if envRoot := os.Getenv("PROJECT_ROOT"); envRoot != "" {
+		dir = envRoot
+		if customLogger != nil {
+			customLogger.Printf("findWorkspaceRoot: using PROJECT_ROOT env: %s", dir)
+		}
 	} else {
 		dir, _ = os.Getwd()
+		if customLogger != nil {
+			customLogger.Printf("findWorkspaceRoot: using process CWD: %s", dir)
+		}
 	}
 
-	// Normalize path (especially drive letter on Windows)
+	// Normalize path
 	if abs, err := filepath.Abs(dir); err == nil {
-		dir = abs
-	}
-	if runtime.GOOS == "windows" && len(dir) > 1 && dir[1] == ':' {
-		dir = strings.ToUpper(string(dir[0])) + dir[1:]
-	}
-
-	// 0. Search for .context-sherpa (our own metadata folder)
-	tempDir := dir
-	for {
-		sherpaPath := filepath.Join(tempDir, ".context-sherpa")
-		verboseLog("Checking for SCIP index at: %s", sherpaPath)
-		if info, err := os.Stat(sherpaPath); err == nil && info.IsDir() {
-			verboseLog("Found workspace root with .context-sherpa: %s", tempDir)
-			return tempDir, nil
-		}
-
-		parentDir := filepath.Dir(tempDir)
-		if parentDir == tempDir {
-			break
-		}
-		tempDir = parentDir
+		dir = normalizeDriveLetter(filepath.Clean(abs))
+	} else {
+		dir = normalizeDriveLetter(filepath.Clean(dir))
 	}
 
-	// 1. Search for sgconfig.yml (ast-grep workspace)
-	tempDir = dir
-	for {
-		configPath := filepath.Join(tempDir, "sgconfig.yml")
-		if _, err := os.Stat(configPath); err == nil {
-			return tempDir, nil
-		}
-
-		parentDir := filepath.Dir(tempDir)
-		if parentDir == tempDir {
-			break
-		}
-		tempDir = parentDir
+	// 0. If the resolved dir is a System/Application folder without markers,
+	// we should probably NOT trust it as a workspace root.
+	isGuaranteedRoot := false
+	if startPath != "" {
+		// If the user explicitly passed this, we trust it more, but still check if it's a "known bad" CWD
+		isGuaranteedRoot = true
 	}
 
-	// 2. Search for git root
-	tempDir = dir
-	// Try git rev-parse first
+	// Higher-priority markers (Sherpa-specific or explicit configs)
+	prioMarkers := []string{".context-sherpa", "sgconfig.yml"}
+	if root, err := findRootByMarkers(dir, prioMarkers); err == nil {
+		// Cache if safe
+		if !isSystemDir(root) && sessionWorkspaceRoot == "" {
+			sessionWorkspaceRoot = root
+			if customLogger != nil {
+				customLogger.Printf("findWorkspaceRoot: cached discovered root: %s", root)
+			}
+		}
+		return root, nil
+	}
+
+	// Language/Project markers
+	langMarkers := []string{
+		"go.mod",           // Go
+		"package.json",     // JS/TS
+		"pyproject.toml",   // Python (modern)
+		"requirements.txt", // Python (classic)
+		"setup.py",         // Python (classic)
+		"Cargo.toml",       // Rust
+		"composer.json",    // PHP
+		"Gemfile",          // Ruby
+		"Makefile",         // Generic Build
+	}
+	if root, err := findRootByMarkers(dir, langMarkers); err == nil {
+		// Cache if safe
+		if !isSystemDir(root) && sessionWorkspaceRoot == "" {
+			sessionWorkspaceRoot = root
+			if customLogger != nil {
+				customLogger.Printf("findWorkspaceRoot: cached discovered root: %s", root)
+			}
+		}
+		return root, nil
+	}
+
+	// VCS Markers (VCS is often a reliable root)
+	vcsMarkers := []string{".git", ".hg", ".svn"}
+
+	// Try git rev-parse first as a fast-path for git
 	cmd := sysutils.SilentCommand("git", "rev-parse", "--show-toplevel")
 	cmd.Dir = dir
 	if gitOutput, err := cmd.Output(); err == nil {
 		gitRoot := strings.TrimSpace(string(gitOutput))
 		if gitRoot != "" {
+			// Basic normalization for git output
+			if abs, err := filepath.Abs(gitRoot); err == nil {
+				gitRoot = filepath.Clean(abs)
+			}
+			if runtime.GOOS == "windows" && len(gitRoot) > 1 && gitRoot[1] == ':' {
+				gitRoot = strings.ToUpper(string(gitRoot[0])) + gitRoot[1:]
+			}
+			// Cache if safe
+			if !isSystemDir(gitRoot) && sessionWorkspaceRoot == "" {
+				sessionWorkspaceRoot = gitRoot
+				if customLogger != nil {
+					customLogger.Printf("findWorkspaceRoot: cached discovered git root: %s", gitRoot)
+				}
+			}
 			return gitRoot, nil
 		}
 	}
 
-	// Fallback to manual .git discovery
+	// Fallback to manual VCS discovery
+	if root, err := findRootByMarkers(dir, vcsMarkers); err == nil {
+		// Cache if safe
+		if !isSystemDir(root) && sessionWorkspaceRoot == "" {
+			sessionWorkspaceRoot = root
+			if customLogger != nil {
+				customLogger.Printf("findWorkspaceRoot: cached discovered vcs root: %s", root)
+			}
+		}
+		return root, nil
+	}
+
+	// Last resort fallback: Use the requested/discovered dir (but ONLY if it's not a system dir)
+	if !isSystemDir(dir) {
+		verboseLog("No workspace anchors found. Falling back to: %s", dir)
+		// Cache if safe
+		if sessionWorkspaceRoot == "" {
+			sessionWorkspaceRoot = dir
+			verboseLog("findWorkspaceRoot: cached fallback root: %s", dir)
+		}
+		return dir, nil
+	}
+
+	// If it IS a system dir and we got here, it means NO markers were found.
+	// We refuse to treat a marker-less system folder as a workspace root.
+	if isGuaranteedRoot {
+		return "", fmt.Errorf("the specified path '%s' looks like a system/application directory and contains no project markers (.git, go.mod, package.json, etc.). Registration blocked for safety.", dir)
+	}
+
+	return "", fmt.Errorf("could not discover workspace root. Please provide an explicit 'workspaceRoot' argument or ensure you are running from within a project directory")
+}
+
+// findRootByMarkers searches upwards from startDir for any of the given markers.
+func findRootByMarkers(startDir string, markers []string) (string, error) {
+	tempDir := startDir
 	for {
-		gitPath := filepath.Join(tempDir, ".git")
-		if _, err := os.Stat(gitPath); err == nil {
-			return tempDir, nil
+		for _, marker := range markers {
+			markerPath := filepath.Join(tempDir, marker)
+			if _, err := os.Stat(markerPath); err == nil {
+				verboseLog("Found workspace root via marker '%s' at: %s", marker, tempDir)
+				return tempDir, nil
+			}
 		}
 
 		parentDir := filepath.Dir(tempDir)
@@ -1405,9 +1722,63 @@ func findWorkspaceRoot(startPath string) (string, error) {
 		}
 		tempDir = parentDir
 	}
-
-	return "", fmt.Errorf("could not resolve workspace root (no sgconfig.yml or .git found). Please run 'ast-grep new' or initialize a git repository first")
+	return "", fmt.Errorf("no markers found")
 }
+
+// isSystemDir returns true if the path looks like a system or application installation directory.
+func isSystemDir(path string) bool {
+	p := filepath.ToSlash(path)
+	pLower := strings.ToLower(p)
+
+	switch runtime.GOOS {
+	case "windows":
+		windowsSystemPaths := []string{
+			"appdata/local/programs",
+			"program files",
+			"windows/system32",
+			"windows/winsxs",
+		}
+		for _, pat := range windowsSystemPaths {
+			if strings.Contains(pLower, pat) {
+				// Special case: if it contains "antigravity", it's likely the app installation folder
+				if strings.Contains(pLower, "antigravity") {
+					return true
+				}
+			}
+		}
+	case "darwin":
+		macSystemPaths := []string{
+			"/Applications",
+			"/Library",
+			"/System",
+			"/usr/bin",
+			"/bin",
+			"/sbin",
+		}
+		for _, pat := range macSystemPaths {
+			if strings.HasPrefix(p, pat) {
+				return true
+			}
+		}
+	case "linux":
+		linuxSystemPaths := []string{
+			"/usr/bin",
+			"/usr/local/bin",
+			"/bin",
+			"/sbin",
+			"/var/lib",
+			"/snap",
+		}
+		for _, pat := range linuxSystemPaths {
+			if strings.HasPrefix(p, pat) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 
 func findAstGrepBinary(astGrepPath string) (string, error) {
 	// 1. User explicitly specified path (highest priority)
@@ -2264,56 +2635,168 @@ func checkRuleComplianceHandler(ctx context.Context, request mcp.CallToolRequest
 }
 
 // loadSCIPIndexes loads all index-*.scip (and index.scip) files found in .context-sherpa directories
-// within the workspaceRoot or its first-level subdirectories.
+// recursively within the workspaceRoot.
 func loadSCIPIndexes(workspaceRoot string) ([]*scip.Index, error) {
 	var indexes []*scip.Index
-	var searchDirs []string
 
-	// 1. Check root .context-sherpa
-	rootSherpa := filepath.Join(workspaceRoot, ".context-sherpa")
-	if _, err := os.Stat(rootSherpa); err == nil {
-		searchDirs = append(searchDirs, rootSherpa)
-	}
-
-	// 2. Check first-level subdirectories for .context-sherpa
-	entries, err := os.ReadDir(workspaceRoot)
+	// Normalize workspace root for offset calculation
+	absRoot, err := filepath.Abs(workspaceRoot)
 	if err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
-				subSherpa := filepath.Join(workspaceRoot, entry.Name(), ".context-sherpa")
-				if _, err := os.Stat(subSherpa); err == nil {
-					searchDirs = append(searchDirs, subSherpa)
-				}
-			}
+		if runtime.GOOS == "windows" && len(absRoot) > 1 && absRoot[1] == ':' {
+			absRoot = strings.ToUpper(string(absRoot[0])) + absRoot[1:]
 		}
+	} else {
+		absRoot = workspaceRoot
 	}
 
-	for _, sherpaDir := range searchDirs {
-		verboseLog("Searching for indexes in: %s", sherpaDir)
-		files, err := os.ReadDir(sherpaDir)
+	err = filepath.WalkDir(absRoot, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			continue
+			return err
 		}
 
-		for _, file := range files {
-			if !file.IsDir() && (strings.HasPrefix(file.Name(), "index-") && strings.HasSuffix(file.Name(), ".scip") || file.Name() == "index.scip") {
-				scipPath := filepath.Join(sherpaDir, file.Name())
-				verboseLog("Loading SCIP index: %s", scipPath)
-				data, err := os.ReadFile(scipPath)
-				if err != nil {
-					verboseLog("Warning: failed to read index %s: %v", scipPath, err)
-					continue
-				}
+		// Only look for .context-sherpa directories
+		if d.IsDir() && d.Name() == ".context-sherpa" {
+			// Calculate offset from workspace root
+			relDir, err := filepath.Rel(absRoot, filepath.Dir(path))
+			if err != nil {
+				relDir = "."
+			}
+			if relDir == "." {
+				relDir = ""
+			}
 
-				var index scip.Index
-				if err := proto.Unmarshal(data, &index); err != nil {
-					verboseLog("Warning: failed to parse index %s: %v", scipPath, err)
-					continue
+			verboseLog("Searching for indexes in: %s (rel: '%s')", path, relDir)
+			files, err := os.ReadDir(path)
+			if err != nil {
+				return nil // Continue walking
+			}
+
+			for _, file := range files {
+				if !file.IsDir() && (strings.HasPrefix(file.Name(), "index-") && strings.HasSuffix(file.Name(), ".scip") || file.Name() == "index.scip") {
+					scipPath := filepath.Join(path, file.Name())
+					verboseLog("Loading SCIP index: %s", scipPath)
+					data, err := os.ReadFile(scipPath)
+					if err != nil {
+						verboseLog("Warning: failed to read index %s: %v", scipPath, err)
+						continue
+					}
+
+					var index scip.Index
+					if err := proto.Unmarshal(data, &index); err != nil {
+						verboseLog("Warning: failed to parse index %s: %v", scipPath, err)
+						continue
+					}
+
+					// Prefix document paths if this index is in a subdirectory
+					if relDir != "" {
+						prefix := filepath.ToSlash(relDir) + "/"
+						for _, doc := range index.Documents {
+							if !filepath.IsAbs(doc.RelativePath) {
+								doc.RelativePath = prefix + filepath.ToSlash(doc.RelativePath)
+							}
+						}
+					} else {
+						// Ensure document paths are consistently slashed even for root index
+						for _, doc := range index.Documents {
+							doc.RelativePath = filepath.ToSlash(doc.RelativePath)
+						}
+					}
+
+					indexes = append(indexes, &index)
 				}
-				indexes = append(indexes, &index)
+			}
+			// We can potentially skip walking INTO .context-sherpa itself
+			return filepath.SkipDir
+		}
+
+		// Skip common ignored directories to speed up walking
+		if d.IsDir() {
+			name := d.Name()
+			if name == ".git" || name == "node_modules" || name == "vendor" || name == ".gemini" || name == ".roo" {
+				return filepath.SkipDir
 			}
 		}
+
+		return nil
+	})
+
+	if err != nil {
+		verboseLog("Error walking workspace for SCIP indexes: %v", err)
 	}
 
 	return indexes, nil
+}
+
+// SniffingReader wraps an io.Reader and looks for the MCP initialize rootUri
+type SniffingReader struct {
+	r       io.Reader
+	buf     []byte
+	sniffed bool
+}
+
+func (sr *SniffingReader) Read(p []byte) (int, error) {
+	n, err := sr.r.Read(p)
+	if n > 0 && !sr.sniffed {
+		if customLogger != nil {
+			customLogger.Printf("SniffingReader: Seen %d bytes. Current buffer length: %d", n, len(sr.buf)+n)
+		}
+		// Collect up to 16KB for sniffing
+		if len(sr.buf) < 16384 {
+			sr.buf = append(sr.buf, p[:n]...)
+			if customLogger != nil {
+				customLogger.Printf("SniffingReader: Buffer content: %s", string(sr.buf))
+			}
+			if bytes.Contains(sr.buf, []byte("\"rootUri\"")) || bytes.Contains(sr.buf, []byte("\"rootPath\"")) {
+				// Found it! Extract
+				sr.extractRoot(sr.buf)
+				sr.sniffed = true
+				sr.buf = nil // Free memory
+			}
+		} else {
+			if customLogger != nil {
+				customLogger.Printf("SniffingReader: Sniffing limit reached, giving up. Buffer size: %d", len(sr.buf))
+			}
+			sr.sniffed = true // Give up sniffing
+			sr.buf = nil
+		}
+	}
+	return n, err
+}
+
+func (sr *SniffingReader) extractRoot(captured []byte) {
+	// Try to find rootUri or rootPath or even uri in params
+	re := regexp.MustCompile(`"(rootUri|rootPath|uri)"\s*:\s*"([^"]+)"`)
+	match := re.FindSubmatch(captured)
+	if len(match) > 1 {
+		uri := string(match[2])
+		if customLogger != nil {
+			customLogger.Printf("SniffingReader: Found matching field %s with value %s", string(match[1]), uri)
+		}
+		
+		path := strings.TrimPrefix(uri, "file://")
+		// Windows: file:///C:/path -> /C:/path
+		if strings.HasPrefix(path, "/") && len(path) > 2 && path[2] == ':' {
+			path = path[1:]
+		}
+		path = filepath.FromSlash(path)
+
+		// Normalize Windows drive letters
+		if runtime.GOOS == "windows" && len(path) > 1 && path[1] == ':' {
+			path = strings.ToUpper(string(path[0])) + path[1:]
+		}
+
+		sessionWorkspaceRoot = path
+		if customLogger != nil {
+			customLogger.Printf("SniffingReader: Successfully intercepted handshake! Found rootUri: %s", path)
+		}
+	} else {
+		// Log a bit of the buffer for debugging
+		snipLen := 512
+		if len(captured) < snipLen {
+			snipLen = len(captured)
+		}
+		if customLogger != nil {
+			customLogger.Printf("SniffingReader: No match in buffer snippet: %s", string(captured[:snipLen]))
+		}
+	}
 }

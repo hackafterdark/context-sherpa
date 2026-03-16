@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -1448,10 +1450,10 @@ func TestFindWorkspaceRoot(t *testing.T) {
 			t.Fatalf("Failed to change directory: %v", err)
 		}
 
-		// This should fail because there's no sgconfig.yml
-		_, err = findWorkspaceRoot("")
-		if err == nil {
-			t.Error("Expected findWorkspaceRoot to fail without sgconfig.yml")
+		// This should NOT fail because it falls back to CWD
+		_, err = findWorkspaceRoot("", "")
+		if err != nil {
+			t.Errorf("Expected findWorkspaceRoot to fallback to CWD, got error: %v", err)
 		}
 	})
 }
@@ -1514,3 +1516,64 @@ func TestImportCommunityRuleHandler(t *testing.T) {
 		}
 	})
 }
+
+func TestToScipPath(t *testing.T) {
+	// We need to be careful with filepath.Abs in tests as it depends on the OS
+	cwd, _ := os.Getwd()
+	workspaceRoot, _ := filepath.Abs(cwd)
+	if runtime.GOOS == "windows" && len(workspaceRoot) > 1 && workspaceRoot[1] == ':' {
+		workspaceRoot = strings.ToUpper(string(workspaceRoot[0])) + workspaceRoot[1:]
+	}
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "Relative path",
+			input:    "server.go",
+			expected: "server.go",
+		},
+		{
+			name:     "Relative path with subdirectories",
+			input:    "pkg/mcp/server.go",
+			expected: "pkg/mcp/server.go",
+		},
+		{
+			name:     "Absolute path (simulated)",
+			input:    filepath.Join(workspaceRoot, "server.go"),
+			expected: "server.go",
+		},
+		{
+			name:     "Path with backslashes",
+			input:    "pkg\\mcp\\server.go",
+			expected: "pkg/mcp/server.go",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := toScipPath(workspaceRoot, tt.input)
+			if result != tt.expected {
+				t.Errorf("toScipPath(%s, %s) = %s, expected %s", workspaceRoot, tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestToScipPathWindowsDrive(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Skipping Windows-specific drive normalization test")
+	}
+
+	workspaceRoot := "C:\\Repo"
+	input := "c:\\repo\\main.go"
+	expected := "main.go"
+
+	result := toScipPath(workspaceRoot, input)
+	if result != expected {
+		t.Errorf("toScipPath(%s, %s) = %s, expected %s", workspaceRoot, input, result, expected)
+	}
+}
+

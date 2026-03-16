@@ -176,6 +176,19 @@ func (a *App) tryAcquireHubLock() bool {
 	return err == nil
 }
 
+// normalizePath ensures paths are absolute and have consistent casing for drive letters on Windows
+func (a *App) normalizePath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	if runtime.GOOS == "windows" && len(abs) > 1 && abs[1] == ':' {
+		// Uppercase drive letter for consistency
+		abs = strings.ToUpper(string(abs[0])) + abs[1:]
+	}
+	return filepath.Clean(abs)
+}
+
 func (a *App) initDatabase() {
 	configDir, err := getSherpaConfigDir()
 	if err != nil {
@@ -212,6 +225,7 @@ func (a *App) initDatabase() {
 			var lastSeen string
 			var isManaged int
 			if err := rows.Scan(&ws.Root, &ws.Client, &lastSeen, &isManaged); err == nil {
+				ws.Root = a.normalizePath(ws.Root)
 				ws.LastSeen = lastSeen
 				ws.IsManaged = isManaged == 1
 				ws.State = "offline"
@@ -220,6 +234,7 @@ func (a *App) initDatabase() {
 		}
 	}
 }
+
 
 // RegisterWorkspace manually adds a workspace directory to the Hub's persistent list
 func (a *App) RegisterWorkspace(path string) error {
@@ -237,7 +252,7 @@ func (a *App) RegisterWorkspace(path string) error {
 	}
 
 	// 2. Canonicalize path
-	absPath, _ := filepath.Abs(path)
+	absPath := a.normalizePath(path)
 
 	// 3. Initialize local state (.context-sherpa folder)
 	sherpaDir := filepath.Join(absPath, ".context-sherpa")
@@ -782,15 +797,28 @@ func (a *App) startHubServer() {
 			return
 		}
 
-		// Check if we already have this workspace (same root AND same PID)
+		ws.Root = a.normalizePath(ws.Root)
+
+		// Check if we already have this workspace (match by Root only)
 		found := false
 		for i, existing := range a.workspaces {
-			if existing.Root == ws.Root && existing.PID == ws.PID {
-				ws.LastSeen = time.Now().Format(time.RFC3339)
-				if ws.State == "offline" {
-					ws.State = "active"
-				}
-				a.workspaces[i] = ws
+			// Case-insensitive comparison on Windows
+			match := false
+			if runtime.GOOS == "windows" {
+				match = strings.EqualFold(existing.Root, ws.Root)
+			} else {
+				match = (existing.Root == ws.Root)
+			}
+
+			if match {
+				// Update existing entry
+				a.workspaces[i].PID = ws.PID
+				a.workspaces[i].Client = ws.Client
+				a.workspaces[i].LastSeen = time.Now().Format(time.RFC3339)
+				a.workspaces[i].State = "active"
+				// Keep current IsManaged flag
+				
+				ws = a.workspaces[i] // Use updated existing for DB persist
 				found = true
 				break
 			}
@@ -798,10 +826,12 @@ func (a *App) startHubServer() {
 
 		if !found {
 			ws.LastSeen = time.Now().Format(time.RFC3339)
+			ws.State = "active"
 			a.workspaces = append(a.workspaces, ws)
 		}
 
 		// Persist to database
+
 		if a.db != nil {
 			_, err := a.db.Exec(`
 				INSERT INTO workspaces (root, client, last_seen, is_managed)

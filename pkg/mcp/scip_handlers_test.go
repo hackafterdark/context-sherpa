@@ -143,6 +143,98 @@ func TestListSymbolsInFileHandler(t *testing.T) {
 	}
 }
 
+func TestListSymbolsInFileHandler_Guardrails(t *testing.T) {
+	// Reset global override for tests
+	workspaceRootOverride = ""
+
+	tempDir, err := os.MkdirTemp("", "scip-guardrail-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Create a mock SCIP Index with more than 50 symbols and long documentation
+	var occurrences []*scip.Occurrence
+	var symbols []*scip.SymbolInformation
+
+	for i := 0; i < 60; i++ {
+		sym := fmt.Sprintf("scip-go gomod github.com/user/project `Sym%d`#", i)
+		occurrences = append(occurrences, &scip.Occurrence{
+			Symbol:      sym,
+			SymbolRoles: int32(scip.SymbolRole_Definition),
+			Range:       []int32{int32(i), 5, 12},
+		})
+
+		doc := fmt.Sprintf("Line 1 of documentation for Sym%d\nLine 2 of documentation for Sym%d\nLine 3 should be truncated because of line limit", i, i)
+		if i == 0 {
+			// Very long doc for the first symbol to test char truncation
+			doc = strings.Repeat("A", 150) + "\nLine 2"
+		}
+
+		symbols = append(symbols, &scip.SymbolInformation{
+			Symbol:        sym,
+			Documentation: []string{doc},
+		})
+	}
+
+	index := &scip.Index{
+		Documents: []*scip.Document{
+			{
+				RelativePath: "large.go",
+				Occurrences:  occurrences,
+				Symbols:      symbols,
+			},
+		},
+	}
+	createTestSCIPIndex(t, tempDir, index)
+
+	req := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "list_symbols_in_file",
+			Arguments: map[string]interface{}{
+				"file_path":     "large.go",
+				"workspaceRoot": tempDir,
+			},
+		},
+	}
+
+	res, err := listSymbolsInFileHandler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Handler failed: %v", err)
+	}
+
+	responseText := safeGetText(res)
+	var results []map[string]interface{}
+	if err := json.Unmarshal([]byte(responseText), &results); err != nil {
+		t.Fatalf("Failed to unmarshal result: %v", err)
+	}
+
+	// 1. Verify symbol budget (max 50)
+	if len(results) != 50 {
+		t.Errorf("Expected 50 symbols (budget), got %d", len(results))
+	}
+
+	// 2. Verify documentation truncation (120 chars, 2 lines)
+	sym0 := results[0]
+	doc0 := sym0["documentation"].(string)
+	if len(doc0) > 120 {
+		t.Errorf("Expected documentation for Sym0 to be truncated to <= 120 chars, got %d", len(doc0))
+	}
+	if !strings.HasSuffix(doc0, "...") {
+		t.Errorf("Expected truncated documentation to end with '...', got: %s", doc0)
+	}
+	if strings.Count(doc0, "\n") >= 2 {
+		t.Errorf("Expected max 2 lines (1 newline) in documentation summary, got %d", strings.Count(doc0, "\n"))
+	}
+
+	// Verify Sym1 doesn't have the 3rd line
+	sym1 := results[1]
+	doc1 := sym1["documentation"].(string)
+	if strings.Contains(doc1, "Line 3") {
+		t.Errorf("Expected documentation for Sym1 to be limited to 2 lines, but found 'Line 3': %s", doc1)
+	}
+}
+
 func TestSearchDefinitionsHandler(t *testing.T) {
 	// Reset global override for tests
 	workspaceRootOverride = ""

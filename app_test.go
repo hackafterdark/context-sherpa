@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -82,3 +83,31 @@ func TestDiscoverMarkdownFiles_Exclusions(t *testing.T) {
 	assert.NotContains(t, foundMap, ".ssh/known_hosts.md")
 	assert.NotContains(t, foundMap, "node_modules/lib/doc.md")
 }
+
+func TestNormalizePath(t *testing.T) {
+	app := &App{}
+	
+	// Test on Windows specifically if running on Windows
+	if runtime.GOOS == "windows" {
+		tests := []struct {
+			input    string
+			expected string
+		}{
+			{"c:\\foo\\bar", "C:\\foo\\bar"},
+			{"F:\\Context-Sherpa", "F:\\Context-Sherpa"},
+			{"d:/lower/case", "D:\\lower\\case"},
+		}
+		
+		for _, tt := range tests {
+			abs, _ := filepath.Abs(tt.expected)
+			normalized := app.normalizePath(tt.input)
+			assert.Equal(t, abs, normalized)
+		}
+	} else {
+		// Non-windows normalization
+		path := "/usr/local/bin"
+		normalized := app.normalizePath(path)
+		assert.Equal(t, path, normalized)
+	}
+}
+
