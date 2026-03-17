@@ -137,11 +137,16 @@ func normalizeDriveLetter(path string) string {
 	return path
 }
 
+// ensureForwardSlashes replaces all backslashes with forward slashes for cross-platform consistency.
+func ensureForwardSlashes(path string) string {
+	return strings.ReplaceAll(path, "\\", "/")
+}
+
 // toScipPath transforms an input path into a SCIP-compatible relative path.
 // It ensures that relative input paths are resolved against the workspaceRoot.
 func toScipPath(workspaceRoot, inputPath string) string {
 	// Normalize inputPath to use forward slashes for consistency across platforms
-	inputPath = filepath.ToSlash(inputPath)
+	inputPath = ensureForwardSlashes(inputPath)
 
 	// 1. Force Root to Absolute, Cleaned, and Normalized
 	absRoot, err := filepath.Abs(workspaceRoot)
@@ -161,7 +166,7 @@ func toScipPath(workspaceRoot, inputPath string) string {
 	// 3. Force to Absolute and Normalize for comparison
 	absPath, err := filepath.Abs(fullPath)
 	if err != nil {
-		return filepath.ToSlash(inputPath)
+		return ensureForwardSlashes(inputPath)
 	}
 	absPath = normalizeDriveLetter(absPath)
 
@@ -169,9 +174,9 @@ func toScipPath(workspaceRoot, inputPath string) string {
 	rel, err := filepath.Rel(absRoot, absPath)
 	res := ""
 	if err != nil {
-		res = filepath.ToSlash(inputPath)
+		res = ensureForwardSlashes(inputPath)
 	} else {
-		res = filepath.ToSlash(rel)
+		res = ensureForwardSlashes(rel)
 	}
 
 	return res
@@ -627,7 +632,7 @@ func getSymbolMapHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
 
 	for _, index := range indexes {
 		for _, doc := range index.Documents {
-			rel := filepath.ToSlash(doc.RelativePath)
+			rel := ensureForwardSlashes(doc.RelativePath)
 			for _, occ := range doc.Occurrences {
 				if isSymbolMatch(occ.Symbol, symbolName) {
 					loc := map[string]interface{}{
@@ -738,7 +743,7 @@ func listSymbolsInFileHandler(ctx context.Context, req mcp.CallToolRequest) (*mc
 	for idxNum, index := range indexes {
 		verboseLog("Searching index %d, documents: %d", idxNum, len(index.Documents))
 		for _, doc := range index.Documents {
-			rel := filepath.ToSlash(doc.RelativePath)
+			rel := ensureForwardSlashes(doc.RelativePath)
 
 			if rel == inputPath {
 				verboseLog("listSymbolsInFileHandler: matched file '%s' in index %d", rel, idxNum)
@@ -928,7 +933,7 @@ func searchDefinitionsHandler(ctx context.Context, req mcp.CallToolRequest) (*mc
 	var definitions []map[string]interface{}
 	for _, index := range indexes {
 		for _, doc := range index.Documents {
-			rel := filepath.ToSlash(doc.RelativePath)
+			rel := ensureForwardSlashes(doc.RelativePath)
 			for _, occ := range doc.Occurrences {
 				if isSymbolMatch(occ.Symbol, query) {
 					isDef := occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0
@@ -1730,7 +1735,7 @@ func findRootByMarkers(startDir string, markers []string) (string, error) {
 
 // isSystemDir returns true if the path looks like a system or application installation directory.
 func isSystemDir(path string) bool {
-	p := filepath.ToSlash(path)
+	p := ensureForwardSlashes(path)
 	pLower := strings.ToLower(p)
 
 	switch runtime.GOOS {
@@ -2692,16 +2697,16 @@ func loadSCIPIndexes(workspaceRoot string) ([]*scip.Index, error) {
 
 					// Prefix document paths if this index is in a subdirectory
 					if relDir != "" {
-						prefix := filepath.ToSlash(relDir) + "/"
+						prefix := ensureForwardSlashes(relDir) + "/"
 						for _, doc := range index.Documents {
 							if !filepath.IsAbs(doc.RelativePath) {
-								doc.RelativePath = prefix + filepath.ToSlash(doc.RelativePath)
+								doc.RelativePath = prefix + ensureForwardSlashes(doc.RelativePath)
 							}
 						}
 					} else {
 						// Ensure document paths are consistently slashed even for root index
 						for _, doc := range index.Documents {
-							doc.RelativePath = filepath.ToSlash(doc.RelativePath)
+							doc.RelativePath = ensureForwardSlashes(doc.RelativePath)
 						}
 					}
 
