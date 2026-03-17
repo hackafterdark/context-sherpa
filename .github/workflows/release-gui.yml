@@ -1,6 +1,7 @@
 name: Release GUI
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - 'gui-v2*'
