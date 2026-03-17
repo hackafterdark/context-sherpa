@@ -71,17 +71,20 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: Wails Build *
-          path: binaries/
+          path: binaries
           merge-multiple: true
 
       - name: Generate checksums
+        working-directory: binaries
         run: |
-          cd binaries
-          sha256sum * > checksums.txt
+          rm -f artifact_meta.json
+          sha256sum * > ../checksums.txt
+          mv ../checksums.txt ./
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          name: Context Sherpa GUI ${{ github.ref_name }}
           files: |
             binaries/*
           generate_release_notes: true
