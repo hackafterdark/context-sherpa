@@ -75,8 +75,9 @@ jobs:
           merge-multiple: true
 
       - name: Generate checksums
-        working-directory: binaries
         run: |
+          mkdir -p binaries
+          cd binaries
           rm -f artifact_meta.json
           sha256sum * > ../checksums.txt
           mv ../checksums.txt ./
