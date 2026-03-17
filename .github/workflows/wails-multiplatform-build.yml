@@ -42,8 +42,8 @@ jobs:
         run: |
           # We use "true" to skip these steps in the action to avoid redundant installs
           # that fail with Tailwind 4 native bindings.
-          sed -i 's/"frontend:install": ".*"/"frontend:install": "true"/' wails.json
-          sed -i 's/"frontend:build": ".*"/"frontend:build": "true"/' wails.json
+          perl -i -pe 's/"frontend:install": ".*"/"frontend:install": "true"/' wails.json
+          perl -i -pe 's/"frontend:build": ".*"/"frontend:build": "true"/' wails.json
 
       - name: Build Wails App
         uses: host-uk/build@v4.0.0
