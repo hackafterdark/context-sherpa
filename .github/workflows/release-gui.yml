@@ -3,7 +3,7 @@ name: Release GUI
 on:
   push:
     tags:
-      - 'gui-v*'
+      - 'gui-v2*'
 
 permissions:
   contents: write
