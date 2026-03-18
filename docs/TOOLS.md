@@ -86,6 +86,14 @@ Downloads and imports a community rule into your local project.
 - **Parameters**:
   - `rule_id` (string, required): ID of the community rule to import.
 
+### `ast_grep_scan`
+Perform a structural search across the codebase using ast-grep patterns. Use this to find specific code shapes (e.g., all functions with a specific decorator) without the noise of text-based grep.
+- **Parameters**:
+  - `pattern` (string, required): The ast-grep pattern (e.g., `func ($$$) $NAME($$$) { $$$ }`).
+  - `path` (string, optional): The directory or file to scan (defaults to project root).
+  - `language` (string, optional): Language hint (e.g., `go`, `typescript`, `python`).
+  - `workspaceRoot` (string, optional): Optional workspace root directory.
+
 ---
 
 ## Symbolic Code Intelligence (SCIP)
@@ -96,21 +104,27 @@ These tools provide deep knowledge of symbol relationships (definitions and refe
 Indexes the workspace for the specified language.
 - **Parameters**:
   - `language` (string, optional): `go`, `typescript`, or `python`. Auto-detects if omitted.
+  - `workspaceRoot` (string, optional): Optional workspace root directory to index.
 
 ### `get_symbol_map`
 Returns a map of all definitions and references for a given symbol.
 - **Parameters**:
   - `symbolName` (string, required): Name of the symbol (e.g., `AuthService`).
+  - `language` (string, optional): Optional language hint.
+  - `workspaceRoot` (string, optional): Optional workspace root directory to index.
 
 ### `list_symbols_in_file`
 Lists all classes, functions, and variables defined in a specific file.
 - **Parameters**:
   - `file_path` (string, required): Path to the file.
+  - `distill` (boolean, optional): If true, uses a local SLM to provide a categorized 'Table of Contents'.
+  - `workspaceRoot` (string, optional): Optional workspace root directory to index.
 
 ### `search_definitions`
 Searches for symbol definitions project-wide matching a query.
 - **Parameters**:
   - `query` (string, required): The symbol name or pattern.
+  - `workspaceRoot` (string, optional): Optional workspace root directory to index.
 
 ### `analyze_impact_triage`
 Identifies which call sites are most likely to be affected by a change based on SCIP reference data.
