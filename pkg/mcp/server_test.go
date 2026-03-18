@@ -1456,6 +1456,25 @@ func TestFindWorkspaceRoot(t *testing.T) {
 			t.Errorf("Expected findWorkspaceRoot to fallback to CWD, got error: %v", err)
 		}
 	})
+
+	t.Run("Prioritize sessionWorkspaceRoot for relative paths", func(t *testing.T) {
+		tempDir := t.TempDir()
+		// Normalize for Windows drive letter consistency in tests
+		abs, _ := filepath.Abs(tempDir)
+		tempDir = normalizeDriveLetter(abs)
+
+		sessionWorkspaceRoot = tempDir
+		defer func() { sessionWorkspaceRoot = "" }()
+
+		// Even if we provide a relative hint, it should return the cached session root
+		root, err := findWorkspaceRoot("", "some/relative/file.go")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if root != tempDir {
+			t.Errorf("Expected root %s, got %s", tempDir, root)
+		}
+	})
 }
 
 func TestFindSgBinary(t *testing.T) {

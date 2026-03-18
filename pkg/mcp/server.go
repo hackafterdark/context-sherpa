@@ -1584,6 +1584,7 @@ func astGrepScanHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.Call
 
 	pathArg := ""
 	langArg := ""
+	workspaceRootArg := ""
 	if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
 		if p, ok := args["path"].(string); ok && p != "" {
 			pathArg = p
@@ -1591,9 +1592,13 @@ func astGrepScanHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.Call
 		if l, ok := args["language"].(string); ok && l != "" {
 			langArg = l
 		}
+		if wr, ok := args["workspaceRoot"].(string); ok && wr != "" {
+			workspaceRootArg = wr
+		}
 	}
 
-	workspaceRoot, err := findWorkspaceRoot(pathArg, pathArg)
+	// We pass empty startPath to find the project root, using pathArg as a hint for discovery
+	workspaceRoot, err := findWorkspaceRoot(workspaceRootArg, pathArg)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to resolve workspace root: %v", err)), nil
 	}
@@ -1608,14 +1613,7 @@ func astGrepScanHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.Call
 		if langArg != "" {
 			args = append(args, "--lang", langArg)
 		}
-		scanPath := workspaceRoot
-		if pathArg != "" {
-			if filepath.IsAbs(pathArg) {
-				scanPath = pathArg
-			} else {
-				scanPath = filepath.Join(workspaceRoot, pathArg)
-			}
-		}
+		scanPath := resolvePathRelativeToWorkspaceRoot(pathArg, workspaceRoot)
 		args = append(args, scanPath)
 
 		cmd := sysutils.SilentCommand(sgPath, args...)
@@ -1752,6 +1750,16 @@ func findWorkspaceRoot(startPath string, hintPath string) (string, error) {
 		dir = normalizeDriveLetter(filepath.Clean(abs))
 	} else {
 		dir = normalizeDriveLetter(filepath.Clean(dir))
+	}
+
+	// 0. If we ALREADY have a sessionWorkspaceRoot and the dir is relative or within it, use it.
+	if sessionWorkspaceRoot != "" {
+		if !filepath.IsAbs(dir) || strings.HasPrefix(strings.ToLower(ensureForwardSlashes(dir)), strings.ToLower(ensureForwardSlashes(sessionWorkspaceRoot))) {
+			if customLogger != nil {
+				customLogger.Printf("findWorkspaceRoot: using existing session root for relative/nested path: %s", sessionWorkspaceRoot)
+			}
+			return sessionWorkspaceRoot, nil
+		}
 	}
 
 	// 0. If the resolved dir is a System/Application folder without markers,
