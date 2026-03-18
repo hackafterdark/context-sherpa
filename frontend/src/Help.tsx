@@ -20,6 +20,7 @@ const Help = () => {
         { name: 'search_community_rules', desc: 'Search pre-built rules in the community repo.' },
         { name: 'get_community_rule_details', desc: 'Full YAML content for community rules.' },
         { name: 'import_community_rule', desc: 'Import community rules to local workspace.' },
+        { name: 'ast_grep_scan', desc: 'Perform a structural search across the codebase using ast-grep patterns.' },
         { name: 'list_symbols_in_file', desc: 'List classes, functions, and variables in a file.' },
         { name: 'search_definitions', desc: 'Search for symbol definitions project-wide.' },
         { name: 'initialize_scip', desc: 'Index workspace for SCIP-based navigation.' },
