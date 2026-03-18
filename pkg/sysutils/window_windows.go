@@ -33,7 +33,16 @@ func getParentPid(pid int) int {
 }
 
 func focusWindow(ancestry []int, bestPid int) error {
-	return focusWindowsInAncestryWindows(ancestry, bestPid)
+	targetPid := bestPid
+	if targetPid == 0 && len(ancestry) > 0 {
+		targetPid = ancestry[len(ancestry)-1]
+	}
+
+	if targetPid == 0 {
+		return fmt.Errorf("no target process identified for focus")
+	}
+
+	return focusWindowsInAncestryWindows(ancestry, targetPid)
 }
 
 func focusWindowsInAncestryWindows(ancestry []int, bestPid int) error {

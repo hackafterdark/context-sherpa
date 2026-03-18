@@ -465,6 +465,21 @@ Example: "Create a rule to catch SQL injection" → generates ast-grep YAML rule
 		),
 	)
 
+	// Add ast_grep_scan tool
+	astGrepScanTool := mcp.NewTool("ast_grep_scan",
+		mcp.WithDescription("Perform a structural search across the codebase using ast-grep patterns. Use this to find specific code shapes (e.g., all functions with a specific decorator) without the noise of text-based grep."),
+		mcp.WithString("pattern",
+			mcp.Required(),
+			mcp.Description("The ast-grep pattern (e.g., func ($$$) $NAME($$$) { $$$ })."),
+		),
+		mcp.WithString("path",
+			mcp.Description("The directory or file to scan (defaults to project root)."),
+		),
+		mcp.WithString("language",
+			mcp.Description("Language hint (e.g., go, typescript)."),
+		),
+	)
+
 	// Add tool handlers
 	s.AddTool(scanCodeTool, scanCodeHandler)
 	s.AddTool(scanPathTool, scanPathHandler)
@@ -478,6 +493,7 @@ Example: "Create a rule to catch SQL injection" → generates ast-grep YAML rule
 	s.AddTool(searchCommunityRulesTool, searchCommunityRulesHandler)
 	s.AddTool(getCommunityRuleDetailsTool, getCommunityRuleDetailsHandler)
 	s.AddTool(importCommunityRuleTool, importCommunityRuleHandler)
+	s.AddTool(astGrepScanTool, astGrepScanHandler)
 
 	// Test ast-grep binary and log version information
 	sgPath, err := findAstGrepBinary(astGrepPathOverride)
@@ -1558,6 +1574,135 @@ func addOrUpdateRuleHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 	}
 
 	return mcp.NewToolResultText(fmt.Sprintf("Rule '%s' was added or updated successfully.", ruleID)), nil
+}
+
+func astGrepScanHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pattern, err := req.RequireString("pattern")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("pattern is required: %v", err)), nil
+	}
+
+	pathArg := ""
+	langArg := ""
+	if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
+		if p, ok := args["path"].(string); ok && p != "" {
+			pathArg = p
+		}
+		if l, ok := args["language"].(string); ok && l != "" {
+			langArg = l
+		}
+	}
+
+	workspaceRoot, err := findWorkspaceRoot(pathArg, pathArg)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to resolve workspace root: %v", err)), nil
+	}
+
+	sgPath, err := findAstGrepBinary(astGrepPathOverride)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("ast-grep binary not found: %v", err)), nil
+	}
+
+	runScan := func(p string) (string, error) {
+		args := []string{"run", "--pattern", p, "--json"}
+		if langArg != "" {
+			args = append(args, "--lang", langArg)
+		}
+		scanPath := workspaceRoot
+		if pathArg != "" {
+			if filepath.IsAbs(pathArg) {
+				scanPath = pathArg
+			} else {
+				scanPath = filepath.Join(workspaceRoot, pathArg)
+			}
+		}
+		args = append(args, scanPath)
+
+		cmd := sysutils.SilentCommand(sgPath, args...)
+		cmd.Dir = workspaceRoot
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			if len(output) == 0 {
+				return "", err
+			}
+		}
+		return string(output), nil
+	}
+
+	// 1. Primary Pass
+	output, err := runScan(pattern)
+
+	// 2. Multi-Stage Fallback
+	patternUsed := pattern
+	if (err != nil || output == "[]\n" || output == "[]") && !strings.Contains(pattern, "{") {
+		fallbacks := expandToFallbacks(pattern)
+		for _, fallback := range fallbacks {
+			if fallback == pattern {
+				continue
+			}
+			fallbackOutput, fallbackErr := runScan(fallback)
+			if fallbackErr == nil && fallbackOutput != "[]\n" && fallbackOutput != "[]" {
+				output = fallbackOutput
+				patternUsed = fallback
+				if verboseLogging && customLogger != nil {
+					customLogger.Printf("ast_grep_scan: primary pattern yielded no results, moving to fallback: %s", fallback)
+				}
+				break
+			}
+		}
+	}
+
+	if output == "" {
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("ast-grep execution failed: %v", err)), nil
+		}
+		output = "[]"
+	}
+
+	// If fallback was used or we want to provide metadata, wrap the result
+	// Note: We return raw JSON from ast-grep, so we can either append a metadata object
+	// or just return it as is if it's already a valid JSON array.
+	// For simplicity and since LLMs expect the array, we'll return it but maybe add a log.
+	if patternUsed != pattern && customLogger != nil {
+		customLogger.Printf("ast_grep_scan: primary pattern yielded no results, used fallback: %s", patternUsed)
+	}
+
+	return mcp.NewToolResultText(output), nil
+}
+
+// expandToFallbacks generates a set of fallback patterns to increase match probability for nested calls.
+// It prioritizes structural wildcards ($OBJ.Method) over greedy wildcards ($$$.Method).
+func expandToFallbacks(pattern string) []string {
+	var results []string
+
+	dotIdx := strings.LastIndex(pattern, ".")
+	if dotIdx <= 0 {
+		return results
+	}
+
+	// Find the start of the receiver.
+	startIdx := 0
+	for i := dotIdx - 1; i >= 0; i-- {
+		c := pattern[i]
+		if c == ' ' || c == '(' || c == ',' || c == '[' || c == '{' || c == '\t' || c == '\n' {
+			startIdx = i + 1
+			break
+		}
+	}
+
+	// Stage 1: Single-node wildcard receiver (most likely to work in Go for a.db.Query)
+	// Example: "a.db.Query($$$)" -> "$OBJ.Query($$$)"
+	results = append(results, pattern[:startIdx]+"$OBJ"+pattern[dotIdx:])
+
+	// Stage 2: Greedy wildcard receiver
+	// Example: "a.db.Query($$$)" -> "$$$.Query($$$)"
+	results = append(results, pattern[:startIdx]+"$$$"+pattern[dotIdx:])
+
+	// Stage 3: Direct method match (shallow search)
+	// Example: "a.db.Query($$$)" -> "Query($$$)"
+	results = append(results, pattern[dotIdx+1:])
+
+	return results
 }
 
 // findWorkspaceRoot finds the workspace root by searching for sgconfig.yml
