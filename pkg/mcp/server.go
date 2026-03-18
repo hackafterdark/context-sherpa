@@ -1632,15 +1632,17 @@ func astGrepScanHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.Call
 
 	// 2. Multi-Stage Fallback
 	patternUsed := pattern
-	if (err != nil || output == "[]\n" || output == "[]") && !strings.Contains(pattern, "{") {
+	outputTrimmed := strings.TrimSpace(output)
+	if (err != nil || outputTrimmed == "[]" || outputTrimmed == "") && !strings.Contains(pattern, "{") {
 		fallbacks := expandToFallbacks(pattern)
 		for _, fallback := range fallbacks {
 			if fallback == pattern {
 				continue
 			}
 			fallbackOutput, fallbackErr := runScan(fallback)
-			if fallbackErr == nil && fallbackOutput != "[]\n" && fallbackOutput != "[]" {
-				output = fallbackOutput
+			fallbackOutputStr := strings.TrimSpace(fallbackOutput)
+			if fallbackErr == nil && fallbackOutputStr != "[]" && fallbackOutputStr != "" {
+				output = fallbackOutputStr
 				patternUsed = fallback
 				if verboseLogging && customLogger != nil {
 					customLogger.Printf("ast_grep_scan: primary pattern yielded no results, moving to fallback: %s", fallback)
@@ -1648,9 +1650,58 @@ func astGrepScanHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.Call
 				break
 			}
 		}
+
+		// Tier 3: Structural YAML Probe
+		outputTrimmed = strings.TrimSpace(output)
+		if (outputTrimmed == "[]" || outputTrimmed == "") && strings.Contains(pattern, ".") {
+			methodName := extractMethodName(pattern)
+			if methodName != "" {
+				probeLang := langArg
+				if probeLang == "" {
+					probeLang = "go"
+				}
+
+				yamlRule := generateStructuralProbe(methodName, probeLang)
+
+				// Create temporary file
+				tmpDir := os.TempDir()
+				tmpFile, tmpErr := os.CreateTemp(tmpDir, "sgprobe-*.yml")
+				if tmpErr == nil {
+					defer os.Remove(tmpFile.Name())
+					_, _ = tmpFile.WriteString(yamlRule)
+					_ = tmpFile.Sync()
+					_ = tmpFile.Close()
+
+					if verboseLogging && customLogger != nil {
+						customLogger.Printf("ast_grep_scan: Escalating to Tier 3 Structural Probe: %s", methodName)
+						customLogger.Printf("ast_grep_scan: Generated Rule:\n%s", yamlRule)
+					}
+
+					// Run scan with ad-hoc rule
+					args := []string{"scan", "-r", tmpFile.Name(), "--json"}
+					scanPath := resolvePathRelativeToWorkspaceRoot(pathArg, workspaceRoot)
+					args = append(args, scanPath)
+
+					cmd := sysutils.SilentCommand(sgPath, args...)
+					cmd.Dir = workspaceRoot
+					probeOutput, probeErr := cmd.CombinedOutput()
+					probeOutputStr := strings.TrimSpace(string(probeOutput))
+
+					if verboseLogging && customLogger != nil {
+						customLogger.Printf("ast_grep_scan: Tier 3 probe output (len=%d): %s", len(probeOutputStr), probeOutputStr)
+					}
+
+					if probeErr == nil && probeOutputStr != "[]" && probeOutputStr != "" {
+						output = probeOutputStr
+						patternUsed = "Structural Probe: " + methodName
+						output = injectExpansionHint(output, "Structural Probe: [inside: call_expression]")
+					}
+				}
+			}
+		}
 	}
 
-	if output == "" {
+	if strings.TrimSpace(output) == "" {
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("ast-grep execution failed: %v", err)), nil
 		}
@@ -1701,6 +1752,56 @@ func expandToFallbacks(pattern string) []string {
 	results = append(results, pattern[dotIdx+1:])
 
 	return results
+}
+
+// extractMethodName extracts the core method name from a pattern.
+// Example: "a.db.Query($$$)" -> "Query"
+func extractMethodName(pattern string) string {
+	base := pattern
+	if idx := strings.Index(pattern, "("); idx != -1 {
+		base = pattern[:idx]
+	}
+	base = strings.TrimSpace(base)
+
+	if idx := strings.LastIndex(base, "."); idx != -1 {
+		return base[idx+1:]
+	}
+
+	return base
+}
+
+// generateStructuralProbe synthesizes a YAML rule that matches a method call regardless of receiver.
+func generateStructuralProbe(methodName, language string) string {
+	return fmt.Sprintf(`id: structural-fallback-probe
+language: %s
+rule:
+  any:
+    - pattern: %s($$$)
+    - kind: call_expression
+      has:
+        field: function
+        regex: \.%s$
+`, language, methodName, methodName)
+}
+
+// injectExpansionHint adds a hint to the JSON results to indicate why they were found.
+func injectExpansionHint(jsonStr string, hint string) string {
+	var results []interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &results); err != nil {
+		return jsonStr
+	}
+
+	for i := range results {
+		if obj, ok := results[i].(map[string]interface{}); ok {
+			obj["expansion_hint"] = hint
+		}
+	}
+
+	bytes, err := json.MarshalIndent(results, "", "  ")
+	if err != nil {
+		return jsonStr
+	}
+	return string(bytes)
 }
 
 // findWorkspaceRoot finds the workspace root by searching for sgconfig.yml

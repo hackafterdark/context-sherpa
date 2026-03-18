@@ -89,3 +89,29 @@ func TestExpandToFallbacks(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractMethodName(t *testing.T) {
+	tests := []struct {
+		pattern  string
+		expected string
+	}{
+		{"a.db.Query($$$)", "Query"},
+		{"Query($$$)", "Query"},
+		{"os.Open(file)", "Open"},
+		{"r.Header.Get(\"X\")", "Get"},
+		{"InitDB", "InitDB"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.pattern, func(t *testing.T) {
+			assert.Equal(t, tt.expected, extractMethodName(tt.pattern))
+		})
+	}
+}
+
+func TestGenerateStructuralProbe(t *testing.T) {
+	result := generateStructuralProbe("Query", "go")
+	assert.Contains(t, result, "language: go")
+	assert.Contains(t, result, "pattern: Query($$$)")
+	assert.Contains(t, result, "regex: \\.Query$")
+}
