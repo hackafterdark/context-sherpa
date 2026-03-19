@@ -42,7 +42,7 @@ Context Sherpa is a single executable that adapts to your needs:
 | **Code Atlas Explorer** | ✅ Yes | ❌ No |
 | **Rule Visualizer/Editor** | ✅ Yes | ❌ API only |
 | **Dependency Manager** | ✅ Yes | ❌ Manual |
-| **MCP Tool Access** | ✅ Indirectly | ✅ Directly via Agent |
+| **MCP Tool Access** | ✅ Directly via Agent | ✅ Directly via Agent |
 | **Resource Usage** | Standard App | Ultra Lightweight |
 
 ---

@@ -44,6 +44,8 @@ wails build
 
 The headless version is a standalone binary that provides only the MCP server interface. Perfect for lightweight installations or CI/CD integration.
 
+Note: If you are using the GUI app, you do not need to build the headless version. The GUI app includes the MCP server. Have your AI agent use the GUI app as the MCP server.
+
 ### Build Command
 Run this from the project root:
 ```bash
