@@ -56,7 +56,7 @@ Thumbs.db
 # Build artifacts
 dist/
 build/
-frontend/dist
+frontend/
 # But do NOT ignore the .gitkeep file
 !frontend/dist/.gitkeep
 
