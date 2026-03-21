@@ -30,8 +30,18 @@ Of course the benefit of text embeddings in a vector database and other traditio
 - **Agent Rule Management**: Dynamically manage project-specific standards using `ast-grep` and natural language feedback.
 - **Integrated Local Reasoning**: Connect to local providers (Ollama, LM Studio) to enable **Tiered Inference**. This architecture utilizes local models for high-frequency context distillation and semantic triage, drastically reducing the token noise and costs associated with sending raw source code to frontier models.
 - **Universal MCP Server**: A high-performance "headless" mode that integrates directly with tools like Cursor, Cline, and Roo Code.
+- **🤖 Agent Intelligence**: A built-in framework of **Skills** and **Workflows** designed to guide AI agents toward higher accuracy and token efficiency.
 
 ---
+
+## 🤖 Agent Intelligence
+
+Context Sherpa is not just a toolset; it's an intelligent environment. There are some specialized resources for AI agents found in the [`.agents/`](./.agents/) directory:
+
+- **Skills**: encapsulated expertise for complex tasks (e.g., [Architectural Grounding](./.agents/skills/architectural-grounding/SKILL.md)).
+- **Workflows**: step-by-step procedures for standard operations (e.g., [Efficient Research](./.agents/workflows/efficient-research.md)).
+
+For a deep dive into best practices, see our [**Agent Guidelines for Context Engineering**](./docs/AGENT_GUIDELINES.md).
 
 ## 🎮 GUI vs. 🖥️ Headless Mode
 
