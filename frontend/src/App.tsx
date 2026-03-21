@@ -5,6 +5,7 @@ import Settings from './Settings';
 import Atlas from './Atlas';
 import Help from './Help';
 import Skills from './Skills';
+import PatternRegistry from './PatternRegistry';
 import { GetPreferences, SavePreferences, GetWorkspaces } from '../wailsjs/go/main/App';
 
 function App() {
@@ -53,6 +54,7 @@ function App() {
             {activeTab === 'home' && <Home onVisualize={openAtlas} />}
             {activeTab === 'atlas' && <Atlas workspaceRoot={atlasWorkspace} onWorkspaceChange={setAtlasWorkspace} />}
             {activeTab === 'skills' && <Skills workspaceRoot={atlasWorkspace} onWorkspaceChange={setAtlasWorkspace} theme={theme} />}
+            {activeTab === 'rules' && <PatternRegistry workspaceRoot={atlasWorkspace} onWorkspaceChange={setAtlasWorkspace} />}
             {activeTab === 'help' && <Help />}
             {activeTab === 'settings' && <Settings theme={theme} setTheme={setTheme} />}
         </Layout>

@@ -158,3 +158,32 @@ export namespace main {
 
 }
 
+export namespace mcp {
+	
+	export class CommunityRule {
+	    id: string;
+	    tool: string;
+	    path: string;
+	    language: string;
+	    author: string;
+	    tags: string[];
+	    description: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CommunityRule(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.tool = source["tool"];
+	        this.path = source["path"];
+	        this.language = source["language"];
+	        this.author = source["author"];
+	        this.tags = source["tags"];
+	        this.description = source["description"];
+	    }
+	}
+
+}
+

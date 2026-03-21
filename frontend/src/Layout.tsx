@@ -47,6 +47,14 @@ export default function Layout({ activeTab, setActiveTab, children }: LayoutProp
                     >
                         <Icon icon="lucide:brain" className="text-xl" />
                     </button>
+
+                    <button
+                        className={`btn btn-square btn-ghost w-full transition-colors ${activeTab === 'rules' ? 'bg-base-100 shadow-sm text-primary' : 'text-base-content/70 hover:bg-base-100 hover:text-base-content'} tooltip tooltip-right`}
+                        data-tip="Pattern Registry"
+                        onClick={() => setActiveTab('rules')}
+                    >
+                        <Icon icon="lucide:scroll-text" className="text-xl" />
+                    </button>
                 </div>
 
                 {/* Bottom Menu Items */}

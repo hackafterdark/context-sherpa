@@ -58,6 +58,8 @@ func GetHubLockPath() string {
 
 // SgConfig represents the structure of sgconfig.yml
 type SgConfig struct {
+	ID       string   `yaml:"id"`
+	Language string   `yaml:"language"`
 	RuleDirs []string `yaml:"ruleDirs"`
 }
 
@@ -370,62 +372,7 @@ severity: error`),
 		),
 	)
 
-	// Add remove_rule tool
-	removeRuleTool := mcp.NewTool("remove_rule",
-		mcp.WithDescription("Remove a specific ast-grep rule file from the local workspace's rule directory."),
-		mcp.WithString("rule_id",
-			mcp.Required(),
-			mcp.Description("The unique ID of the rule to be removed (e.g., 'no-sql-injection'). This should match the filename without the .yml extension."),
-		),
-	)
 
-	// Add initialize_ast_grep tool
-	initializeAstGrepTool := mcp.NewTool("initialize_ast_grep",
-		mcp.WithDescription("Sets up the current workspace for ast-grep by creating a default `sgconfig.yml` file and a `rules/` directory. This is a required first step before adding or importing local rules."),
-	)
-
-	// Add search_community_rules tool
-	searchCommunityRulesTool := mcp.NewTool("search_community_rules",
-		mcp.WithDescription(`Search the community rule repository for ast-grep rules.
-ast-grep uses abstract syntax trees to find specific code patterns, making it more accurate than text-based tools.
-
-Use this when you want to:
-- Detect specific code patterns or anti-patterns
-- Enforce coding standards and best practices
-- Find security vulnerabilities (SQL injection, etc.)
-- Catch maintenance issues or code smells
-- Analyze code quality and consistency
-
-Example: "Create a rule to catch SQL injection" → generates ast-grep YAML rules`),
-		mcp.WithString("query",
-			mcp.Required(),
-			mcp.Description("Natural language query (e.g., 'sql injection', 'check for todos')"),
-		),
-		mcp.WithString("language",
-			mcp.Description("Programming language (e.g., 'go', 'python')"),
-		),
-		mcp.WithString("tags",
-			mcp.Description("Comma-separated list of tags to filter by (e.g., 'security,database')"),
-		),
-	)
-
-	// Add get_community_rule_details tool
-	getCommunityRuleDetailsTool := mcp.NewTool("get_community_rule_details",
-		mcp.WithDescription("Get the full YAML content and explanation for a community rule"),
-		mcp.WithString("rule_id",
-			mcp.Required(),
-			mcp.Description("Unique identifier of the rule (e.g., 'ast-grep-go-sql-injection')"),
-		),
-	)
-
-	// Add import_community_rule tool
-	importCommunityRuleTool := mcp.NewTool("import_community_rule",
-		mcp.WithDescription("Download a community rule and add it to the local workspace"),
-		mcp.WithString("rule_id",
-			mcp.Required(),
-			mcp.Description("Unique identifier of the rule to import"),
-		),
-	)
 
 	// Add list_symbols_in_file tool
 	listSymbolsInFileTool := mcp.NewTool("list_symbols_in_file",
@@ -488,11 +435,6 @@ Example: "Create a rule to catch SQL injection" → generates ast-grep YAML rule
 	s.AddTool(searchDefinitionsTool, searchDefinitionsHandler)
 	s.AddTool(initializeScipTool, initializeScipHandler)
 	s.AddTool(addOrUpdateRuleTool, addOrUpdateRuleHandler)
-	s.AddTool(removeRuleTool, removeRuleHandler)
-	s.AddTool(initializeAstGrepTool, initializeAstGrepHandler)
-	s.AddTool(searchCommunityRulesTool, searchCommunityRulesHandler)
-	s.AddTool(getCommunityRuleDetailsTool, getCommunityRuleDetailsHandler)
-	s.AddTool(importCommunityRuleTool, importCommunityRuleHandler)
 	s.AddTool(astGrepScanTool, astGrepScanHandler)
 
 	// Test ast-grep binary and log version information
@@ -2170,73 +2112,111 @@ func getRuleDir() (string, error) {
 	return "", fmt.Errorf("sgconfig.yml not found. Please run 'ast-grep new' to initialize an ast-grep workspace first")
 }
 
-func removeRuleHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	ruleID, err := req.RequireString("rule_id")
+// RemoveLocalRule removes a specific rule from a configuration's rule directory.
+func RemoveLocalRule(configPath string, ruleID string) error {
+	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return fmt.Errorf("error reading config file: %v", err)
 	}
 
-	// Get the rule directory from sgconfig.yml
-	ruleDir, err := getRuleDir()
-	if err != nil {
-		// If sgconfig.yml doesn't exist, suggest using the initialize tool
-		if strings.Contains(err.Error(), "sgconfig.yml not found") {
-			return mcp.NewToolResultText(fmt.Sprintf("Error: %s. Please run the 'initialize_ast_grep' tool first to set up the workspace.", err.Error())), nil
+	var config SgConfig
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return fmt.Errorf("error parsing config file: %v", err)
+	}
+
+	if len(config.RuleDirs) == 0 {
+		return fmt.Errorf("no ruleDirs specified in config: %s", configPath)
+	}
+
+	configDir := filepath.Dir(configPath)
+	// Try each rule directory until we find and remove the rule
+	for _, rd := range config.RuleDirs {
+		ruleFile := filepath.Join(configDir, rd, ruleID+".yml")
+		if _, err := os.Stat(ruleFile); err == nil {
+			return os.Remove(ruleFile)
 		}
-		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	ruleFile := fmt.Sprintf("%s/%s.yml", ruleDir, ruleID)
-	if err := os.Remove(ruleFile); err != nil {
-		if os.IsNotExist(err) {
-			return mcp.NewToolResultText(fmt.Sprintf("Rule '%s' not found.", ruleID)), nil
-		}
-		return mcp.NewToolResultError(fmt.Sprintf("Error removing rule file: %v", err)), nil
-	}
-
-	return mcp.NewToolResultText(fmt.Sprintf("Rule '%s' was removed successfully.", ruleID)), nil
+	return fmt.Errorf("rule '%s' not found in any rule directories of %s", ruleID, configPath)
 }
 
-// initializeAstGrepHandler handles the initialize_ast_grep tool
-func initializeAstGrepHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var workspaceRoot string
-	var err error
-
-	if workspaceRootOverride != "" {
-		workspaceRoot = workspaceRootOverride
-	} else {
-		workspaceRoot, err = os.Getwd()
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Error getting current directory: %v", err)), nil
-		}
-	}
-
+// InitializeAstGrepConfig sets up a new ast-grep configuration in the target directory.
+func InitializeAstGrepConfig(directory string, language string) error {
 	// Create rules directory
-	rulesDir := filepath.Join(workspaceRoot, "rules")
+	rulesDir := filepath.Join(directory, "rules")
 	if err := os.MkdirAll(rulesDir, 0755); err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error creating rules directory: %v", err)), nil
+		return fmt.Errorf("error creating rules directory: %v", err)
 	}
 
 	// Create default sgconfig.yml
-	sgconfigPath := filepath.Join(workspaceRoot, "sgconfig.yml")
+	sgconfigPath := filepath.Join(directory, "sgconfig.yml")
 	if _, err := os.Stat(sgconfigPath); os.IsNotExist(err) {
 		config := SgConfig{
+			ID:       filepath.Base(directory) + "-config",
+			Language: language,
 			RuleDirs: []string{"rules"},
 		}
 		data, err := yaml.Marshal(config)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Error creating sgconfig.yml: %v", err)), nil
+			return fmt.Errorf("error creating sgconfig.yml: %v", err)
 		}
 		if err := os.WriteFile(sgconfigPath, data, 0644); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Error writing sgconfig.yml: %v", err)), nil
+			return fmt.Errorf("error writing sgconfig.yml: %v", err)
 		}
+	} else {
+		return fmt.Errorf("sgconfig.yml already exists in %s", directory)
 	}
 
-	return mcp.NewToolResultText("ast-grep has been initialized successfully. You can now add rules to the 'rules' directory."), nil
+	return nil
 }
 
-// fetchCommunityRuleIndex fetches and caches the community rule index
-func fetchCommunityRuleIndex() (*CommunityRuleIndex, error) {
+// GetWorkspaceConfigs recursively searches for all sgconfig.yml files in the workspace.
+func GetWorkspaceConfigs(workspaceRoot string) ([]map[string]interface{}, error) {
+	var configs []map[string]interface{}
+
+	err := filepath.WalkDir(workspaceRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if d.IsDir() {
+			// Skip common ignored directories
+			name := d.Name()
+			if name == ".git" || name == "node_modules" || name == "vendor" || name == ".context-sherpa" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		if d.Name() == "sgconfig.yml" {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return nil // Skip files we can't read
+			}
+
+			var config SgConfig
+			if err := yaml.Unmarshal(data, &config); err != nil {
+				return nil // Skip malformed configs
+			}
+
+			// Add metadata for frontend
+			configs = append(configs, map[string]interface{}{
+				"id":        config.ID,
+				"language":  config.Language,
+				"path":      path,
+				"directory": filepath.Dir(path),
+				"ruleDirs":  config.RuleDirs,
+			})
+		}
+
+		return nil
+	})
+
+	return configs, err
+}
+
+// FetchCommunityRuleIndex fetches and caches the community rule index
+func FetchCommunityRuleIndex() (*CommunityRuleIndex, error) {
 	// Check if we have a valid cached index
 	if communityRuleCache != nil && time.Since(cacheTimestamp) < cacheTTL {
 		verboseLog("Using cached community rule index")
@@ -2330,125 +2310,12 @@ func resolvePathRelativeToWorkspaceRoot(path, workspaceRoot string) string {
 	return resolvedPath
 }
 
-// searchCommunityRulesHandler handles the search_community_rules tool
-func searchCommunityRulesHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	query, err := req.RequireString("query")
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-
-	// Get optional parameters
-	var language string
-	if langVal, ok := req.Params.Arguments.(map[string]interface{})["language"]; ok {
-		if langStr, ok := langVal.(string); ok {
-			language = strings.ToLower(langStr)
-		}
-	}
-
-	var tags []string
-	if tagsVal, ok := req.Params.Arguments.(map[string]interface{})["tags"]; ok {
-		if tagsStr, ok := tagsVal.(string); ok && tagsStr != "" {
-			tags = strings.Split(tagsStr, ",")
-			for i, tag := range tags {
-				tags[i] = strings.ToLower(strings.TrimSpace(tag))
-			}
-		}
-	}
-
+// FetchCommunityRuleContent fetches the YAML content for a community rule
+func FetchCommunityRuleContent(ruleID string) (*CommunityRule, string, error) {
 	// Fetch the community rule index
-	index, err := fetchCommunityRuleIndex()
+	index, err := FetchCommunityRuleIndex()
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch community rules: %v", err)), nil
-	}
-
-	// Filter rules based on criteria
-	var matchingRules []CommunityRule
-	for _, rule := range index.Rules {
-		// Filter by language if specified
-		if language != "" && strings.ToLower(rule.Language) != language {
-			continue
-		}
-
-		// Filter by tags if specified (rule must have ALL specified tags)
-		if len(tags) > 0 {
-			hasAllTags := true
-			for _, requiredTag := range tags {
-				found := false
-				for _, ruleTag := range rule.Tags {
-					if strings.ToLower(ruleTag) == requiredTag {
-						found = true
-						break
-					}
-				}
-				if !found {
-					hasAllTags = false
-					break
-				}
-			}
-			if !hasAllTags {
-				continue
-			}
-		}
-
-		// If we get here, the rule matches our filters
-		matchingRules = append(matchingRules, rule)
-	}
-
-	// Apply query search to the filtered results
-	if query != "" {
-		queryLower := strings.ToLower(query)
-		var queryMatches []CommunityRule
-
-		for _, rule := range matchingRules {
-			// Search in ID, description, and tags
-			if strings.Contains(strings.ToLower(rule.ID), queryLower) ||
-				strings.Contains(strings.ToLower(rule.Description), queryLower) {
-				queryMatches = append(queryMatches, rule)
-				continue
-			}
-
-			// Search in tags
-			for _, tag := range rule.Tags {
-				if strings.Contains(strings.ToLower(tag), queryLower) {
-					queryMatches = append(queryMatches, rule)
-					break
-				}
-			}
-		}
-
-		matchingRules = queryMatches
-	}
-
-	// Format results
-	if len(matchingRules) == 0 {
-		return mcp.NewToolResultText("No community rules found matching your criteria."), nil
-	}
-
-	result := fmt.Sprintf("Found %d community rule(s) matching your criteria:\n\n", len(matchingRules))
-	for i, rule := range matchingRules {
-		result += fmt.Sprintf("%d. **%s** (%s)\n", i+1, rule.ID, rule.Language)
-		result += fmt.Sprintf("   Author: %s\n", rule.Author)
-		result += fmt.Sprintf("   Description: %s\n", rule.Description)
-		if len(rule.Tags) > 0 {
-			result += fmt.Sprintf("   Tags: %s\n", strings.Join(rule.Tags, ", "))
-		}
-		result += "\n"
-	}
-
-	return mcp.NewToolResultText(result), nil
-}
-
-// getCommunityRuleDetailsHandler handles the get_community_rule_details tool
-func getCommunityRuleDetailsHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	ruleID, err := req.RequireString("rule_id")
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-
-	// Fetch the community rule index
-	index, err := fetchCommunityRuleIndex()
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch community rules: %v", err)), nil
+		return nil, "", fmt.Errorf("failed to fetch community rules: %v", err)
 	}
 
 	// Find the rule
@@ -2461,153 +2328,44 @@ func getCommunityRuleDetailsHandler(ctx context.Context, req mcp.CallToolRequest
 	}
 
 	if foundRule == nil {
-		return mcp.NewToolResultText(fmt.Sprintf("Rule '%s' not found in community repository.", ruleID)), nil
+		return nil, "", fmt.Errorf("rule '%s' not found in community repository", ruleID)
 	}
 
 	// Fetch the actual rule YAML content
 	ruleURL := fmt.Sprintf("https://raw.githubusercontent.com/hackafterdark/context-sherpa-community-rules/main/%s", foundRule.Path)
 	resp, err := http.Get(ruleURL)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch rule content: %v", err)), nil
+		return foundRule, "", fmt.Errorf("failed to fetch rule content: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch rule content: HTTP %d", resp.StatusCode)), nil
+		return foundRule, "", fmt.Errorf("failed to fetch rule content: HTTP %d", resp.StatusCode)
 	}
 
 	// Read the YAML content
 	var buf []byte
-	if resp.ContentLength > 0 {
-		buf = make([]byte, resp.ContentLength)
-	} else {
-		// Read in chunks if ContentLength is unknown
-		chunkSize := 1024
-		buffer := make([]byte, chunkSize)
-		for {
-			n, err := resp.Body.Read(buffer)
-			if n > 0 {
-				buf = append(buf, buffer[:n]...)
+	chunkSize := 1024
+	buffer := make([]byte, chunkSize)
+	for {
+		n, err := resp.Body.Read(buffer)
+		if n > 0 {
+			buf = append(buf, buffer[:n]...)
+		}
+		if err != nil {
+			if err == io.EOF {
+				break
 			}
-			if err != nil {
-				if err.Error() == "EOF" {
-					break
-				}
-				return mcp.NewToolResultError(fmt.Sprintf("Failed to read rule content: %v", err)), nil
-			}
+			return foundRule, "", fmt.Errorf("failed to read rule content: %v", err)
 		}
 	}
 
-	yamlContent := string(buf)
-
-	// Format the response
-	result := fmt.Sprintf("Rule Details for '%s':\n\n", foundRule.ID)
-	result += fmt.Sprintf("**ID:** %s\n", foundRule.ID)
-	result += fmt.Sprintf("**Tool:** %s\n", foundRule.Tool)
-	result += fmt.Sprintf("**Language:** %s\n", foundRule.Language)
-	result += fmt.Sprintf("**Author:** %s\n", foundRule.Author)
-	result += fmt.Sprintf("**Description:** %s\n", foundRule.Description)
-	if len(foundRule.Tags) > 0 {
-		result += fmt.Sprintf("**Tags:** %s\n", strings.Join(foundRule.Tags, ", "))
-	}
-	result += "\n**YAML Content:**\n```yaml\n"
-	result += yamlContent
-	result += "\n```\n"
-
-	return mcp.NewToolResultText(result), nil
+	return foundRule, string(buf), nil
 }
 
-// importCommunityRuleHandler handles the import_community_rule tool
-func importCommunityRuleHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	ruleID, err := req.RequireString("rule_id")
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-
-	// Fetch the community rule index
-	index, err := fetchCommunityRuleIndex()
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch community rules: %v", err)), nil
-	}
-
-	// Find the rule
-	var foundRule *CommunityRule
-	for _, rule := range index.Rules {
-		if rule.ID == ruleID {
-			foundRule = &rule
-			break
-		}
-	}
-
-	if foundRule == nil {
-		return mcp.NewToolResultText(fmt.Sprintf("Rule '%s' not found in community repository.", ruleID)), nil
-	}
-
-	// Fetch the actual rule YAML content
-	ruleURL := fmt.Sprintf("https://raw.githubusercontent.com/hackafterdark/context-sherpa-community-rules/main/%s", foundRule.Path)
-	resp, err := http.Get(ruleURL)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch rule content: %v", err)), nil
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch rule content: HTTP %d", resp.StatusCode)), nil
-	}
-
-	// Read the YAML content
-	var buf []byte
-	if resp.ContentLength > 0 {
-		buf = make([]byte, resp.ContentLength)
-	} else {
-		// Read in chunks if ContentLength is unknown
-		chunkSize := 1024
-		buffer := make([]byte, chunkSize)
-		for {
-			n, err := resp.Body.Read(buffer)
-			if n > 0 {
-				buf = append(buf, buffer[:n]...)
-			}
-			if err != nil {
-				if err.Error() == "EOF" {
-					break
-				}
-				return mcp.NewToolResultError(fmt.Sprintf("Failed to read rule content: %v", err)), nil
-			}
-		}
-	}
-
-	yamlContent := string(buf)
-
-	// Validate the YAML content before writing to disk
-	if err := validateAstGrepRule(yamlContent); err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Invalid rule file for '%s': %v", ruleID, err)), nil
-	}
-
-	// Get the rule directory and save the file
-	ruleDir, err := getRuleDir()
-	if err != nil {
-		if strings.Contains(err.Error(), "sgconfig.yml not found") {
-			return mcp.NewToolResultText(fmt.Sprintf("Error: %s. Please run the 'initialize_ast_grep' tool first to set up the workspace.", err.Error())), nil
-		}
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-
-	// Extract just the filename from the path
-	pathParts := strings.Split(foundRule.Path, "/")
-	filename := pathParts[len(pathParts)-1]
-	ruleFile := filepath.Join(ruleDir, filename)
-
-	if err := os.WriteFile(ruleFile, []byte(yamlContent), 0644); err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error writing rule file: %v", err)), nil
-	}
-
-	return mcp.NewToolResultText(fmt.Sprintf("Rule '%s' was imported successfully from the community repository to %s.", ruleID, ruleFile)), nil
-}
-
-// validateAstGrepRule checks if the given YAML content is a valid ast-grep rule.
+// ValidateAstGrepRule checks if the given YAML content is a valid ast-grep rule.
 // It ensures the YAML is well-formed and contains the essential fields 'id', 'language', and 'rule'.
-func validateAstGrepRule(yamlContent string) error {
+func ValidateAstGrepRule(yamlContent string) error {
 	var rule AstGrepRule
 	if err := yaml.Unmarshal([]byte(yamlContent), &rule); err != nil {
 		return fmt.Errorf("could not parse YAML: %v", err)
