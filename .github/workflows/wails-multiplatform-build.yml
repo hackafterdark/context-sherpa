@@ -56,7 +56,7 @@ jobs:
           build-tags: ${{ matrix.tags }}
           package: true
           # Using project's preferred versions
-          go-version: '1.25' 
+          go-version-file: go.mod 
           node-version: '20'
 
   create-release:
