@@ -58,6 +58,10 @@ dist/
 build/
 # But do NOT ignore the .gitkeep file
 !frontend/dist/.gitkeep
+# keep these as well
+!build/icon.ico
+!build/appicon.ico
+!build/windows/icon.ico
 
 # Environment files
 .env

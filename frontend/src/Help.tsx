@@ -15,14 +15,9 @@ const Help = () => {
         { name: 'scan_path', desc: 'Scan files/directories/globs for rule violations.' },
         { name: 'get_symbol_map', desc: 'Definitions and references for a symbol (SCIP).' },
         { name: 'add_or_update_rule', desc: 'Create/update ast-grep rules via YAML.' },
-        { name: 'remove_rule', desc: 'Remove an ast-grep rule from the workspace.' },
-        { name: 'initialize_ast_grep', desc: 'Setup workspace for ast-grep (sgconfig.yml/rules).' },
-        { name: 'search_community_rules', desc: 'Search pre-built rules in the community repo.' },
-        { name: 'get_community_rule_details', desc: 'Full YAML content for community rules.' },
-        { name: 'import_community_rule', desc: 'Import community rules to local workspace.' },
         { name: 'ast_grep_scan', desc: 'Perform a structural search across the codebase using ast-grep patterns.' },
-        { name: 'list_symbols_in_file', desc: 'List classes, functions, and variables in a file.' },
-        { name: 'search_definitions', desc: 'Search for symbol definitions project-wide.' },
+        { name: 'list_symbols_in_file', desc: 'Lists symbols in a file with enriched metadata. Can be distilled into a summary.' },
+        { name: 'search_definitions', desc: 'Search for symbol definitions project-wide using SCIP.' },
         { name: 'initialize_scip', desc: 'Index workspace for SCIP-based navigation.' },
     ];
 

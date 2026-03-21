@@ -184,7 +184,6 @@ func toScipPath(workspaceRoot, inputPath string) string {
 	return res
 }
 
-
 // Start initializes and starts the MCP server.
 func Start(workspaceRoot string, verbose bool, logFilePath string, astGrepPath string, clientName string) {
 	if workspaceRoot == "" {
@@ -217,7 +216,6 @@ func Start(workspaceRoot string, verbose bool, logFilePath string, astGrepPath s
 		"1.0.0",
 		server.WithToolCapabilities(false),
 	)
-
 
 	s.AddTool(mcp.NewTool("query_local_reasoning",
 		mcp.WithDescription("(The Fallback) A catch-all tool for asking any open-ended semantic question about a code snippet that doesn't fit a specific template."),
@@ -371,8 +369,6 @@ message: "Use parameterized queries"
 severity: error`),
 		),
 	)
-
-
 
 	// Add list_symbols_in_file tool
 	listSymbolsInFileTool := mcp.NewTool("list_symbols_in_file",
@@ -1983,7 +1979,6 @@ func isSystemDir(path string) bool {
 	return false
 }
 
-
 func findAstGrepBinary(astGrepPath string) (string, error) {
 	// 1. User explicitly specified path (highest priority)
 	if astGrepPath != "" {
@@ -2060,7 +2055,6 @@ Please ensure ast-grep is available in one of these ways:
 3. Specify explicit path:
    context-sherpa --astGrepPath="/path/to/ast-grep"`)
 }
-
 
 // getRuleDir determines the directory where rules should be stored by searching
 // for sgconfig.yml in the current and parent directories.
@@ -2382,7 +2376,6 @@ func ValidateAstGrepRule(yamlContent string) error {
 
 	return nil
 }
-
 
 func runSLM(ctx context.Context, request mcp.CallToolRequest, prompt string) (*mcp.CallToolResult, error) {
 	modelID := ""
@@ -2792,7 +2785,7 @@ func (sr *SniffingReader) extractRoot(captured []byte) {
 		if customLogger != nil {
 			customLogger.Printf("SniffingReader: Found matching field %s with value %s", string(match[1]), uri)
 		}
-		
+
 		path := strings.TrimPrefix(uri, "file://")
 		// Windows: file:///C:/path -> /C:/path
 		if strings.HasPrefix(path, "/") && len(path) > 2 && path[2] == ':' {
