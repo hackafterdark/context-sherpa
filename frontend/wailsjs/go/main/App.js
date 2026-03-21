@@ -30,6 +30,10 @@ export function GetAstGrepStatus() {
   return window['go']['main']['App']['GetAstGrepStatus']();
 }
 
+export function GetCommunityRuleDetails(arg1) {
+  return window['go']['main']['App']['GetCommunityRuleDetails'](arg1);
+}
+
 export function GetDownloadProgress(arg1) {
   return window['go']['main']['App']['GetDownloadProgress'](arg1);
 }
@@ -46,6 +50,14 @@ export function GetInferenceModels() {
   return window['go']['main']['App']['GetInferenceModels']();
 }
 
+export function GetLocalRuleDetails(arg1) {
+  return window['go']['main']['App']['GetLocalRuleDetails'](arg1);
+}
+
+export function GetLocalRulesInDir(arg1) {
+  return window['go']['main']['App']['GetLocalRulesInDir'](arg1);
+}
+
 export function GetPreferences() {
   return window['go']['main']['App']['GetPreferences']();
 }
@@ -54,8 +66,20 @@ export function GetScipIndexerStatus(arg1) {
   return window['go']['main']['App']['GetScipIndexerStatus'](arg1);
 }
 
+export function GetWorkspaceConfigs(arg1) {
+  return window['go']['main']['App']['GetWorkspaceConfigs'](arg1);
+}
+
 export function GetWorkspaces() {
   return window['go']['main']['App']['GetWorkspaces']();
+}
+
+export function ImportCommunityRule(arg1, arg2) {
+  return window['go']['main']['App']['ImportCommunityRule'](arg1, arg2);
+}
+
+export function InitializeAstGrepConfig(arg1, arg2) {
+  return window['go']['main']['App']['InitializeAstGrepConfig'](arg1, arg2);
 }
 
 export function InstallAstGrep() {
@@ -86,6 +110,10 @@ export function PickDirectory() {
   return window['go']['main']['App']['PickDirectory']();
 }
 
+export function PickDirectoryWithRoot(arg1) {
+  return window['go']['main']['App']['PickDirectoryWithRoot'](arg1);
+}
+
 export function PullInferenceModel(arg1) {
   return window['go']['main']['App']['PullInferenceModel'](arg1);
 }
@@ -102,6 +130,10 @@ export function RegisterWorkspace(arg1) {
   return window['go']['main']['App']['RegisterWorkspace'](arg1);
 }
 
+export function RemoveLocalRule(arg1, arg2) {
+  return window['go']['main']['App']['RemoveLocalRule'](arg1, arg2);
+}
+
 export function RunIndexingTask(arg1) {
   return window['go']['main']['App']['RunIndexingTask'](arg1);
 }
@@ -112,6 +144,10 @@ export function RunInference(arg1, arg2) {
 
 export function SavePreferences(arg1) {
   return window['go']['main']['App']['SavePreferences'](arg1);
+}
+
+export function SearchCommunityRules(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SearchCommunityRules'](arg1, arg2, arg3);
 }
 
 export function SearchForIndexes(arg1) {

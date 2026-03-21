@@ -16,11 +16,15 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/linux"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+//go:embed build/appicon.png
+var icon []byte
 
 func initDebugLog(path string) *os.File {
 	if path == "" {
@@ -186,7 +190,14 @@ func main() {
 			About: &mac.AboutInfo{
 				Title:   "Context Sherpa Hub",
 				Message: "© 2026 Hack After Dark",
+				Icon:    icon,
 			},
+		},
+		Linux: &linux.Options{
+			Icon:                icon,
+			WindowIsTranslucent: false,
+			WebviewGpuPolicy:    linux.WebviewGpuPolicyAlways,
+			ProgramName:         "context-sherpa-hub",
 		},
 	})
 

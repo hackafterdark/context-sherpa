@@ -6,12 +6,13 @@ jobs:
     name: Test with Coverage
     runs-on: ubuntu-latest
     steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.24.3'
-    - name: Check out code
-      uses: actions/checkout@v4
+        go-version-file: go.mod
 
     - name: Download ast-grep binary for tests
       run: |

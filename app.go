@@ -67,6 +67,16 @@ type MarkdownEntry struct {
 	FrontMatter map[string]string `json:"frontMatter"`
 }
 
+// LocalRuleDetails represents the parsed content of a local rule file
+type LocalRuleDetails struct {
+	ID       string `json:"id"`
+	Message  string `json:"message"`
+	Severity string `json:"severity"`
+	Content  string `json:"content"`
+	Language string `json:"language"`
+	Path     string `json:"path"`
+}
+
 // NewApp creates a new App application struct
 func NewApp() *App {
 	return &App{}
@@ -2447,3 +2457,190 @@ func detectLanguage(docs []*scip.Document) string {
 		return "Generic"
 	}
 }
+// SearchCommunityRules searches for rules in the community repository.
+func (a *App) SearchCommunityRules(query string, language string, tags string) ([]mcp.CommunityRule, error) {
+	index, err := mcp.FetchCommunityRuleIndex()
+	if err != nil {
+		return nil, err
+	}
+
+	language = strings.ToLower(language)
+	var tagList []string
+	if tags != "" {
+		tagList = strings.Split(tags, ",")
+		for i, t := range tagList {
+			tagList[i] = strings.ToLower(strings.TrimSpace(t))
+		}
+	}
+
+	var matchingRules []mcp.CommunityRule
+	for _, rule := range index.Rules {
+		if language != "" && strings.ToLower(rule.Language) != language {
+			continue
+		}
+
+		if len(tagList) > 0 {
+			hasAll := true
+			for _, rt := range tagList {
+				found := false
+				for _, t := range rule.Tags {
+					if strings.ToLower(t) == rt {
+						found = true
+						break
+					}
+				}
+				if !found {
+					hasAll = false
+					break
+				}
+			}
+			if !hasAll {
+				continue
+			}
+		}
+		matchingRules = append(matchingRules, rule)
+	}
+
+	if query != "" {
+		queryLower := strings.ToLower(query)
+		var queryMatches []mcp.CommunityRule
+		for _, rule := range matchingRules {
+			if strings.Contains(strings.ToLower(rule.ID), queryLower) ||
+				strings.Contains(strings.ToLower(rule.Description), queryLower) {
+				queryMatches = append(queryMatches, rule)
+				continue
+			}
+			for _, t := range rule.Tags {
+				if strings.Contains(strings.ToLower(t), queryLower) {
+					queryMatches = append(queryMatches, rule)
+					break
+				}
+			}
+		}
+		matchingRules = queryMatches
+	}
+
+	return matchingRules, nil
+}
+
+// GetCommunityRuleDetails returns the rule metadata and YAML content.
+func (a *App) GetCommunityRuleDetails(ruleID string) (map[string]interface{}, error) {
+	rule, content, err := mcp.FetchCommunityRuleContent(ruleID)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"rule":    rule,
+		"content": content,
+	}, nil
+}
+
+// ImportCommunityRule downloads a community rule to a specific configuration's rule directory.
+func (a *App) ImportCommunityRule(configPath string, ruleID string) error {
+	rule, content, err := mcp.FetchCommunityRuleContent(ruleID)
+	if err != nil {
+		return err
+	}
+
+	// Validate the rule content
+	if err := mcp.ValidateAstGrepRule(content); err != nil {
+		return err
+	}
+
+	// Resolve rule directory (usually 'rules' relative to config)
+	configDir := filepath.Dir(configPath)
+	ruleDir := filepath.Join(configDir, "rules") // Default fallback
+
+	data, err := os.ReadFile(configPath)
+	if err == nil {
+		var config mcp.SgConfig
+		if err := yaml.Unmarshal(data, &config); err == nil && len(config.RuleDirs) > 0 {
+			ruleDir = filepath.Join(configDir, config.RuleDirs[0])
+		}
+	}
+
+	if err := os.MkdirAll(ruleDir, 0755); err != nil {
+		return fmt.Errorf("failed to create rule directory: %w", err)
+	}
+
+	filename := filepath.Base(rule.Path)
+	destPath := filepath.Join(ruleDir, filename)
+
+	return os.WriteFile(destPath, []byte(content), 0644)
+}
+
+// GetWorkspaceConfigs recursively searches for all sgconfig.yml files in the workspace.
+func (a *App) GetWorkspaceConfigs(workspaceRoot string) ([]map[string]interface{}, error) {
+	return mcp.GetWorkspaceConfigs(workspaceRoot)
+}
+
+// InitializeAstGrepConfig sets up a new ast-grep configuration in the target directory.
+func (a *App) InitializeAstGrepConfig(directory string, language string) error {
+	return mcp.InitializeAstGrepConfig(directory, language)
+}
+
+// RemoveLocalRule removes a specific rule from a configuration's rule directory.
+func (a *App) RemoveLocalRule(configPath string, ruleID string) error {
+	return mcp.RemoveLocalRule(configPath, ruleID)
+}
+
+func (a *App) GetLocalRulesInDir(directory string) ([]string, error) {
+	files, err := os.ReadDir(directory)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+
+	var rules []string
+	for _, f := range files {
+		if !f.IsDir() && (strings.HasSuffix(f.Name(), ".yml") || strings.HasSuffix(f.Name(), ".yaml")) {
+			rules = append(rules, f.Name())
+		}
+	}
+	return rules, nil
+}
+
+// GetLocalRuleDetails reads a local rule file and extracts key information
+func (a *App) GetLocalRuleDetails(rulePath string) (*LocalRuleDetails, error) {
+	data, err := os.ReadFile(rulePath)
+	if err != nil {
+		return nil, err
+	}
+
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("failed to parse YAML: %w", err)
+	}
+
+	details := &LocalRuleDetails{
+		Content: string(data),
+		Path:    rulePath,
+	}
+
+	if id, ok := raw["id"].(string); ok {
+		details.ID = id
+	}
+	if msg, ok := raw["message"].(string); ok {
+		details.Message = msg
+	}
+	if sev, ok := raw["severity"].(string); ok {
+		details.Severity = sev
+	}
+	if lang, ok := raw["language"].(string); ok {
+		details.Language = lang
+	}
+
+	return details, nil
+}
+
+// PickDirectoryWithRoot opens a native directory picker starting from the given root
+func (a *App) PickDirectoryWithRoot(startDir string) (string, error) {
+	return wailsRuntime.OpenDirectoryDialog(a.ctx, wailsRuntime.OpenDialogOptions{
+		Title:            "Select Directory",
+		DefaultDirectory: startDir,
+	})
+}
+

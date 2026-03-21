@@ -85,10 +85,10 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
         } catch (e: any) {
             console.error("Error regenerating index:", e);
             const msg = e?.toString() || 'Unknown error';
-            setIndexingStatus({ 
-                type: 'error', 
-                message: msg.includes('missing tsconfig.json') 
-                    ? 'Failed: Missing tsconfig.json in project root.' 
+            setIndexingStatus({
+                type: 'error',
+                message: msg.includes('missing tsconfig.json')
+                    ? 'Failed: Missing tsconfig.json in project root.'
                     : `Indexing failed: ${msg.split('\n')[0]}`
             });
         } finally {
@@ -106,10 +106,9 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
                         {node.name}
                     </div>
                 ) : (
-                    <div className={`group flex items-center pr-2 rounded-lg transition-all border ${
-                        selectedIndex === node.path
-                            ? 'bg-primary/10 text-primary font-bold border-primary/20'
-                            : 'hover:bg-base-200 border-transparent'
+                    <div className={`group flex items-center pr-2 rounded-lg transition-all border ${selectedIndex === node.path
+                        ? 'bg-primary/10 text-primary font-bold border-primary/20'
+                        : 'hover:bg-base-200 border-transparent'
                         }`}
                         style={{ marginLeft: depth * 12 }}
                     >
@@ -127,10 +126,9 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
                                 handleRegenerateIndex(node.path);
                             }}
                             disabled={regenerating[node.path]}
-                            className={`p-1 rounded-md transition-all ${
-                                regenerating[node.path] || selectedIndex === node.path 
-                                    ? 'opacity-100' 
-                                    : 'opacity-0 group-hover:opacity-60 hover:opacity-100 hover:bg-base-300'
+                            className={`p-1 rounded-md transition-all ${regenerating[node.path] || selectedIndex === node.path
+                                ? 'opacity-100'
+                                : 'opacity-0 group-hover:opacity-60 hover:opacity-100 hover:bg-base-300'
                                 }`}
                             title="Regenerate Index"
                         >
@@ -607,7 +605,7 @@ ${snippet || '// No content available'}
                                                 <Icon icon="lucide:folder-tree" className={`w-3.5 h-3.5 ${ws.root === workspaceRoot ? 'text-primary' : 'opacity-40'}`} />
                                                 <span className="font-bold text-xs truncate flex-1 leading-none">{ws.root.split(/[\\/]/).pop() || ws.root}</span>
                                             </div>
-                                            <span className="text-[9px] opacity-30 font-mono truncate w-full pl-6 leading-none">
+                                            <span className="text-[10px] opacity-30 font-mono truncate w-full pl-6 leading-none">
                                                 {ws.root}
                                             </span>
                                         </button>
@@ -619,9 +617,8 @@ ${snippet || '// No content available'}
                 </div>
 
                 {indexingStatus && (
-                    <div className={`p-4 rounded-xl border flex items-center gap-3 animate-in fade-in slide-in-from-top-2 duration-300 shadow-lg ${
-                        indexingStatus.type === 'success' ? 'bg-success/10 text-success border-success/20' : 'bg-error/10 text-error border-error/20'
-                    }`}>
+                    <div className={`p-4 rounded-xl border flex items-center gap-3 animate-in fade-in slide-in-from-top-2 duration-300 shadow-lg ${indexingStatus.type === 'success' ? 'bg-success/10 text-success border-success/20' : 'bg-error/10 text-error border-error/20'
+                        }`}>
                         <Icon icon={indexingStatus.type === 'success' ? 'lucide:check-circle' : 'lucide:alert-circle'} className="w-4 h-4" />
                         <span className="text-[11px] font-black uppercase tracking-widest">{indexingStatus.message}</span>
                         <button onClick={() => setIndexingStatus(null)} className="ml-2 hover:opacity-50">
@@ -666,7 +663,7 @@ ${snippet || '// No content available'}
                                                 />
                                                 <span className="text-xs font-bold truncate">{res.name}</span>
                                             </div>
-                                            <span className="text-[9px] uppercase font-black opacity-30 group-hover:opacity-100 bg-base-200/50 group-hover:bg-primary-focus px-1.5 py-0.5 rounded ml-2 shrink-0">
+                                            <span className="text-[10px] uppercase font-black opacity-30 group-hover:opacity-100 bg-base-200/50 group-hover:bg-primary-focus px-1.5 py-0.5 rounded ml-2 shrink-0">
                                                 {getKindLabel(res.kind)}
                                             </span>
                                         </button>
@@ -724,7 +721,7 @@ ${snippet || '// No content available'}
                         </div>
 
                         <div className="bg-base-100/90 backdrop-blur-xl border border-base-300/50 rounded-xl p-4 shadow-xl ring-1 ring-black/5 pointer-events-auto">
-                            <div className="text-[9px] font-black uppercase tracking-[0.2em] opacity-30 mb-3 ml-1">Symbol Legend</div>
+                            <div className="text-[10px] font-black uppercase tracking-[0.2em] opacity-30 mb-3 ml-1">Symbol Legend</div>
                             <div className="grid grid-cols-2 gap-x-6 gap-y-3">
                                 <div className="flex items-center gap-2.5">
                                     <div className="w-2.5 h-2.5 rounded-full bg-[#f59e0b] shadow-sm"></div>
@@ -858,7 +855,7 @@ ${snippet || '// No content available'}
                                                                             <Icon icon={m.kind === 'Field' ? 'lucide:box' : 'lucide:function-square'} className={`w-3.5 h-3.5 ${m.kind === 'Field' ? 'text-blue-400' : 'text-purple-400'} opacity-60`} />
                                                                             <span className="text-[11px] font-bold tracking-tight">{m.name}</span>
                                                                         </div>
-                                                                        <span className="text-[9px] font-mono opacity-30 group-hover:opacity-60 transition-opacity uppercase font-black">{m.type || 'any'}</span>
+                                                                        <span className="text-[10px] font-mono opacity-30 group-hover:opacity-60 transition-opacity uppercase font-black">{m.type || 'any'}</span>
                                                                     </div>
                                                                 ))}
                                                             </div>
