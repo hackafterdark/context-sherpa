@@ -65,6 +65,7 @@ export default function PatternRegistry({ workspaceRoot, onWorkspaceChange }: Ru
     const [localRuleDetails, setLocalRuleDetails] = useState<any>(null);
     const [isLocalDetailsLoading, setIsLocalDetailsLoading] = useState(false);
     const [ruleToDelete, setRuleToDelete] = useState<{ name: string; dir: string } | null>(null);
+    const [selectedTag, setSelectedTag] = useState('');
 
     useEffect(() => {
         const fetchWorkspaces = async () => {
@@ -127,8 +128,8 @@ export default function PatternRegistry({ workspaceRoot, onWorkspaceChange }: Ru
         if (!selectedConfig) return;
         setLoading(true);
         try {
-            // Auto-filter by language based on selected config
-            const results = await SearchCommunityRules(searchQuery, selectedConfig.language, '');
+            // Auto-filter by language based on selected config, and include selectedTag
+            const results = await SearchCommunityRules(searchQuery, selectedConfig.language, selectedTag);
             setRules(results || []);
         } catch (e) {
             console.error("Error searching rules:", e);
@@ -136,6 +137,10 @@ export default function PatternRegistry({ workspaceRoot, onWorkspaceChange }: Ru
             setLoading(false);
         }
     };
+
+    useEffect(() => {
+        handleSearch();
+    }, [selectedTag]);
 
     const fetchLocalRules = async () => {
         if (!selectedConfig) return;
@@ -359,20 +364,32 @@ export default function PatternRegistry({ workspaceRoot, onWorkspaceChange }: Ru
                                         </div>
 
                                         {/* Live Search Bar */}
-                                        <div className="relative group min-w-[300px]">
-                                            <input
-                                                type="text"
-                                                placeholder="Search ast-grep rules..."
-                                                className="input input-bordered w-full bg-base-100 h-10 text-xs border-base-300 rounded-xl pl-10 focus:border-primary/50 transition-all shadow-sm"
-                                                value={searchQuery}
-                                                onChange={(e) => setSearchQuery(e.target.value)}
-                                            />
-                                            <Icon icon="lucide:search" className="absolute left-3.5 top-1/2 -translate-y-1/2 opacity-20 group-focus-within:opacity-100 transition-opacity w-4 h-4" />
-                                            {loading && (
-                                                <div className="absolute right-3.5 top-1/2 -translate-y-1/2">
-                                                    <span className="loading loading-spinner loading-xs text-primary/50"></span>
-                                                </div>
+                                        <div className="flex items-center gap-3 min-w-[400px]">
+                                            {selectedTag && (
+                                                <button
+                                                    className="badge badge-primary badge-outline badge-lg gap-2 font-black uppercase text-[9px] tracking-widest shrink-0 h-10 px-4 group hover:bg-primary hover:text-white transition-all border-dashed"
+                                                    onClick={() => setSelectedTag('')}
+                                                >
+                                                    <Icon icon="lucide:tag" className="w-3.5 h-3.5" />
+                                                    {selectedTag}
+                                                    <Icon icon="lucide:x" className="w-3 h-3 ml-1 group-hover:scale-125 transition-transform" />
+                                                </button>
                                             )}
+                                            <div className="relative group flex-1">
+                                                <input
+                                                    type="text"
+                                                    placeholder="Search ast-grep rules..."
+                                                    className="input input-bordered w-full bg-base-100 h-10 text-xs border-base-300 rounded-xl pl-10 focus:border-primary/50 transition-all shadow-sm"
+                                                    value={searchQuery}
+                                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                                />
+                                                <Icon icon="lucide:search" className="absolute left-3.5 top-1/2 -translate-y-1/2 opacity-20 group-focus-within:opacity-100 transition-opacity w-4 h-4" />
+                                                {loading && (
+                                                    <div className="absolute right-3.5 top-1/2 -translate-y-1/2">
+                                                        <span className="loading loading-spinner loading-xs text-primary/50"></span>
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
 
@@ -390,26 +407,34 @@ export default function PatternRegistry({ workspaceRoot, onWorkspaceChange }: Ru
                                                         )}
                                                     </div>
                                                     <p className="text-[13px] opacity-70 leading-relaxed line-clamp-2 h-10">{rule.description}</p>
-                                                    <div className="flex items-center justify-between mt-2">
-                                                        <div className="flex gap-1.5 flex-wrap">
-                                                            {rule.tags?.slice(0, 3).map(tag => (
-                                                                <span key={tag} className="px-2 py-0.5 bg-base-200 rounded-md text-[10px] font-black opacity-40 uppercase tracking-widest leading-none">#{tag}</span>
-                                                            ))}
-                                                        </div>
-                                                        <div className="card-actions justify-end gap-2 shrink-0">
+                                                    <div className="flex gap-1.5 flex-wrap max-h-5 overflow-hidden mt-1">
+                                                        {rule.tags?.map(tag => (
                                                             <button
-                                                                className="btn btn-ghost btn-xs h-8 min-h-0 font-black uppercase tracking-widest text-[9px] hover:bg-base-200"
+                                                                key={tag}
+                                                                className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest leading-none transition-all hover:scale-105 active:scale-95 ${selectedTag === tag ? 'bg-primary text-white opacity-100' : 'bg-base-200 opacity-40 hover:opacity-100 animate-pulse'}`}
+                                                                style={{ animationDuration: '3s' }}
+                                                                onClick={() => setSelectedTag(tag === selectedTag ? '' : tag)}
+                                                            >
+                                                                #{tag}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                    <div className="flex items-center justify-end mt-2 pt-4 border-t border-base-200/50">
+                                                        <div className="card-actions justify-end gap-2">
+                                                            <button
+                                                                className="btn btn-ghost btn-xs font-black uppercase tracking-widest text-[9px] h-8 px-3 rounded-lg"
                                                                 onClick={() => showRuleDetails(rule)}
                                                             >
+                                                                <Icon icon="lucide:info" className="w-3 h-3" />
                                                                 Details
                                                             </button>
                                                             {!isRuleInstalled(rule.id) && (
                                                                 <button
-                                                                    className="btn btn-primary btn-xs h-8 min-h-0 font-black uppercase tracking-widest text-[9px] px-4 shadow-lg shadow-primary/20"
+                                                                    className="btn btn-primary btn-xs font-black uppercase tracking-widest text-[9px] h-8 px-4 rounded-lg bg-primary hover:bg-primary-focus border-none"
                                                                     onClick={() => handleImport(rule.id)}
                                                                     disabled={importing === rule.id}
                                                                 >
-                                                                    {importing === rule.id ? <span className="loading loading-spinner loading-[10px]"></span> : "Import"}
+                                                                    {importing === rule.id ? <span className="loading loading-spinner loading-xs"></span> : "Import"}
                                                                 </button>
                                                             )}
                                                         </div>
@@ -498,6 +523,26 @@ export default function PatternRegistry({ workspaceRoot, onWorkspaceChange }: Ru
                                 <h4 className="text-[10px] font-black uppercase tracking-[0.2em] opacity-30 mb-3 ml-1">Overview</h4>
                                 <div className="p-5 bg-base-200/50 rounded-2xl border border-base-300 text-sm leading-relaxed font-medium">
                                     {selectedRule.description}
+                                </div>
+                            </div>
+                            <div>
+                                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] opacity-30 mb-3 ml-1">Tags</h4>
+                                <div className="flex gap-2 flex-wrap pb-2">
+                                    {selectedRule.tags?.map(tag => (
+                                        <button
+                                            key={tag}
+                                            className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all hover:scale-105 active:scale-95 ${selectedTag === tag ? 'bg-primary text-white shadow-lg shadow-primary/30' : 'bg-base-200 opacity-60 hover:opacity-100 border border-base-300'}`}
+                                            onClick={() => {
+                                                setSelectedTag(tag);
+                                                setSelectedRule(null);
+                                            }}
+                                        >
+                                            #{tag}
+                                        </button>
+                                    ))}
+                                    {(!selectedRule.tags || selectedRule.tags.length === 0) && (
+                                        <span className="text-[10px] opacity-20 italic font-medium ml-1">No tags available</span>
+                                    )}
                                 </div>
                             </div>
                             <div className="flex-1 flex flex-col min-h-0">
