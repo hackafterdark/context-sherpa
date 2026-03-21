@@ -274,7 +274,7 @@ export default function PatternRegistry({ workspaceRoot, onWorkspaceChange }: Ru
                                                 <Icon icon="lucide:folder-tree" className={`w-3.5 h-3.5 ${ws.root === workspaceRoot ? 'text-primary' : 'opacity-40'}`} />
                                                 <span className="font-bold text-xs truncate flex-1 leading-none">{ws.root.split(/[\\/]/).pop() || ws.root}</span>
                                             </div>
-                                            <span className="text-[9px] opacity-30 font-mono truncate w-full pl-6 leading-none">
+                                            <span className="text-[10px] opacity-30 font-mono truncate w-full pl-6 leading-none">
                                                 {ws.root}
                                             </span>
                                         </button>
@@ -343,7 +343,7 @@ export default function PatternRegistry({ workspaceRoot, onWorkspaceChange }: Ru
                                     <div>
                                         <h2 className="text-xl font-black tracking-tight flex items-center gap-3">
                                             {selectedConfig.id}
-                                            <div className="badge badge-sm badge-primary uppercase font-black text-[9px] tracking-widest">{selectedConfig.language}</div>
+                                            <div className="badge badge-sm badge-primary uppercase font-black text-[10px] tracking-widest">{selectedConfig.language}</div>
                                         </h2>
                                         <p className="text-[11px] opacity-60 font-mono mt-1 flex items-center gap-1.5">
                                             <Icon icon="lucide:map-pin" className="w-3 h-3 opacity-40" />
@@ -367,7 +367,7 @@ export default function PatternRegistry({ workspaceRoot, onWorkspaceChange }: Ru
                                         <div className="flex items-center gap-3 min-w-[400px]">
                                             {selectedTag && (
                                                 <button
-                                                    className="badge badge-primary badge-outline badge-lg gap-2 font-black uppercase text-[9px] tracking-widest shrink-0 h-10 px-4 group hover:bg-primary hover:text-white transition-all border-dashed"
+                                                    className="badge badge-primary badge-outline badge-lg gap-2 font-black uppercase text-[10px] tracking-widest shrink-0 h-10 px-4 group hover:bg-primary hover:text-white transition-all border-dashed"
                                                     onClick={() => setSelectedTag('')}
                                                 >
                                                     <Icon icon="lucide:tag" className="w-3.5 h-3.5" />
@@ -411,7 +411,7 @@ export default function PatternRegistry({ workspaceRoot, onWorkspaceChange }: Ru
                                                         {rule.tags?.map(tag => (
                                                             <button
                                                                 key={tag}
-                                                                className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest leading-none transition-all hover:scale-105 active:scale-95 ${selectedTag === tag ? 'bg-primary text-white opacity-100' : 'bg-base-200 opacity-40 hover:opacity-100 animate-pulse'}`}
+                                                                className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-widest leading-none transition-all hover:scale-105 active:scale-95 ${selectedTag === tag ? 'bg-primary text-white opacity-100' : 'bg-base-200 opacity-40 hover:opacity-100 animate-pulse'}`}
                                                                 style={{ animationDuration: '3s' }}
                                                                 onClick={() => setSelectedTag(tag === selectedTag ? '' : tag)}
                                                             >
@@ -422,15 +422,14 @@ export default function PatternRegistry({ workspaceRoot, onWorkspaceChange }: Ru
                                                     <div className="flex items-center justify-end mt-2 pt-4 border-t border-base-200/50">
                                                         <div className="card-actions justify-end gap-2">
                                                             <button
-                                                                className="btn btn-ghost btn-xs font-black uppercase tracking-widest text-[9px] h-8 px-3 rounded-lg"
+                                                                className="btn btn-ghost btn-xs font-black uppercase tracking-widest text-[10px] h-8 px-3 rounded-lg"
                                                                 onClick={() => showRuleDetails(rule)}
                                                             >
-                                                                <Icon icon="lucide:info" className="w-3 h-3" />
                                                                 Details
                                                             </button>
                                                             {!isRuleInstalled(rule.id) && (
                                                                 <button
-                                                                    className="btn btn-primary btn-xs font-black uppercase tracking-widest text-[9px] h-8 px-4 rounded-lg bg-primary hover:bg-primary-focus border-none"
+                                                                    className="btn btn-primary btn-xs font-black uppercase tracking-widest text-[10px] h-8 px-4 rounded-lg bg-primary hover:bg-primary-focus border-none"
                                                                     onClick={() => handleImport(rule.id)}
                                                                     disabled={importing === rule.id}
                                                                 >
@@ -607,7 +606,7 @@ export default function PatternRegistry({ workspaceRoot, onWorkspaceChange }: Ru
                         <div className="space-y-6">
                             <div className="form-control w-full">
                                 <label className="label py-1">
-                                    <span className="label-text text-[10px] font-black uppercase tracking-widest opacity-40">Target Directory</span>
+                                    <span className="label-text text-[11px] font-black uppercase tracking-widest opacity-40">Target Directory</span>
                                 </label>
                                 <div className="relative group flex gap-2">
                                     <div className="relative flex-1 group">
@@ -629,13 +628,13 @@ export default function PatternRegistry({ workspaceRoot, onWorkspaceChange }: Ru
                                     </button>
                                 </div>
                                 <label className="label py-0.5 px-1 mt-1">
-                                    <span className="label-text-alt opacity-30 text-[9px]">Will create <b>sgconfig.yml</b> and <b>rules/</b></span>
+                                    <span className="label-text-alt opacity-30 text-[12px]">Will create <b>sgconfig.yml</b> and <b>rules/</b></span>
                                 </label>
                             </div>
 
                             <div className="form-control w-full">
                                 <label className="label py-1">
-                                    <span className="label-text text-[10px] font-black uppercase tracking-widest opacity-40">Primary Language</span>
+                                    <span className="label-text text-[11px] font-black uppercase tracking-widest opacity-40">Primary Language</span>
                                 </label>
                                 <div className="relative group">
                                     <select

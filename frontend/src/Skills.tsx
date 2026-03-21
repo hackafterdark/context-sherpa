@@ -222,7 +222,7 @@ export default function Skills({ workspaceRoot, onWorkspaceChange, theme }: Skil
                                                 <Icon icon="lucide:folder-tree" className={`w-3.5 h-3.5 ${ws.root === workspaceRoot ? 'text-primary' : 'opacity-40'}`} />
                                                 <span className="font-bold text-xs truncate flex-1 leading-none">{ws.root.split(/[\\/]/).pop() || ws.root}</span>
                                             </div>
-                                            <span className="text-[9px] opacity-30 font-mono truncate w-full pl-6 leading-none">
+                                            <span className="text-[10px] opacity-30 font-mono truncate w-full pl-6 leading-none">
                                                 {ws.root}
                                             </span>
                                         </button>
