@@ -50,6 +50,10 @@ export function GetInferenceModels() {
   return window['go']['main']['App']['GetInferenceModels']();
 }
 
+export function GetLocalRuleDetails(arg1) {
+  return window['go']['main']['App']['GetLocalRuleDetails'](arg1);
+}
+
 export function GetLocalRulesInDir(arg1) {
   return window['go']['main']['App']['GetLocalRulesInDir'](arg1);
 }
@@ -104,6 +108,10 @@ export function OpenWorkspace(arg1) {
 
 export function PickDirectory() {
   return window['go']['main']['App']['PickDirectory']();
+}
+
+export function PickDirectoryWithRoot(arg1) {
+  return window['go']['main']['App']['PickDirectoryWithRoot'](arg1);
 }
 
 export function PullInferenceModel(arg1) {

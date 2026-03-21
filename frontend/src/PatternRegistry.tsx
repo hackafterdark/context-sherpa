@@ -8,7 +8,9 @@ import {
     GetWorkspaceConfigs,
     InitializeAstGrepConfig,
     RemoveLocalRule,
-    GetLocalRulesInDir
+    GetLocalRulesInDir,
+    GetLocalRuleDetails,
+    PickDirectoryWithRoot
 } from '../wailsjs/go/main/App';
 import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
 
@@ -33,6 +35,13 @@ type SgConfig = {
     ruleDirs: string[];
 };
 
+const SUPPORTED_LANGUAGES = [
+    'go', 'python', 'typescript', 'javascript', 'rust', 'cpp', 'java',
+    'kotlin', 'swift', 'c', 'css', 'html', 'json', 'yaml', 'toml',
+    'ruby', 'php', 'scala', 'bash', 'dart', 'elixir', 'haskell',
+    'lua', 'perl', 'sql', 'zig'
+];
+
 export default function PatternRegistry({ workspaceRoot, onWorkspaceChange }: RulesProps) {
     const [searchQuery, setSearchQuery] = useState('');
     const [rules, setRules] = useState<CommunityRule[]>([]);
@@ -51,6 +60,11 @@ export default function PatternRegistry({ workspaceRoot, onWorkspaceChange }: Ru
     const [initPath, setInitPath] = useState('');
     const [initLang, setInitLang] = useState('go');
     const [isInitializing, setIsInitializing] = useState(false);
+
+    // Phase 5 additions
+    const [localRuleDetails, setLocalRuleDetails] = useState<any>(null);
+    const [isLocalDetailsLoading, setIsLocalDetailsLoading] = useState(false);
+    const [ruleToDelete, setRuleToDelete] = useState<{ name: string; dir: string } | null>(null);
 
     useEffect(() => {
         const fetchWorkspaces = async () => {
@@ -168,12 +182,37 @@ export default function PatternRegistry({ workspaceRoot, onWorkspaceChange }: Ru
 
     const handleRemove = async (ruleName: string) => {
         if (!selectedConfig) return;
-        const ruleID = ruleName.replace(/\.ya?ml$/, '');
         try {
-            await RemoveLocalRule(selectedConfig.path, ruleID);
-            await fetchLocalRules();
+            await RemoveLocalRule(selectedConfig.path, ruleName.replace(/\.ya?ml$/, ''));
+            setRuleToDelete(null);
+            fetchLocalRules();
         } catch (e) {
             console.error("Error removing rule:", e);
+        }
+    };
+
+    const handleInspectLocalRule = async (rule: { name: string; dir: string }) => {
+        setIsLocalDetailsLoading(true);
+        setLocalRuleDetails(null);
+        try {
+            const path = rule.dir + '/' + rule.name;
+            const details = await GetLocalRuleDetails(path);
+            setLocalRuleDetails(details);
+        } catch (e) {
+            console.error("Error fetching local rule details:", e);
+        } finally {
+            setIsLocalDetailsLoading(false);
+        }
+    };
+
+    const handleBrowse = async () => {
+        try {
+            const selected = await PickDirectoryWithRoot(workspaceRoot);
+            if (selected) {
+                setInitPath(selected);
+            }
+        } catch (e) {
+            console.error("Error picking directory:", e);
         }
     };
 
@@ -398,17 +437,27 @@ export default function PatternRegistry({ workspaceRoot, onWorkspaceChange }: Ru
                                     </div>
                                     <div className="flex flex-col gap-3">
                                         {localRules.map(rule => (
-                                            <div key={rule.name + rule.dir} className="flex items-center justify-between p-4 bg-base-100 rounded-2xl border border-base-200 shadow-sm group hover:border-error/30 transition-all duration-300">
+                                            <div key={rule.name + rule.dir} className="flex items-center justify-between p-4 bg-base-100 rounded-2xl border border-base-200 shadow-sm group hover:border-primary/20 transition-all duration-300">
                                                 <div className="flex flex-col min-w-0 pr-3">
                                                     <span className="text-xs font-black truncate leading-tight tracking-tight">{rule.name.replace(/\.ya?ml$/, '')}</span>
                                                     <span className="text-[10px] opacity-30 font-mono truncate mt-1">{rule.dir.replace(workspaceRoot, '').replace(/^[\\/]/, '') || './'}</span>
                                                 </div>
-                                                <button
-                                                    className="btn btn-ghost btn-xs btn-square text-error opacity-0 group-hover:opacity-100 transition-opacity"
-                                                    onClick={() => handleRemove(rule.name)}
-                                                >
-                                                    <Icon icon="lucide:trash-2" className="w-4 h-4" />
-                                                </button>
+                                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <button
+                                                        className="btn btn-ghost btn-xs btn-square text-primary/60 hover:text-primary"
+                                                        onClick={() => handleInspectLocalRule(rule)}
+                                                        title="Inspect Rule"
+                                                    >
+                                                        <Icon icon="lucide:eye" className="w-4 h-4" />
+                                                    </button>
+                                                    <button
+                                                        className="btn btn-ghost btn-xs btn-square text-error/60 hover:text-error"
+                                                        onClick={() => setRuleToDelete(rule)}
+                                                        title="Delete Rule"
+                                                    >
+                                                        <Icon icon="lucide:trash-2" className="w-4 h-4" />
+                                                    </button>
+                                                </div>
                                             </div>
                                         ))}
                                         {localRules.length === 0 && (
@@ -515,15 +564,24 @@ export default function PatternRegistry({ workspaceRoot, onWorkspaceChange }: Ru
                                 <label className="label py-1">
                                     <span className="label-text text-[10px] font-black uppercase tracking-widest opacity-40">Target Directory</span>
                                 </label>
-                                <div className="relative group">
-                                    <Icon icon="lucide:folder-open" className="absolute left-3.5 top-1/2 -translate-y-1/2 opacity-30 group-focus-within:opacity-100 text-primary transition-opacity" />
-                                    <input
-                                        type="text"
-                                        className="input input-bordered w-full pl-11 h-12 text-sm font-mono border-base-300 focus:border-primary/50 transition-all rounded-xl"
-                                        value={initPath}
-                                        onChange={(e) => setInitPath(e.target.value)}
-                                        placeholder="Full path to directory..."
-                                    />
+                                <div className="relative group flex gap-2">
+                                    <div className="relative flex-1 group">
+                                        <Icon icon="lucide:folder-open" className="absolute left-3.5 top-1/2 -translate-y-1/2 opacity-30 group-focus-within:opacity-100 text-primary transition-opacity" />
+                                        <input
+                                            type="text"
+                                            className="input input-bordered w-full pl-11 h-12 text-sm font-mono border-base-300 focus:border-primary/50 transition-all rounded-xl"
+                                            value={initPath}
+                                            onChange={(e) => setInitPath(e.target.value)}
+                                            placeholder="Full path to directory..."
+                                        />
+                                    </div>
+                                    <button
+                                        className="btn btn-square btn-ghost h-12 w-12 border border-base-300 rounded-xl hover:bg-base-200"
+                                        onClick={handleBrowse}
+                                        title="Browse directory"
+                                    >
+                                        <Icon icon="lucide:search" className="w-5 h-5 opacity-40" />
+                                    </button>
                                 </div>
                                 <label className="label py-0.5 px-1 mt-1">
                                     <span className="label-text-alt opacity-30 text-[9px]">Will create <b>sgconfig.yml</b> and <b>rules/</b></span>
@@ -534,17 +592,16 @@ export default function PatternRegistry({ workspaceRoot, onWorkspaceChange }: Ru
                                 <label className="label py-1">
                                     <span className="label-text text-[10px] font-black uppercase tracking-widest opacity-40">Primary Language</span>
                                 </label>
-                                <div className="grid grid-cols-2 gap-2">
-                                    {['go', 'python', 'typescript', 'javascript', 'rust', 'cpp', 'java'].map(lang => (
-                                        <button
-                                            key={lang}
-                                            type="button"
-                                            className={`btn btn-sm h-10 rounded-xl font-bold uppercase text-[10px] tracking-widest ${initLang === lang ? 'btn-primary shadow-lg shadow-primary/20 border-primary' : 'btn-ghost border border-base-300 opacity-60'}`}
-                                            onClick={() => setInitLang(lang)}
-                                        >
-                                            {lang}
-                                        </button>
-                                    ))}
+                                <div className="relative group">
+                                    <select
+                                        className="select select-bordered w-full h-12 text-sm border-base-300 focus:border-primary/50 transition-all rounded-xl pl-4"
+                                        value={initLang}
+                                        onChange={(e) => setInitLang(e.target.value)}
+                                    >
+                                        {SUPPORTED_LANGUAGES.map(lang => (
+                                            <option key={lang} value={lang}>{lang.toUpperCase()}</option>
+                                        ))}
+                                    </select>
                                 </div>
                             </div>
                         </div>
@@ -567,6 +624,104 @@ export default function PatternRegistry({ workspaceRoot, onWorkspaceChange }: Ru
                         </div>
                     </div>
                     <div className="modal-backdrop bg-base-300/40 backdrop-blur-sm" onClick={() => !isInitializing && setIsInitModalOpen(false)}></div>
+                </div>
+            )}
+            {/* Local Rule Details Modal */}
+            {localRuleDetails && (
+                <div className="modal modal-open">
+                    <div className="modal-box w-11/12 max-w-5xl h-[85vh] flex flex-col p-0 overflow-hidden shadow-2xl border border-base-300 rounded-3xl">
+                        <div className="flex justify-between items-center p-5 border-b border-base-300 bg-base-200">
+                            <div className="flex items-center gap-4">
+                                <div className="badge badge-lg badge-outline opacity-40 uppercase font-black text-[10px] tracking-widest">{localRuleDetails.language || 'generic'}</div>
+                                <div>
+                                    <h3 className="font-black text-xl leading-none">{localRuleDetails.id || 'Unnamed Rule'}</h3>
+                                    <p className="text-[10px] opacity-50 font-bold uppercase tracking-widest mt-1.5 flex items-center gap-1">
+                                        <Icon icon="lucide:alert-circle" className="w-2.5 h-2.5" />
+                                        Severity: {localRuleDetails.severity || 'n/a'}
+                                    </p>
+                                </div>
+                            </div>
+                            <button className="btn btn-sm btn-circle btn-ghost" onClick={() => setLocalRuleDetails(null)}>
+                                <Icon icon="lucide:x" className="w-5 h-5" />
+                            </button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-8 flex flex-col gap-8 bg-base-100 font-sans">
+                            {localRuleDetails.message && (
+                                <div>
+                                    <h4 className="text-[10px] font-black uppercase tracking-[0.2em] opacity-30 mb-3 ml-1">Message</h4>
+                                    <div className="p-5 bg-base-200/50 rounded-2xl border border-base-300 text-sm leading-relaxed font-medium">
+                                        {localRuleDetails.message}
+                                    </div>
+                                </div>
+                            )}
+                            <div className="flex-1 flex flex-col min-h-0">
+                                <div className="flex items-center justify-between mb-3 px-1">
+                                    <h4 className="text-[10px] font-black uppercase tracking-[0.2em] opacity-30">Full YAML</h4>
+                                    <button
+                                        className="btn btn-ghost btn-xs gap-1.5 opacity-40 hover:opacity-100"
+                                        onClick={() => {
+                                            navigator.clipboard.writeText(localRuleDetails.content);
+                                        }}
+                                    >
+                                        <Icon icon="lucide:copy" className="w-3 h-3" />
+                                        Copy
+                                    </button>
+                                </div>
+                                <div className="flex-1 min-h-[400px] bg-base-300 rounded-2xl overflow-hidden border border-base-content/10 shadow-inner relative">
+                                    <pre className="p-6 text-xs font-mono h-full overflow-auto whitespace-pre scrollbar-hide">
+                                        <code className="text-base-content/90">{localRuleDetails.content}</code>
+                                    </pre>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="p-5 border-t border-base-300 flex justify-end gap-3 bg-base-200">
+                            <button className="btn btn-ghost btn-sm font-bold px-6" onClick={() => setLocalRuleDetails(null)}>Close</button>
+                        </div>
+                    </div>
+                    <div className="modal-backdrop bg-base-300/60 backdrop-blur-sm" onClick={() => setLocalRuleDetails(null)}></div>
+                </div>
+            )}
+
+            {/* Inspect Loading State */}
+            {isLocalDetailsLoading && (
+                <div className="modal modal-open">
+                    <div className="modal-box max-w-xs bg-base-100 py-10 text-center rounded-3xl">
+                        <span className="loading loading-spinner loading-lg text-primary opacity-20"></span>
+                        <p className="text-[10px] font-black uppercase tracking-widest opacity-40 mt-4">Loading rule details...</p>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete Confirmation Modal */}
+            {ruleToDelete && (
+                <div className="modal modal-open">
+                    <div className="modal-box max-w-sm bg-base-100 border border-base-300 rounded-3xl p-8 shadow-2xl">
+                        <div className="flex flex-col items-center text-center">
+                            <div className="w-16 h-16 rounded-full bg-error/10 flex items-center justify-center text-error mb-4">
+                                <Icon icon="lucide:alert-triangle" className="w-8 h-8" />
+                            </div>
+                            <h3 className="text-xl font-black">Delete Rule?</h3>
+                            <p className="text-xs opacity-60 font-medium mt-2">
+                                Are you sure you want to remove <b className="text-base-content">{ruleToDelete.name.replace(/\.ya?ml$/, '')}</b>?
+                                This action cannot be undone.
+                            </p>
+                        </div>
+                        <div className="flex gap-3 mt-8">
+                            <button
+                                className="btn btn-ghost flex-1 font-bold h-12 rounded-xl"
+                                onClick={() => setRuleToDelete(null)}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                className="btn btn-error flex-1 font-black uppercase tracking-widest text-[11px] h-12 rounded-xl"
+                                onClick={() => handleRemove(ruleToDelete.name)}
+                            >
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                    <div className="modal-backdrop bg-base-300/40 backdrop-blur-sm" onClick={() => setRuleToDelete(null)}></div>
                 </div>
             )}
         </div>

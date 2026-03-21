@@ -28,6 +28,8 @@ export function GetGraphData(arg1:string):Promise<main.GraphData>;
 
 export function GetInferenceModels():Promise<Array<string>>;
 
+export function GetLocalRuleDetails(arg1:string):Promise<main.LocalRuleDetails>;
+
 export function GetLocalRulesInDir(arg1:string):Promise<Array<string>>;
 
 export function GetPreferences():Promise<main.UserPreferences>;
@@ -55,6 +57,8 @@ export function OpenConfigDir():Promise<void>;
 export function OpenWorkspace(arg1:string):Promise<void>;
 
 export function PickDirectory():Promise<string>;
+
+export function PickDirectoryWithRoot(arg1:string):Promise<string>;
 
 export function PullInferenceModel(arg1:string):Promise<void>;
 

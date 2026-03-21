@@ -67,6 +67,16 @@ type MarkdownEntry struct {
 	FrontMatter map[string]string `json:"frontMatter"`
 }
 
+// LocalRuleDetails represents the parsed content of a local rule file
+type LocalRuleDetails struct {
+	ID       string `json:"id"`
+	Message  string `json:"message"`
+	Severity string `json:"severity"`
+	Content  string `json:"content"`
+	Language string `json:"language"`
+	Path     string `json:"path"`
+}
+
 // NewApp creates a new App application struct
 func NewApp() *App {
 	return &App{}
@@ -2575,7 +2585,6 @@ func (a *App) RemoveLocalRule(configPath string, ruleID string) error {
 	return mcp.RemoveLocalRule(configPath, ruleID)
 }
 
-// GetLocalRulesInDir returns a list of installed rules in a specific directory.
 func (a *App) GetLocalRulesInDir(directory string) ([]string, error) {
 	files, err := os.ReadDir(directory)
 	if err != nil {
@@ -2592,5 +2601,46 @@ func (a *App) GetLocalRulesInDir(directory string) ([]string, error) {
 		}
 	}
 	return rules, nil
+}
+
+// GetLocalRuleDetails reads a local rule file and extracts key information
+func (a *App) GetLocalRuleDetails(rulePath string) (*LocalRuleDetails, error) {
+	data, err := os.ReadFile(rulePath)
+	if err != nil {
+		return nil, err
+	}
+
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("failed to parse YAML: %w", err)
+	}
+
+	details := &LocalRuleDetails{
+		Content: string(data),
+		Path:    rulePath,
+	}
+
+	if id, ok := raw["id"].(string); ok {
+		details.ID = id
+	}
+	if msg, ok := raw["message"].(string); ok {
+		details.Message = msg
+	}
+	if sev, ok := raw["severity"].(string); ok {
+		details.Severity = sev
+	}
+	if lang, ok := raw["language"].(string); ok {
+		details.Language = lang
+	}
+
+	return details, nil
+}
+
+// PickDirectoryWithRoot opens a native directory picker starting from the given root
+func (a *App) PickDirectoryWithRoot(startDir string) (string, error) {
+	return wailsRuntime.OpenDirectoryDialog(a.ctx, wailsRuntime.OpenDialogOptions{
+		Title:            "Select Directory",
+		DefaultDirectory: startDir,
+	})
 }
 

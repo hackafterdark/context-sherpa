@@ -91,6 +91,28 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class LocalRuleDetails {
+	    id: string;
+	    message: string;
+	    severity: string;
+	    content: string;
+	    language: string;
+	    path: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LocalRuleDetails(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.message = source["message"];
+	        this.severity = source["severity"];
+	        this.content = source["content"];
+	        this.language = source["language"];
+	        this.path = source["path"];
+	    }
+	}
 	export class MarkdownEntry {
 	    path: string;
 	    frontMatter: Record<string, string>;
