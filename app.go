@@ -785,6 +785,15 @@ func (a *App) BeforeClose(ctx context.Context) bool {
 }
 
 func (a *App) Shutdown(ctx context.Context) {
+	a.localDBMu.Lock()
+	for p, db := range a.localDBs {
+		fmt.Printf("Hub: Closing local database: %s\n", p)
+		_ = db.Close()
+	}
+	// Clear the map to allow garbage collection and prevent re-use of closed handles
+	a.localDBs = make(map[string]*database.DB)
+	a.localDBMu.Unlock()
+
 	if a.isHub {
 		lockPath := mcp.GetHubLockPath()
 		_ = os.Remove(lockPath)

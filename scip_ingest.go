@@ -40,22 +40,26 @@ func (a *App) IngestIndex(scipPath string) error {
 	_, _ = localDB.Exec("DELETE FROM scip_symbols WHERE scip_path = ?", scipPath)
 	_, _ = localDB.Exec("DELETE FROM scip_relationships WHERE scip_path = ?", scipPath)
 
-	wailsRuntime.EventsEmit(a.ctx, "indexing-status", map[string]string{
-		"path":    scipPath,
-		"status":  "processing",
-		"message": "Reading 65MB+ SCIP File...",
-	})
+	if a.ctx != nil {
+		wailsRuntime.EventsEmit(a.ctx, "indexing-status", map[string]string{
+			"path":    scipPath,
+			"status":  "processing",
+			"message": "Reading 65MB+ SCIP File...",
+		})
+	}
 
 	data, err := os.ReadFile(scipPath)
 	if err != nil {
 		return err
 	}
 
-	wailsRuntime.EventsEmit(a.ctx, "indexing-status", map[string]string{
-		"path":    scipPath,
-		"status":  "processing",
-		"message": "Unmarshaling Protobuf...",
-	})
+	if a.ctx != nil {
+		wailsRuntime.EventsEmit(a.ctx, "indexing-status", map[string]string{
+			"path":    scipPath,
+			"status":  "processing",
+			"message": "Unmarshaling Protobuf...",
+		})
+	}
 
 	var index scip.Index
 	if err := proto.Unmarshal(data, &index); err != nil {
@@ -74,11 +78,13 @@ func (a *App) IngestIndex(scipPath string) error {
 		language = "go" // Default fallback
 	}
 
-	wailsRuntime.EventsEmit(a.ctx, "indexing-status", map[string]string{
-		"path":    scipPath,
-		"status":  "processing",
-		"message": "Analyzing Architecture...",
-	})
+	if a.ctx != nil {
+		wailsRuntime.EventsEmit(a.ctx, "indexing-status", map[string]string{
+			"path":    scipPath,
+			"status":  "processing",
+			"message": "Analyzing Architecture...",
+		})
+	}
 
 	// 3. Architecture Analysis (Pruning & Impact Calculation)
 	projectPkg := a.detectProjectPackage(&index)
@@ -126,11 +132,13 @@ func (a *App) IngestIndex(scipPath string) error {
 	}
 
 	// 4. Persistence
-	wailsRuntime.EventsEmit(a.ctx, "indexing-status", map[string]string{
-		"path":    scipPath,
-		"status":  "processing",
-		"message": "Storing in SQLite...",
-	})
+	if a.ctx != nil {
+		wailsRuntime.EventsEmit(a.ctx, "indexing-status", map[string]string{
+			"path":    scipPath,
+			"status":  "processing",
+			"message": "Storing in SQLite...",
+		})
+	}
 
 	tx, err := localDB.Begin()
 	if err != nil {
@@ -273,17 +281,19 @@ func (a *App) IngestIndex(scipPath string) error {
 		return err
 	}
 
-	wailsRuntime.EventsEmit(a.ctx, "indexing-status", map[string]string{
-		"path":    scipPath,
-		"status":  "complete",
-		"message": "Index Ready!",
-	})
+	if a.ctx != nil {
+		wailsRuntime.EventsEmit(a.ctx, "indexing-status", map[string]string{
+			"path":    scipPath,
+			"status":  "complete",
+			"message": "Index Ready!",
+		})
 
-	wailsRuntime.EventsEmit(a.ctx, "indexing-status", map[string]string{
-		"path":    scipPath,
-		"status":  "done",
-		"message": fmt.Sprintf("Indexed %d symbols and %d relationships", symbolsIngested, relsIngested),
-	})
+		wailsRuntime.EventsEmit(a.ctx, "indexing-status", map[string]string{
+			"path":    scipPath,
+			"status":  "done",
+			"message": fmt.Sprintf("Indexed %d symbols and %d relationships", symbolsIngested, relsIngested),
+		})
+	}
 
 	return nil
 }
