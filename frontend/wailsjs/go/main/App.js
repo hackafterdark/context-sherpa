@@ -42,8 +42,8 @@ export function GetFileContent(arg1, arg2) {
   return window['go']['main']['App']['GetFileContent'](arg1, arg2);
 }
 
-export function GetGraphData(arg1) {
-  return window['go']['main']['App']['GetGraphData'](arg1);
+export function GetGraphData(arg1, arg2) {
+  return window['go']['main']['App']['GetGraphData'](arg1, arg2);
 }
 
 export function GetInferenceModels() {
@@ -66,6 +66,10 @@ export function GetScipIndexerStatus(arg1) {
   return window['go']['main']['App']['GetScipIndexerStatus'](arg1);
 }
 
+export function GetSymbolRelationships(arg1, arg2) {
+  return window['go']['main']['App']['GetSymbolRelationships'](arg1, arg2);
+}
+
 export function GetWorkspaceConfigs(arg1) {
   return window['go']['main']['App']['GetWorkspaceConfigs'](arg1);
 }
@@ -76,6 +80,10 @@ export function GetWorkspaces() {
 
 export function ImportCommunityRule(arg1, arg2) {
   return window['go']['main']['App']['ImportCommunityRule'](arg1, arg2);
+}
+
+export function IngestIndex(arg1) {
+  return window['go']['main']['App']['IngestIndex'](arg1);
 }
 
 export function InitializeAstGrepConfig(arg1, arg2) {
@@ -152,6 +160,10 @@ export function SearchCommunityRules(arg1, arg2, arg3) {
 
 export function SearchForIndexes(arg1) {
   return window['go']['main']['App']['SearchForIndexes'](arg1);
+}
+
+export function SearchSymbols(arg1, arg2) {
+  return window['go']['main']['App']['SearchSymbols'](arg1, arg2);
 }
 
 export function TestInferenceConnection(arg1, arg2) {
