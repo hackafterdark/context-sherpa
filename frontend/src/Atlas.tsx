@@ -39,6 +39,7 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
     const [relationships, setRelationships] = useState<{ callers: any[], callees: any[] } | null>(null);
     const [pendingFocus, setPendingFocus] = useState<string | null>(null);
     const [loadingRelationships, setLoadingRelationships] = useState(false);
+    const [graphData, setGraphData] = useState<any>(null);
 
     const getKindLabel = (kind: string, plural = false) => {
         if (kind === 'Struct') {
@@ -464,7 +465,8 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
             setSelectedNode(null);
             setSelectedEdge(null);
             GetGraphData(selectedIndex, currentScope).then((data: any) => {
-            if (data && cyRef.current) {
+                if (data && cyRef.current) {
+                    setGraphData(data);
                     setLanguage(data.language || 'Go');
                     const cy = cyRef.current;
                     cy.elements().remove();
@@ -756,7 +758,7 @@ ${snippet || '// No content available'}
                     {/* Breadcrumbs / Scope Navigation */}
                     {selectedIndex && (
                         <div className="absolute top-6 left-6 right-6 z-30 pointer-events-none">
-                            <div className="flex items-center gap-2 bg-base-100/90 backdrop-blur-xl border border-base-300/50 rounded-xl px-4 py-2 shadow-xl ring-1 ring-black/5 pointer-events-auto w-fit max-w-full overflow-hidden">
+                            <div className="flex items-center gap-2 bg-base-100/90 backdrop-blur-xl border border-base-300/50 rounded-xl px-4 py-2 shadow-xl ring-1 ring-black/5 pointer-events-auto w-fit max-w-full">
                                 <button 
                                     onClick={() => setCurrentScope('')}
                                     className={`btn btn-ghost btn-xs gap-1.5 px-2 hover:bg-primary/10 hover:text-primary transition-colors text-[10px] font-black uppercase tracking-wider ${!currentScope ? 'text-primary' : 'text-base-content/40'}`}
@@ -782,6 +784,50 @@ ${snippet || '// No content available'}
                                             ))}
                                         </div>
                                     </>
+                                )}
+
+                                {graphData?.elements?.filter((e: any) => e.group === 'nodes' && e.data.kind === 'Folder').length > 0 && (
+                                    <div className="dropdown ml-4 pointer-events-auto">
+                                        <label tabIndex={0} className="btn btn-ghost btn-xs gap-1 opacity-40 hover:opacity-100 transition-all hover:bg-primary/10 hover:text-primary rounded-lg px-2">
+                                            <Icon icon="lucide:folder-tree" className="w-3 h-3" />
+                                            <span className="text-[10px] font-black uppercase tracking-wider">Jump to</span>
+                                            <Icon icon="lucide:chevron-down" className="w-2.5 h-2.5" />
+                                        </label>
+                                        <ul tabIndex={0} className="dropdown-content z-[100] menu p-2 shadow-2xl bg-base-200/98 backdrop-blur-2xl border border-base-300 rounded-2xl w-64 mt-2 ring-1 ring-black/5 animate-in fade-in slide-in-from-top-2 duration-200">
+                                            <li className="menu-title px-3 py-2 text-[9px] uppercase tracking-[0.2em] opacity-40 font-black mb-1">
+                                                Subdirectories
+                                            </li>
+                                            <div className="max-h-64 overflow-y-auto custom-scrollbar pr-1">
+                                                {graphData.elements
+                                                    .filter((e: any) => e.group === 'nodes' && e.data.kind === 'Folder')
+                                                    .sort((a: any, b: any) => a.data.name.localeCompare(b.data.name))
+                                                    .map((folder: any) => (
+                                                        <li key={folder.data.id} className="mb-0.5 last:mb-0">
+                                                            <button 
+                                                                onClick={() => {
+                                                                    const newScope = folder.data.id.replace('dir:', '');
+                                                                    setCurrentScope(newScope);
+                                                                    // Close dropdown by blurring active element
+                                                                    if (document.activeElement instanceof HTMLElement) {
+                                                                        document.activeElement.blur();
+                                                                    }
+                                                                }}
+                                                                className="flex items-center gap-3 py-2.5 px-3 hover:bg-primary/10 hover:text-primary rounded-xl transition-all group"
+                                                            >
+                                                                <div className="w-8 h-8 rounded-lg bg-base-300/50 flex items-center justify-center shrink-0 group-hover:bg-primary/20 transition-colors">
+                                                                    <Icon icon="lucide:folder" className="w-4 h-4 opacity-70 group-hover:opacity-100" />
+                                                                </div>
+                                                                <div className="flex flex-col items-start min-w-0">
+                                                                    <span className="text-xs font-bold truncate w-full">{folder.data.name}</span>
+                                                                    <span className="text-[9px] opacity-40 font-mono truncate w-full">{folder.data.id.replace('dir:', '')}</span>
+                                                                </div>
+                                                                <Icon icon="lucide:arrow-right" className="ml-auto w-3.5 h-3.5 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
+                                                            </button>
+                                                        </li>
+                                                    ))}
+                                            </div>
+                                        </ul>
+                                    </div>
                                 )}
                             </div>
                         </div>
