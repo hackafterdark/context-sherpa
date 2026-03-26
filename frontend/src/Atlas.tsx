@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { Icon } from '@iconify/react';
 import cytoscape from 'cytoscape';
 import fcose from 'cytoscape-fcose';
-import { SearchForIndexes, GetGraphData, GetWorkspaces, GetFileContent, RegenerateIndex } from '../wailsjs/go/main/App';
+import { SearchForIndexes, GetGraphData, GetWorkspaces, GetFileContent, RegenerateIndex, SearchSymbols, GetSymbolRelationships } from '../wailsjs/go/main/App';
 import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
 import Editor from '@monaco-editor/react';
 import ReactMarkdown from 'react-markdown';
@@ -34,7 +34,12 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
     const [isSourceExpanded, setIsSourceExpanded] = useState(false);
     const editorRef = useRef<any>(null);
     const [regenerating, setRegenerating] = useState<Record<string, boolean>>({});
-    const [indexingStatus, setIndexingStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+    const [indexingStatus, setIndexingStatus] = useState<{ type: 'success' | 'error' | 'processing', message: string } | null>(null);
+    const [currentScope, setCurrentScope] = useState('');
+    const [relationships, setRelationships] = useState<{ callers: any[], callees: any[] } | null>(null);
+    const [pendingFocus, setPendingFocus] = useState<string | null>(null);
+    const [loadingRelationships, setLoadingRelationships] = useState(false);
+    const [graphData, setGraphData] = useState<any>(null);
 
     const getKindLabel = (kind: string, plural = false) => {
         if (kind === 'Struct') {
@@ -155,7 +160,7 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
     }, []);
 
     useEffect(() => {
-        if (indexingStatus) {
+        if (indexingStatus && indexingStatus.type !== 'processing') {
             const timer = setTimeout(() => setIndexingStatus(null), 5000);
             return () => clearTimeout(timer);
         }
@@ -174,12 +179,28 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
         };
 
         fetchWorkspaces();
-        EventsOn('workspace-updated', (ws: any[]) => {
-            const unique = Array.from(new Map(ws.map(item => [item.root, item])).values());
-            setAllWorkspaces(unique);
-        });
+		EventsOn('workspace-updated', (ws: any[]) => {
+			const unique = Array.from(new Map(ws.map(item => [item.root, item])).values());
+			setAllWorkspaces(unique);
+		});
 
-        return () => EventsOff('workspace-updated');
+		EventsOn('indexing-status', (data: any) => {
+			if (data.status === 'done') {
+				setIndexingStatus({ type: 'success', message: data.message || 'Indexing complete!' });
+			} else if (data.status === 'error') {
+				setIndexingStatus({ type: 'error', message: data.message || 'Indexing failed.' });
+			} else {
+				setIndexingStatus({
+					type: 'processing',
+					message: data.message || 'Indexing...'
+				});
+			}
+		});
+
+		return () => {
+			EventsOff('workspace-updated');
+			EventsOff('indexing-status');
+		};
     }, []);
 
     useEffect(() => {
@@ -228,12 +249,19 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
                     {
                         selector: "node[kind = 'Folder']",
                         style: {
-                            'background-opacity': 0,
-                            'border-width': 0,
-                            'label': '',
-                            'padding': '40px', // Extra padding for logical clustering
+                            'background-color': '#4b5563',
+                            'background-opacity': 0.1,
+                            'border-width': 1,
+                            'border-color': '#4b5563',
+                            'border-style': 'dashed',
+                            'label': 'data(name)',
+                            'font-size': '10px',
+                            'text-valign': 'center',
+                            'text-halign': 'center',
+                            'color': 'rgba(255,255,255,0.4)',
+                            'padding': '40px',
                             'z-index': 1,
-                            'events': 'no' // Folders are transparent to clicks/hovers
+                            'shape': 'round-rectangle'
                         }
                     },
                     {
@@ -362,6 +390,14 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
             cyRef.current.on('mouseout', 'node', () => {
                 cyRef.current?.elements().removeClass('dimmed').removeClass('highlighted');
             });
+
+            // Double click to drill down into folders
+            cyRef.current.on('dblclick', 'node[kind="Folder"]', (evt) => {
+                const node = evt.target;
+                const folderId = node.id();
+                const path = folderId.replace('dir:', '');
+                setCurrentScope(path);
+            });
         }
 
         const resizeObserver = new ResizeObserver(() => {
@@ -382,14 +418,13 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
     useEffect(() => {
         const node = selectedNode;
         if (node && node.path && workspaceRoot) {
+            setRelationships(null);
             GetFileContent(workspaceRoot, node.path).then(content => {
                 setFileContent(content);
-                // If we have an editor ref and a start line, jump to it
                 if (editorRef.current && node.startLine) {
                     setTimeout(() => {
                         const editor = editorRef.current;
                         editor.revealLineInCenter(node.startLine);
-                        // Clear old decorations
                         (editor as any)._decorations = editor.deltaDecorations((editor as any)._decorations || [], [
                             {
                                 range: { startLineNumber: node.startLine, startColumn: 1, endLineNumber: node.endLine || node.startLine, endColumn: 100 },
@@ -406,18 +441,32 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
                 console.error("Error fetching file content:", e);
                 setFileContent("// Error loading file content");
             });
+            setRelationships(null);
+            setLoadingRelationships(true);
+            GetSymbolRelationships(selectedIndex, node.id).then((rels: any) => {
+                setRelationships(rels);
+                setLoadingRelationships(false);
+            }).catch(() => {
+                setLoadingRelationships(false);
+            });
         } else {
             setFileContent('');
+            setRelationships(null);
         }
     }, [selectedNode, workspaceRoot]);
+
+    useEffect(() => {
+        setCurrentScope('');
+    }, [selectedIndex]);
 
     useEffect(() => {
         if (selectedIndex && cyRef.current) {
             setLoading(true);
             setSelectedNode(null);
             setSelectedEdge(null);
-            GetGraphData(selectedIndex).then((data) => {
+            GetGraphData(selectedIndex, currentScope).then((data: any) => {
                 if (data && cyRef.current) {
+                    setGraphData(data);
                     setLanguage(data.language || 'Go');
                     const cy = cyRef.current;
                     cy.elements().remove();
@@ -437,7 +486,7 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
                                 ...el,
                                 data: {
                                     ...el.data,
-                                    value: 0 // Folders take size from children
+                                    value: 60 // Minimum size for folder containers
                                 }
                             };
                         }
@@ -464,11 +513,25 @@ export default function Atlas({ workspaceRoot, onWorkspaceChange }: AtlasProps) 
 
                     layout.run();
                     cy.fit(undefined, 50);
+
+                    if (pendingFocus) {
+                        const target = cy.getElementById(pendingFocus);
+                        if (!target.empty()) {
+                            target.select();
+                            setSelectedNode(target.data());
+                            cy.animate({
+                                center: { eles: target },
+                                zoom: 1.5,
+                                duration: 500
+                            });
+                        }
+                        setPendingFocus(null);
+                    }
                 }
                 setLoading(false);
             });
         }
-    }, [selectedIndex]);
+    }, [selectedIndex, currentScope]);
 
     const handleZoomIn = () => {
         cyRef.current?.zoom(cyRef.current.zoom() * 1.5);
@@ -534,45 +597,30 @@ ${snippet || '// No content available'}
 
     const handleSearchChange = (val: string) => {
         setSearchTerm(val);
-        if (!val.trim() || !cyRef.current) {
+        if (!val.trim()) {
             setSearchResults([]);
             setShowSearchResults(false);
             return;
         }
 
-        const cy = cyRef.current;
-        const allNodes = cy.nodes().filter((n: any) => n.data('kind') !== 'Folder');
-        const query = val.toLowerCase();
-
-        const filtered = allNodes.map((n: any) => n.data())
-            .filter((data: any) => data.name.toLowerCase().includes(query))
-            .sort((a: any, b: any) => {
-                const aName = a.name.toLowerCase();
-                const bName = b.name.toLowerCase();
-
-                // Exact match first
-                if (aName === query && bName !== query) return -1;
-                if (bName === query && aName !== query) return 1;
-
-                // Prefix match next
-                const aPrefix = aName.startsWith(query);
-                const bPrefix = bName.startsWith(query);
-                if (aPrefix && !bPrefix) return -1;
-                if (bPrefix && !aPrefix) return 1;
-
-                return aName.localeCompare(bName);
-            })
-            .slice(0, 15);
-
-        setSearchResults(filtered);
-        setShowSearchResults(filtered.length > 0);
+        SearchSymbols(selectedIndex, val).then(results => {
+            setSearchResults(results || []);
+            setShowSearchResults((results || []).length > 0);
+        }).catch(err => {
+            console.error("Global search failed:", err);
+        });
     };
 
     const handleSearch = (e: React.FormEvent) => {
         e.preventDefault();
         if (searchResults.length > 0) {
             const top = searchResults[0];
-            focusSymbol(top.id);
+            if (top.path !== currentScope) {
+                setPendingFocus(top.id);
+                setCurrentScope(top.path || '');
+            } else {
+                focusSymbol(top.id);
+            }
             setShowSearchResults(false);
         } else if (searchTerm) {
             focusSymbol(searchTerm);
@@ -617,13 +665,21 @@ ${snippet || '// No content available'}
                 </div>
 
                 {indexingStatus && (
-                    <div className={`p-4 rounded-xl border flex items-center gap-3 animate-in fade-in slide-in-from-top-2 duration-300 shadow-lg ${indexingStatus.type === 'success' ? 'bg-success/10 text-success border-success/20' : 'bg-error/10 text-error border-error/20'
-                        }`}>
-                        <Icon icon={indexingStatus.type === 'success' ? 'lucide:check-circle' : 'lucide:alert-circle'} className="w-4 h-4" />
+                    <div className={`p-4 rounded-xl border flex items-center gap-3 animate-in fade-in slide-in-from-top-2 duration-300 shadow-lg ${
+                        indexingStatus.type === 'processing' ? 'bg-primary/10 text-primary border-primary/20' :
+                        indexingStatus.type === 'success' ? 'bg-success/10 text-success border-success/20' : 
+                        'bg-error/10 text-error border-error/20'
+                    }`}>
+                        <Icon 
+                            icon={indexingStatus.type === 'processing' ? 'lucide:loader-2' : indexingStatus.type === 'success' ? 'lucide:check-circle' : 'lucide:alert-circle'} 
+                            className={`w-4 h-4 ${indexingStatus.type === 'processing' ? 'animate-spin' : ''}`} 
+                        />
                         <span className="text-[11px] font-black uppercase tracking-widest">{indexingStatus.message}</span>
-                        <button onClick={() => setIndexingStatus(null)} className="ml-2 hover:opacity-50">
-                            <Icon icon="lucide:x" className="w-3.5 h-3.5" />
-                        </button>
+                        {indexingStatus.type !== 'processing' && (
+                            <button onClick={() => setIndexingStatus(null)} className="ml-2 hover:opacity-50">
+                                <Icon icon="lucide:x" className="w-3.5 h-3.5" />
+                            </button>
+                        )}
                     </div>
                 )}
             </div>
@@ -651,7 +707,12 @@ ${snippet || '// No content available'}
                                         <button
                                             key={res.id}
                                             onClick={() => {
-                                                focusSymbol(res.id);
+                                                if (res.path !== currentScope) {
+                                                    setPendingFocus(res.id);
+                                                    setCurrentScope(res.path || '');
+                                                } else {
+                                                    focusSymbol(res.id);
+                                                }
                                                 setShowSearchResults(false);
                                             }}
                                             className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-primary hover:text-primary-content transition-colors group text-left"
@@ -694,6 +755,84 @@ ${snippet || '// No content available'}
                 </div>
 
                 <div className="flex-1 relative bg-base-100/50 rounded-xl border border-base-200 overflow-hidden shadow-sm flex flex-col min-w-0">
+                    {/* Breadcrumbs / Scope Navigation */}
+                    {selectedIndex && (
+                        <div className="absolute top-6 left-6 right-6 z-30 pointer-events-none">
+                            <div className="flex items-center gap-2 bg-base-100/90 backdrop-blur-xl border border-base-300/50 rounded-xl px-4 py-2 shadow-xl ring-1 ring-black/5 pointer-events-auto w-fit max-w-full">
+                                <button 
+                                    onClick={() => setCurrentScope('')}
+                                    className={`btn btn-ghost btn-xs gap-1.5 px-2 hover:bg-primary/10 hover:text-primary transition-colors text-[10px] font-black uppercase tracking-wider ${!currentScope ? 'text-primary' : 'text-base-content/40'}`}
+                                >
+                                    <Icon icon="lucide:home" className="w-3 h-3" />
+                                    Root
+                                </button>
+                                
+                                {currentScope && (
+                                    <>
+                                        <Icon icon="lucide:chevron-right" className="w-3 h-3 opacity-20" />
+                                        <div className="flex items-center gap-1 overflow-hidden">
+                                            {currentScope.split('/').map((part, i, arr) => (
+                                                <div key={i} className="flex items-center gap-1 shrink-0">
+                                                    <button 
+                                                        onClick={() => setCurrentScope(arr.slice(0, i + 1).join('/'))}
+                                                        className={`btn btn-ghost btn-xs px-2 hover:bg-primary/10 hover:text-primary transition-colors text-[10px] font-black uppercase tracking-wider ${i === arr.length - 1 ? 'text-primary opacity-100' : 'text-base-content/60 opacity-60'}`}
+                                                    >
+                                                        {part}
+                                                    </button>
+                                                    {i < arr.length - 1 && <Icon icon="lucide:chevron-right" className="w-3 h-3 opacity-20" />}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </>
+                                )}
+
+                                {graphData?.elements?.filter((e: any) => e.group === 'nodes' && e.data.kind === 'Folder').length > 0 && (
+                                    <div className="dropdown ml-4 pointer-events-auto">
+                                        <label tabIndex={0} className="btn btn-ghost btn-xs gap-1 opacity-40 hover:opacity-100 transition-all hover:bg-primary/10 hover:text-primary rounded-lg px-2">
+                                            <Icon icon="lucide:folder-tree" className="w-3 h-3" />
+                                            <span className="text-[10px] font-black uppercase tracking-wider">Jump to</span>
+                                            <Icon icon="lucide:chevron-down" className="w-2.5 h-2.5" />
+                                        </label>
+                                        <ul tabIndex={0} className="dropdown-content z-[100] menu p-2 shadow-2xl bg-base-200/98 backdrop-blur-2xl border border-base-300 rounded-2xl w-64 mt-2 ring-1 ring-black/5 animate-in fade-in slide-in-from-top-2 duration-200">
+                                            <li className="menu-title px-3 py-2 text-[9px] uppercase tracking-[0.2em] opacity-40 font-black mb-1">
+                                                Subdirectories
+                                            </li>
+                                            <div className="max-h-64 overflow-y-auto custom-scrollbar pr-1">
+                                                {graphData.elements
+                                                    .filter((e: any) => e.group === 'nodes' && e.data.kind === 'Folder')
+                                                    .sort((a: any, b: any) => a.data.name.localeCompare(b.data.name))
+                                                    .map((folder: any) => (
+                                                        <li key={folder.data.id} className="mb-0.5 last:mb-0">
+                                                            <button 
+                                                                onClick={() => {
+                                                                    const newScope = folder.data.id.replace('dir:', '');
+                                                                    setCurrentScope(newScope);
+                                                                    // Close dropdown by blurring active element
+                                                                    if (document.activeElement instanceof HTMLElement) {
+                                                                        document.activeElement.blur();
+                                                                    }
+                                                                }}
+                                                                className="flex items-center gap-3 py-2.5 px-3 hover:bg-primary/10 hover:text-primary rounded-xl transition-all group"
+                                                            >
+                                                                <div className="w-8 h-8 rounded-lg bg-base-300/50 flex items-center justify-center shrink-0 group-hover:bg-primary/20 transition-colors">
+                                                                    <Icon icon="lucide:folder" className="w-4 h-4 opacity-70 group-hover:opacity-100" />
+                                                                </div>
+                                                                <div className="flex flex-col items-start min-w-0">
+                                                                    <span className="text-xs font-bold truncate w-full">{folder.data.name}</span>
+                                                                    <span className="text-[9px] opacity-40 font-mono truncate w-full">{folder.data.id.replace('dir:', '')}</span>
+                                                                </div>
+                                                                <Icon icon="lucide:arrow-right" className="ml-auto w-3.5 h-3.5 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
+                                                            </button>
+                                                        </li>
+                                                    ))}
+                                            </div>
+                                        </ul>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
                     {loading && (
                         <div className="absolute inset-0 z-50 flex items-center justify-center bg-base-100/50 backdrop-blur-sm">
                             <span className="loading loading-spinner loading-lg text-primary"></span>
@@ -799,6 +938,28 @@ ${snippet || '// No content available'}
                                                 </div>
 
                                                 <div className="p-6 space-y-8 flex-1 overflow-y-auto">
+                                                    {selectedNode.path && fileContent && (
+                                                        <section>
+                                                            <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-4 px-1">Signature</h3>
+                                                            <div className="p-0 overflow-hidden bg-[#1e1e1e] rounded-xl border border-base-300/50 w-full max-w-full">
+                                                                <SyntaxHighlighter
+                                                                    language={language.toLowerCase()}
+                                                                    style={vscDarkPlus}
+                                                                    wrapLongLines={true}
+                                                                    customStyle={{
+                                                                        margin: 0,
+                                                                        padding: '1.25rem',
+                                                                        backgroundColor: 'transparent',
+                                                                        fontSize: '11px',
+                                                                        lineHeight: '1.6',
+                                                                    }}
+                                                                >
+                                                                    {fileContent.split('\n').slice(selectedNode.startLine - 1, (selectedNode.endLine || selectedNode.startLine) + 1).join('\n')}
+                                                                </SyntaxHighlighter>
+                                                            </div>
+                                                        </section>
+                                                    )}
+
                                                     {selectedNode.docstring && (
                                                         <section>
                                                             <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-4 px-1">Documentation</h3>
@@ -860,6 +1021,76 @@ ${snippet || '// No content available'}
                                                                 ))}
                                                             </div>
                                                         </section>
+                                                    )}
+
+                                                    {loadingRelationships && (
+                                                        <section className="animate-pulse">
+                                                            <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-4 px-1">Analyzing Connections</h3>
+                                                            <div className="space-y-3">
+                                                                <div className="h-4 bg-base-300/50 rounded w-3/4"></div>
+                                                                <div className="h-4 bg-base-300/50 rounded w-1/2"></div>
+                                                            </div>
+                                                        </section>
+                                                    )}
+
+                                                    {relationships && (relationships.callers.length > 0 || relationships.callees.length > 0) && (
+                                                        <>
+                                                            {relationships.callers.length > 0 && (
+                                                                <section>
+                                                                    <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-4 px-1">Callers ({relationships.callers.length})</h3>
+                                                                    <div className="grid grid-cols-1 gap-2">
+                                                                        {relationships.callers.map((r: any, i: number) => (
+                                                                            <button 
+                                                                                key={i} 
+                                                                                onClick={() => {
+                                                                                    if (r.path !== currentScope) {
+                                                                                        setPendingFocus(r.id);
+                                                                                        setCurrentScope(r.path || '');
+                                                                                    } else {
+                                                                                        focusSymbol(r.id);
+                                                                                    }
+                                                                                }}
+                                                                                className="flex flex-col items-start p-3.5 bg-base-200/30 rounded-xl border border-base-300/50 group hover:border-primary/30 transition-all shadow-sm hover:shadow-md text-left"
+                                                                            >
+                                                                                <div className="flex items-center gap-3 mb-1">
+                                                                                    <Icon icon="lucide:arrow-up-left" className="w-3 h-3 text-primary opacity-60" />
+                                                                                    <span className="text-[11px] font-bold tracking-tight">{r.name}</span>
+                                                                                </div>
+                                                                                <span className="text-[9px] font-mono opacity-30 truncate w-full">{r.path || 'root'}</span>
+                                                                            </button>
+                                                                        ))}
+                                                                    </div>
+                                                                </section>
+                                                            )}
+
+                                                            {relationships.callees.length > 0 && (
+                                                                <section>
+                                                                    <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-30 mb-4 px-1">Callees ({relationships.callees.length})</h3>
+                                                                    <div className="grid grid-cols-1 gap-2">
+                                                                        {relationships.callees.map((r: any, i: number) => (
+                                                                            <button 
+                                                                                key={i} 
+                                                                                onClick={() => {
+                                                                                    if (r.path !== currentScope) {
+                                                                                        setPendingFocus(r.id);
+                                                                                        setCurrentScope(r.path || '');
+                                                                                    } else {
+                                                                                        focusSymbol(r.id);
+                                                                                    }
+                                                                                }}
+                                                                                className="flex flex-col items-start p-3.5 bg-base-200/30 rounded-xl border border-base-300/50 group hover:border-primary/30 transition-all shadow-sm hover:shadow-md text-left"
+                                                                            >
+                                                                                <div className="flex items-center gap-3 mb-1">
+                                                                                    <Icon icon="lucide:arrow-down-right" className="w-3 h-3 text-success opacity-60" />
+                                                                                    <span className="text-[11px] font-bold tracking-tight">{r.name}</span>
+                                                                                </div>
+                                                                                <span className="text-[9px] font-mono opacity-30 truncate w-full">{r.path || 'root'}</span>
+                                                                            </button>
+                                                                        ))}
+                                                                    </div>
+                                                                </section>
+                                                            )}
+                                                        </>
                                                     )}
                                                 </div>
 

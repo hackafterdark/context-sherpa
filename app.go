@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -24,7 +25,6 @@ import (
 	"github.com/hackafterdark/context-sherpa/pkg/sysutils"
 	scip "github.com/sourcegraph/scip/bindings/go/scip"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
-	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
 )
 
@@ -59,6 +59,8 @@ type App struct {
 	downloader *inference.Downloader
 	inference  *inference.InferenceService
 	db         *database.DB
+	localDBs   map[string]*database.DB
+	localDBMu  sync.Mutex
 }
 
 // MarkdownEntry represents a markdown file with optional front-matter metadata
@@ -79,7 +81,9 @@ type LocalRuleDetails struct {
 
 // NewApp creates a new App application struct
 func NewApp() *App {
-	return &App{}
+	return &App{
+		localDBs: make(map[string]*database.DB),
+	}
 }
 
 // startup is called when the app starts.
@@ -202,7 +206,6 @@ func (a *App) normalizePath(path string) string {
 func (a *App) initDatabase() {
 	configDir, err := getSherpaConfigDir()
 	if err != nil {
-		fmt.Printf("Hub: Failed to get config dir: %v\n", err)
 		return
 	}
 
@@ -782,6 +785,15 @@ func (a *App) BeforeClose(ctx context.Context) bool {
 }
 
 func (a *App) Shutdown(ctx context.Context) {
+	a.localDBMu.Lock()
+	for p, db := range a.localDBs {
+		fmt.Printf("Hub: Closing local database: %s\n", p)
+		_ = db.Close()
+	}
+	// Clear the map to allow garbage collection and prevent re-use of closed handles
+	a.localDBs = make(map[string]*database.DB)
+	a.localDBMu.Unlock()
+
 	if a.isHub {
 		lockPath := mcp.GetHubLockPath()
 		_ = os.Remove(lockPath)
@@ -1977,384 +1989,247 @@ type GraphData struct {
 	Language   string          `json:"language"`
 }
 
-// GetGraphData transforms SCIP data into ECharts JSON with "Hotpath" sizing and spatial clustering
-func (a *App) GetGraphData(scipPath string) (*GraphData, error) {
-	data, err := os.ReadFile(scipPath)
+// GetGraphData transforms SCIP data into ECharts JSON with "Hotpath" sizing and spatial clustering.
+// It uses a persistent SQLite index to avoid re-parsing large Protobuf files on every request.
+func (a *App) GetGraphData(scipPath string, scope string) (*GraphData, error) {
+	scipPath = a.normalizePath(scipPath)
+	// 1. Get/Init local database for this workspace
+	localDB, err := a.getLocalDB(scipPath)
 	if err != nil {
 		return nil, err
 	}
 
-	var index scip.Index
-	if err := proto.Unmarshal(data, &index); err != nil {
-		return nil, fmt.Errorf("failed to parse SCIP index: %w", err)
+	// 2. Ensure the index is ingested and up to date
+	if err := a.IngestIndex(scipPath); err != nil {
+		return nil, err
 	}
 
 	nodes := make([]GraphNode, 0)
 	links := make([]GraphLink, 0)
-	seenNodes := make(map[string]bool)
-	seenLinks := make(map[string]bool)
-
-	// Custom Categories for Layout/Clustering (Folders)
-	// But Legend will be fixed to Code Kinds.
 	folderToCatID := make(map[string]int)
 	categories := make([]GraphCategory, 0)
-
 	symbolToNodeID := make(map[string]string)
-	symbolToInfo := make(map[string]*scip.SymbolInformation)
-	refCount := make(map[string]int)
-	outboundCalls := make(map[string]int)
 
-	addNode := func(n GraphNode) {
-		if n.ID != "" && !seenNodes[n.ID] {
-			nodes = append(nodes, n)
-			seenNodes[n.ID] = true
-		}
+	scope = filepath.ToSlash(scope)
+	if scope != "" && !strings.HasSuffix(scope, "/") {
+		scope += "/"
 	}
 
-	addLink := func(l GraphLink) {
-		if l.Source == "" || l.Target == "" || l.Source == l.Target {
-			return
-		}
-		key := fmt.Sprintf("%s-%s-%s", l.Source, l.Target, l.Label)
-		if !seenLinks[key] {
-			links = append(links, l)
-			seenLinks[key] = true
-		}
+	// 3. Fetch Symbols for the requested scope
+	dirMatch := scope
+	if scope == "" {
+		dirMatch = "root"
+	} else {
+		dirMatch = strings.TrimSuffix(scope, "/")
 	}
 
-	// 1. Pre-map symbol information and identify directories
-	for _, doc := range index.Documents {
-		dir := filepath.Dir(doc.RelativePath)
-		if dir == "." {
-			dir = "root"
-		}
-		if _, exists := folderToCatID[dir]; !exists {
-			folderToCatID[dir] = len(categories)
-			categories = append(categories, GraphCategory{Name: dir})
-		}
-		for _, si := range doc.Symbols {
-			symbolToInfo[si.Symbol] = si
-		}
+	rows, err := localDB.Query(`
+		SELECT symbol, name, kind, file_path, dir_path, start_line, end_line, impact_value, parent_symbol
+		FROM scip_symbols
+		WHERE scip_path = ? AND dir_path = ?
+	`, scipPath, dirMatch)
+	if err != nil {
+		return nil, err
 	}
-	for _, si := range index.ExternalSymbols {
-		symbolToInfo[si.Symbol] = si
-	}
+	defer rows.Close()
 
-	// 2. Pass 1: Count references and outbound calls
-	for _, doc := range index.Documents {
-		var currentScope string
-		for _, occ := range doc.Occurrences {
-			if strings.Contains(occ.Symbol, "local") {
-				continue
-			}
-			isDef := occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0
-			if isDef {
-				currentScope = occ.Symbol
-				continue
-			}
-			// It's a reference
-			refCount[occ.Symbol]++
-			if currentScope != "" {
-				outboundCalls[currentScope]++
-			}
+	for rows.Next() {
+		var n GraphNode
+		var sym, filePath, dirPath, parentSym string
+		err := rows.Scan(&sym, &n.Name, &n.Kind, &filePath, &dirPath, &n.StartLine, &n.EndLine, &n.Value, &parentSym)
+		if err != nil { continue }
+
+		n.ID = "sym:" + sym
+		n.Path = filePath
+		n.Parent = "dir:" + dirPath
+		
+		symbolToNodeID[sym] = n.ID
+
+		if _, exists := folderToCatID[dirPath]; !exists {
+			folderToCatID[dirPath] = len(categories)
+			categories = append(categories, GraphCategory{Name: dirPath})
 		}
+	nodes = append(nodes, n)
 	}
 
-	// 3. Pass 2: Create Symbol Nodes (No physical folder/file nodes)
-	for _, doc := range index.Documents {
-		dir := filepath.Dir(doc.RelativePath)
-		catID := folderToCatID[dir]
+	// 4. Fetch immediate Subfolders to generate Folder Nodes
+	prefix := scope
+	subRows, err := localDB.Query(`
+		SELECT DISTINCT dir_path FROM scip_symbols 
+		WHERE scip_path = ? AND dir_path LIKE ? AND dir_path != ?
+	`, scipPath, prefix+"%", dirMatch)
 
-		for _, occ := range doc.Occurrences {
-			isDef := occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0
-			if isDef {
-				// Filter noise: skip local symbols
-				if strings.Contains(occ.Symbol, "local") {
-					continue
-				}
-
-				parsed, err := scip.ParseSymbol(occ.Symbol)
-				if err != nil || len(parsed.Descriptors) == 0 {
-					continue // Skip packages or unparseable symbols
-				}
-
-				// The last descriptor is the leaf (Method, Type, Term, etc.)
-				leaf := parsed.Descriptors[len(parsed.Descriptors)-1]
-
-				// Skip Namespaces (Packages) as definitions - they are architectural noise
-				if leaf.Suffix == scip.Descriptor_Namespace {
-					continue
-				}
-
-				name := leaf.Name
-				kind := "Function"
-
-				// Map SCIP Descriptor Suffix to our finite categories
-				switch leaf.Suffix {
-				case scip.Descriptor_Type:
-					kind = "Struct"
-				case scip.Descriptor_Term:
-					kind = "Variable"
-				case scip.Descriptor_Method:
-					kind = "Function"
-				case scip.Descriptor_Macro:
-					kind = "Function"
-				case scip.Descriptor_Parameter:
-					continue // Skip parameters for top-level graph
-				case scip.Descriptor_TypeParameter:
-					continue // Skip type parameters
-				}
-
-				// Additional refinement for Interfaces (often labeled as Types in SCIP but contain "interface" in symbol)
-				if kind == "Struct" && strings.Contains(strings.ToLower(occ.Symbol), "interface") {
-					kind = "Interface"
-				}
-
-				nodeID := "sym:" + occ.Symbol
-				symbolToNodeID[occ.Symbol] = nodeID
-
-				info := symbolToInfo[occ.Symbol]
-				docstring := ""
-				if info != nil && len(info.Documentation) > 0 {
-					docstring = info.Documentation[0]
-				}
-
-				// Calculate Lines of Code (LOC) and Ranges
-				loc := 0
-				startLine := 0
-				endLine := 0
-				if len(occ.Range) == 3 {
-					startLine = int(occ.Range[0] + 1) // [line, startCol, endCol]
-					endLine = startLine
-					loc = 1
-				} else if len(occ.Range) >= 4 {
-					startLine = int(occ.Range[0] + 1) // [startLine, startCol, endLine, endCol]
-					endLine = int(occ.Range[2] + 1)
-					loc = int(occ.Range[2] - occ.Range[0] + 1)
-				}
-
-				// Calculate "Hotpath" value (Directive Weights)
-				val := 0
-				if kind == "Struct" || kind == "Interface" {
-					// Count members for struct sizing
-					memberCount := 0
-					prefix := occ.Symbol
-					for sym := range symbolToInfo {
-						if strings.HasPrefix(sym, prefix) && sym != occ.Symbol {
-							if !strings.Contains(sym[len(prefix):], ".") {
-								memberCount++
-							}
-						}
-					}
-					// Value = (MemberCount * 5) + (ReferenceCount * 10)
-					val = (memberCount * 5) + (refCount[occ.Symbol] * 10)
-				} else if kind == "Variable" {
-					val = 5 + (refCount[occ.Symbol] * 2)
-				} else {
-					// Function: Value = (OutboundCalls * 3) + (ReferenceCount * 5)
-					val = (outboundCalls[occ.Symbol] * 3) + (refCount[occ.Symbol] * 5)
-				}
-
-				// Minimum size floor
-				if val < 5 {
-					val = 5
-				}
-
-				parentID := ""
-				if dir != "" && dir != "." {
-					parentID = "dir:" + dir
-				}
-
-				addNode(GraphNode{
-					ID:        nodeID,
-					Name:      name,
-					Value:     val,
-					Category:  catID, // Spatial clustering by folder
-					Path:      doc.RelativePath,
-					Kind:      kind,
-					Docstring: docstring,
-					Members:   []Member{},
-					Loc:       loc,
-					StartLine: startLine,
-					EndLine:   endLine,
-					Parent:    parentID,
-				})
-			}
-		}
-	}
-
-	// 4. Extract members for deep inspection
-	for i := range nodes {
-		if nodes[i].Kind != "Struct" && nodes[i].Kind != "Interface" {
-			continue
-		}
-		// Nodes[i].ID is "sym:" + symbol
-		originalSymbol := nodes[i].ID[4:]
-
-		for sym := range symbolToInfo {
-			if strings.HasPrefix(sym, originalSymbol) && sym != originalSymbol {
-				parsed, err := scip.ParseSymbol(sym)
-				if err != nil || len(parsed.Descriptors) == 0 {
-					continue
-				}
-
-				// Only direct children (e.g., App#scipFiles. and not App#scipFiles.inner.)
-				// This is a bit simplified; in SCIP Go, members are usually descriptors at the end
-				// We check if the parent symbol is indeed the parent in descriptors
-				isChild := false
-				parentParsed, _ := scip.ParseSymbol(originalSymbol)
-				if len(parsed.Descriptors) == len(parentParsed.Descriptors)+1 {
-					isChild = true
-					for j := 0; j < len(parentParsed.Descriptors); j++ {
-						if parsed.Descriptors[j].Name != parentParsed.Descriptors[j].Name ||
-							parsed.Descriptors[j].Suffix != parentParsed.Descriptors[j].Suffix {
-							isChild = false
-							break
-						}
+	if err == nil {
+		defer subRows.Close()
+		seenFolders := make(map[string]bool)
+		for subRows.Next() {
+			var fullDir string
+			if err := subRows.Scan(&fullDir); err == nil {
+				rel := strings.TrimPrefix(fullDir, prefix)
+				parts := strings.Split(rel, "/")
+				if len(parts) > 0 && parts[0] != "" {
+					immediate := prefix + parts[0]
+					if !seenFolders[immediate] {
+						nodes = append(nodes, GraphNode{
+							ID:     "dir:" + immediate,
+							Name:   parts[0],
+							Kind:   "Folder",
+							Parent: "dir:" + strings.TrimSuffix(prefix, "/"),
+						})
+						seenFolders[immediate] = true
 					}
 				}
+			}
+		}
+	} else {
+	}
 
-				if isChild {
-					leaf := parsed.Descriptors[len(parsed.Descriptors)-1]
-					memberKind := "Field"
-					if leaf.Suffix == scip.Descriptor_Method {
-						memberKind = "Method"
+	// 5. Fetch Relationships (Edges)
+	if len(nodes) > 0 {
+		relRows, err := localDB.Query(`
+			SELECT source_symbol, target_symbol FROM scip_relationships WHERE scip_path = ?
+		`, scipPath)
+		if err == nil {
+			defer relRows.Close()
+			for relRows.Next() {
+				var src, tgt string
+				if err := relRows.Scan(&src, &tgt); err == nil {
+					if symbolToNodeID[src] != "" && symbolToNodeID[tgt] != "" {
+						links = append(links, GraphLink{
+							Source: symbolToNodeID[src],
+							Target: symbolToNodeID[tgt],
+							Label:  "DEPENDS",
+						})
 					}
-
-					nodes[i].Members = append(nodes[i].Members, Member{
-						Name:   leaf.Name,
-						Kind:   memberKind,
-						Symbol: sym,
-					})
 				}
 			}
 		}
 	}
 
-	// 5. Build Links (Symbol to Symbol)
-	for _, doc := range index.Documents {
-		var currentScope string
-		for _, occ := range doc.Occurrences {
-			if strings.Contains(occ.Symbol, "local") {
-				continue
-			}
-			if occ.SymbolRoles&int32(scip.SymbolRole_Definition) != 0 {
-				if _, exists := symbolToNodeID[occ.Symbol]; exists {
-					currentScope = occ.Symbol
-				}
-				continue
-			}
-
-			// Reference
-			targetNodeID, exists := symbolToNodeID[occ.Symbol]
-			if exists && currentScope != "" {
-				sourceNodeID := symbolToNodeID[currentScope]
-				if sourceNodeID != "" && sourceNodeID != targetNodeID {
-					label := "CALLS"
-					if strings.HasSuffix(occ.Symbol, "#") {
-						label = "USES"
-					} else if strings.Contains(occ.Symbol, "interface") {
-						label = "IMPLEMENTS"
-					}
-
-					// Get names/paths for Relationship Mode
-					sourceName := currentScope
-					if parsed, err := scip.ParseSymbol(currentScope); err == nil && len(parsed.Descriptors) > 0 {
-						sourceName = parsed.Descriptors[len(parsed.Descriptors)-1].Name
-					} else if lastSlash := strings.LastIndex(sourceName, "/"); lastSlash != -1 {
-						sourceName = sourceName[lastSlash+1:]
-					}
-
-					targetName := occ.Symbol
-					if parsed, err := scip.ParseSymbol(occ.Symbol); err == nil && len(parsed.Descriptors) > 0 {
-						targetName = parsed.Descriptors[len(parsed.Descriptors)-1].Name
-					} else if lastSlash := strings.LastIndex(targetName, "/"); lastSlash != -1 {
-						targetName = targetName[lastSlash+1:]
-					}
-					sourceName = strings.TrimSuffix(strings.TrimSuffix(sourceName, "#"), "().")
-					targetName = strings.TrimSuffix(strings.TrimSuffix(targetName, "#"), "().")
-
-					addLink(GraphLink{
-						Source: sourceNodeID,
-						Target: targetNodeID,
-						Label:  fmt.Sprintf("%s -> %s (%s)", sourceName, targetName, label),
-					})
-				}
-			}
-		}
-	}
-
-	// 6. Final Sweep: Construct Cytoscape Elements
+	// 6. Construct Cytoscape Elements
 	elements := make([]CyElement, 0)
-
-	// Add Folder Nodes (Compound Nodes)
-	seenFolders := make(map[string]bool)
-	for dir := range folderToCatID {
-		if dir == "" || dir == "." || dir == "root" {
-			continue
-		}
-
-		// Create hierarchical folder nodes
-		parts := strings.Split(dir, string(filepath.Separator))
-		currentPath := ""
-		for i, part := range parts {
-			prevPath := currentPath
-			if currentPath == "" {
-				currentPath = part
-			} else {
-				currentPath = currentPath + string(filepath.Separator) + part
-			}
-
-			folderID := "dir:" + currentPath
-			if !seenFolders[folderID] {
-				parentID := ""
-				if i > 0 {
-					parentID = "dir:" + prevPath
-				}
-
-				elements = append(elements, CyElement{
-					Group: "nodes",
-					Data: GraphNode{
-						ID:     folderID,
-						Name:   part,
-						Kind:   "Folder",
-						Parent: parentID,
-					},
-				})
-				seenFolders[folderID] = true
-			}
-		}
-	}
-
-	// Add Nodes (Symbols)
 	for _, n := range nodes {
+		elements = append(elements, CyElement{Group: "nodes", Data: n})
+	}
+	for _, l := range links {
 		elements = append(elements, CyElement{
-			Group: "nodes",
-			Data:  n,
+			Group: "edges",
+			Data: map[string]interface{}{
+				"id":     "e-" + l.Source + "-" + l.Target,
+				"source": l.Source,
+				"target": l.Target,
+				"label":  l.Label,
+			},
 		})
 	}
 
-	// Add Edges
-	for _, l := range links {
-		if seenNodes[l.Source] && seenNodes[l.Target] {
-			elements = append(elements, CyElement{
-				Group: "edges",
-				Data: map[string]interface{}{
-					"id":     fmt.Sprintf("e-%s-%s", l.Source, l.Target),
-					"source": l.Source,
-					"target": l.Target,
-					"label":  l.Label,
-				},
-			})
-		}
-	}
+	var language string
+	localDB.QueryRow("SELECT language FROM scip_indices WHERE scip_path = ?", scipPath).Scan(&language)
 
 	return &GraphData{
 		Elements:   elements,
 		Categories: categories,
-		Language:   detectLanguage(index.Documents),
+		Language:   language,
 	}, nil
 }
+
+// SearchSymbols performs a global text search across all symbols in a SCIP index.
+func (a *App) SearchSymbols(scipPath string, query string) ([]GraphNode, error) {
+	scipPath = a.normalizePath(scipPath)
+	localDB, err := a.getLocalDB(scipPath)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := localDB.Query(`
+		SELECT symbol, name, kind, file_path FROM scip_symbols
+		WHERE scip_path = ? AND (name LIKE ? OR symbol LIKE ?)
+		LIMIT 50
+	`, scipPath, "%"+query+"%", "%"+query+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []GraphNode
+	for rows.Next() {
+		var n GraphNode
+		var sym, name, kind, filePath string
+		if err := rows.Scan(&sym, &name, &kind, &filePath); err == nil {
+			n.ID = "sym:" + sym
+			n.Name = name
+			n.Kind = kind
+			n.Path = filePath
+			results = append(results, n)
+		}
+	}
+	return results, nil
+}
+
+// GetSymbolRelationships returns all callers and callees for a specific symbol.
+func (a *App) GetSymbolRelationships(scipPath string, symbol string) (map[string][]GraphNode, error) {
+	scipPath = a.normalizePath(scipPath)
+	localDB, err := a.getLocalDB(scipPath)
+	if err != nil {
+		return nil, err
+	}
+
+	symbol = strings.TrimPrefix(symbol, "sym:")
+
+	// Callees (what this symbol calls)
+	calleeRows, err := localDB.Query(`
+		SELECT s.symbol, s.name, s.kind, s.file_path 
+		FROM scip_relationships r
+		JOIN scip_symbols s ON r.target_symbol = s.symbol AND r.scip_path = s.scip_path
+		WHERE r.scip_path = ? AND r.source_symbol = ?
+	`, scipPath, symbol)
+	
+	callees := []GraphNode{}
+	if err == nil {
+		defer calleeRows.Close()
+		for calleeRows.Next() {
+			var n GraphNode
+			var sym, name, kind, filePath string
+			if err := calleeRows.Scan(&sym, &name, &kind, &filePath); err == nil {
+				n.ID = "sym:" + sym
+				n.Name = name
+				n.Kind = kind
+				n.Path = filePath
+				callees = append(callees, n)
+			}
+		}
+	}
+
+	// Callers (what calls this symbol)
+	callerRows, err := localDB.Query(`
+		SELECT s.symbol, s.name, s.kind, s.file_path 
+		FROM scip_relationships r
+		JOIN scip_symbols s ON r.source_symbol = s.symbol AND r.scip_path = s.scip_path
+		WHERE r.scip_path = ? AND r.target_symbol = ?
+	`, scipPath, symbol)
+
+	callers := []GraphNode{}
+	if err == nil {
+		defer callerRows.Close()
+		for callerRows.Next() {
+			var n GraphNode
+			var sym, name, kind, filePath string
+			if err := callerRows.Scan(&sym, &name, &kind, &filePath); err == nil {
+				n.ID = "sym:" + sym
+				n.Name = name
+				n.Kind = kind
+				n.Path = filePath
+				callers = append(callers, n)
+			}
+		}
+	}
+
+	return map[string][]GraphNode{
+		"callers": callers,
+		"callees": callees,
+	}, nil
+}
+
 
 // FocusWorkspaceClient attempts to bring the editor window associated with an MCP server to the foreground.
 func (a *App) FocusWorkspaceClient(mcpPid int) error {
@@ -2642,5 +2517,87 @@ func (a *App) PickDirectoryWithRoot(startDir string) (string, error) {
 		Title:            "Select Directory",
 		DefaultDirectory: startDir,
 	})
+}
+
+
+// getLocalDB opens or initializes a SQLite database in the same directory as the SCIP file (or its parent .context-sherpa)
+func (a *App) getLocalDB(scipPath string) (*database.DB, error) {
+	a.localDBMu.Lock()
+	defer a.localDBMu.Unlock()
+
+	dir := filepath.Dir(scipPath)
+	dbPath := filepath.Join(dir, "index.db")
+	absPath := a.normalizePath(dbPath)
+
+	if db, ok := a.localDBs[absPath]; ok {
+		return db, nil
+	}
+
+	localDB, err := database.InitDB(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to init local db at %s: %w", absPath, err)
+	}
+
+	// Initialize SCIP schema if not exists
+	_, err = localDB.Exec(`
+		CREATE TABLE IF NOT EXISTS scip_indices (
+			scip_path TEXT PRIMARY KEY,
+			mtime INTEGER,
+			indexed_at DATETIME,
+			language TEXT,
+			version INTEGER DEFAULT 1
+		);
+	`)
+	// Migration for existing indices (version 2 includes forward-slash fix)
+	// We ignore the error here because the column might already exist from a previous migration.
+	_, _ = localDB.Exec("ALTER TABLE scip_indices ADD COLUMN version INTEGER DEFAULT 1")
+
+	if err != nil {
+		localDB.Close()
+		return nil, fmt.Errorf("failed to init local schema: %w", err)
+	}
+
+	_, err = localDB.Exec(`
+		CREATE TABLE IF NOT EXISTS scip_symbols (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			scip_path TEXT,
+			symbol TEXT,
+			name TEXT,
+			kind TEXT,
+			file_path TEXT,
+			dir_path TEXT,
+			start_line INTEGER,
+			end_line INTEGER,
+			parent_symbol TEXT,
+			is_local BOOLEAN,
+			is_anonymous BOOLEAN,
+			is_stdlib BOOLEAN,
+			ref_count INTEGER DEFAULT 0,
+			outbound_calls INTEGER DEFAULT 0,
+			impact_value INTEGER DEFAULT 0,
+			FOREIGN KEY(scip_path) REFERENCES scip_indices(scip_path) ON DELETE CASCADE
+		);
+
+		CREATE TABLE IF NOT EXISTS scip_relationships (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			scip_path TEXT,
+			source_symbol TEXT,
+			target_symbol TEXT,
+			FOREIGN KEY(scip_path) REFERENCES scip_indices(scip_path) ON DELETE CASCADE
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_scip_symbols_scope ON scip_symbols(scip_path, dir_path);
+		CREATE INDEX IF NOT EXISTS idx_scip_symbols_symbol ON scip_symbols(scip_path, symbol);
+		CREATE INDEX IF NOT EXISTS idx_scip_relationships_scip ON scip_relationships(scip_path);
+		CREATE INDEX IF NOT EXISTS idx_scip_relationships_src ON scip_relationships(scip_path, source_symbol);
+		CREATE INDEX IF NOT EXISTS idx_scip_relationships_tgt ON scip_relationships(scip_path, target_symbol);
+	`)
+	if err != nil {
+		localDB.Close()
+		return nil, fmt.Errorf("failed to init local schema: %w", err)
+	}
+
+	a.localDBs[absPath] = localDB
+	return localDB, nil
 }
 

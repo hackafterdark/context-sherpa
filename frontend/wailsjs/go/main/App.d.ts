@@ -24,7 +24,7 @@ export function GetDownloadProgress(arg1:string):Promise<number>;
 
 export function GetFileContent(arg1:string,arg2:string):Promise<string>;
 
-export function GetGraphData(arg1:string):Promise<main.GraphData>;
+export function GetGraphData(arg1:string,arg2:string):Promise<main.GraphData>;
 
 export function GetInferenceModels():Promise<Array<string>>;
 
@@ -36,11 +36,15 @@ export function GetPreferences():Promise<main.UserPreferences>;
 
 export function GetScipIndexerStatus(arg1:string):Promise<Record<string, any>>;
 
+export function GetSymbolRelationships(arg1:string,arg2:string):Promise<Record<string, Array<main.GraphNode>>>;
+
 export function GetWorkspaceConfigs(arg1:string):Promise<Array<Record<string, any>>>;
 
 export function GetWorkspaces():Promise<Array<main.Workspace>>;
 
 export function ImportCommunityRule(arg1:string,arg2:string):Promise<void>;
+
+export function IngestIndex(arg1:string):Promise<void>;
 
 export function InitializeAstGrepConfig(arg1:string,arg2:string):Promise<void>;
 
@@ -79,6 +83,8 @@ export function SavePreferences(arg1:main.UserPreferences):Promise<void>;
 export function SearchCommunityRules(arg1:string,arg2:string,arg3:string):Promise<Array<mcp.CommunityRule>>;
 
 export function SearchForIndexes(arg1:string):Promise<Array<string>>;
+
+export function SearchSymbols(arg1:string,arg2:string):Promise<Array<main.GraphNode>>;
 
 export function TestInferenceConnection(arg1:string,arg2:string):Promise<string>;
 
